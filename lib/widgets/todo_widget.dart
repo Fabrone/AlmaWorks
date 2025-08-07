@@ -1,7 +1,30 @@
 import 'package:flutter/material.dart';
+import '../screens/add_task_screen.dart';
+import '../models/task.dart';
+import '../services/task_service.dart';
 
-class TodoWidget extends StatelessWidget {
+class TodoWidget extends StatefulWidget {
   const TodoWidget({super.key});
+
+  @override
+  State<TodoWidget> createState() => _TodoWidgetState();
+}
+
+class _TodoWidgetState extends State<TodoWidget> {
+  final TaskService _taskService = TaskService();
+  List<Task> _tasks = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTasks();
+  }
+
+  void _loadTasks() {
+    setState(() {
+      _tasks = _taskService.getTasks();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -26,15 +49,20 @@ class TodoWidget extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            _buildTodoItem('Submit RFI Response', 'Due Tomorrow', Colors.red, true),
-            _buildTodoItem('Review Change Order #23', 'Due in 2 days', Colors.orange, false),
-            _buildTodoItem('Safety Inspection Report', 'Due in 3 days', Colors.blue, false),
-            _buildTodoItem('Monthly Progress Report', 'Due in 1 week', Colors.green, false),
+            ..._tasks.map((task) => _buildTodoItem(task)),
             const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: () {},
+                onPressed: () async {
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AddTaskScreen()),
+                  );
+                  if (result == true) {
+                    _loadTasks();
+                  }
+                },
                 icon: const Icon(Icons.add, size: 16),
                 label: const Text('Add Task'),
                 style: OutlinedButton.styleFrom(
@@ -48,14 +76,14 @@ class TodoWidget extends StatelessWidget {
     );
   }
 
-  Widget _buildTodoItem(String title, String deadline, Color color, bool isUrgent) {
+  Widget _buildTodoItem(Task task) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isUrgent ? color.withValues(alpha: 0.1) : Colors.grey[50],
+        color: task.isUrgent ? task.priorityColor.withValues(alpha: 0.1) : Colors.grey[50],
         borderRadius: BorderRadius.circular(8),
-        border: isUrgent ? Border.all(color: color.withValues(alpha: 0.3)) : null,
+        border: task.isUrgent ? Border.all(color: task.priorityColor.withValues(alpha: 0.3)) : null,
       ),
       child: Row(
         children: [
@@ -63,7 +91,7 @@ class TodoWidget extends StatelessWidget {
             width: 4,
             height: 32,
             decoration: BoxDecoration(
-              color: color,
+              color: task.priorityColor,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -73,11 +101,11 @@ class TodoWidget extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title, 
+                  task.title, 
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 14,
-                    color: isUrgent ? color : null,
+                    color: task.isUrgent ? task.priorityColor : null,
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -86,15 +114,15 @@ class TodoWidget extends StatelessWidget {
                 Row(
                   children: [
                     Icon(
-                      isUrgent ? Icons.warning : Icons.schedule, 
+                      task.isUrgent ? Icons.warning : Icons.schedule, 
                       size: 12, 
-                      color: color,
+                      color: task.priorityColor,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      deadline, 
+                      task.deadline, 
                       style: TextStyle(
-                        color: color,
+                        color: task.priorityColor,
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                       ),
@@ -104,11 +132,11 @@ class TodoWidget extends StatelessWidget {
               ],
             ),
           ),
-          if (isUrgent)
+          if (task.isUrgent)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
-                color: color,
+                color: task.priorityColor,
                 borderRadius: BorderRadius.circular(10),
               ),
               child: const Text(
