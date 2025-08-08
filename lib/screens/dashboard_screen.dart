@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
 import 'projects/projects_main_screen.dart';
-import 'projects/project_dashboard_screen.dart';
 import 'financial_screen.dart';
 import 'schedule_screen.dart';
 import 'quality_safety_screen.dart';
@@ -39,6 +38,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _logger = widget.logger;
     _projectService = ProjectService();
     _logger.i('🏗️ DashboardScreen: Initialized with logger and project service');
+  }
+
+  // Move navigation method to the stateful widget to fix setState warning
+  void navigateToProjects({int initialTab = 0}) {
+    _logger.i('🧭 DashboardScreen: Navigating to projects with initial tab: $initialTab');
+    
+    setState(() {
+      _selectedIndex = 1; // Projects index
+    });
+    
+    _logger.d('✅ DashboardScreen: Successfully navigated to projects section');
   }
 
   @override
@@ -132,11 +142,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
   PreferredSizeWidget _buildAppBar(SelectedProjectProvider projectProvider) {
     String title = 'AlmaWorks';
     if (_selectedIndex == 0) {
-      title = projectProvider.hasSelectedProject 
-          ? '${projectProvider.selectedProject!.name} - Dashboard'
-          : 'AlmaWorks';
+      title = 'AlmaWorks - Dashboard';
     } else if (_selectedIndex == 1) {
       title = 'Projects';
+    } else if (projectProvider.hasSelectedProject && _selectedIndex > 1) {
+      title = '${projectProvider.selectedProject!.name} - ${_getMenuTitle(_selectedIndex)}';
     } else {
       title = _getMenuTitle(_selectedIndex);
     }
@@ -250,6 +260,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   setState(() {
                     _selectedIndex = 0;
                   });
+                  // Clear selected project when going to dashboard
+                  projectProvider.clearSelection();
                   if (Navigator.canPop(context)) {
                     Navigator.pop(context);
                   }
@@ -272,56 +284,59 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 },
               ),
 
-              // Selected Project Display
-              if (projectProvider.hasSelectedProject) ...[
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.business, size: 16, color: Colors.blue),
-                          const SizedBox(width: 8),
-                          const Text(
-                            'Selected Project:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.blue,
+              // Show project sections only when a project is selected or when in projects section
+              if (projectProvider.hasSelectedProject || _selectedIndex == 1) ...[
+                // Selected Project Display (only when project is selected)
+                if (projectProvider.hasSelectedProject) ...[
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.business, size: 16, color: Colors.blue),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Selected Project:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.blue,
+                              ),
                             ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          projectProvider.selectedProject!.name,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        projectProvider.selectedProject!.name,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        projectProvider.selectedProject!.location,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
+                        const SizedBox(height: 4),
+                        Text(
+                          projectProvider.selectedProject!.location,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                ),
+                ],
 
                 // Project-specific menu items
                 const Padding(
@@ -340,7 +355,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   leading: const Icon(Icons.description),
                   title: const Text('Documents'),
                   selected: _selectedIndex == 2,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('📄 DashboardScreen: Documents menu item tapped');
                     setState(() {
                       _selectedIndex = 2;
@@ -348,14 +364,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
                 
                 ListTile(
                   leading: const Icon(Icons.architecture),
                   title: const Text('Drawings'),
                   selected: _selectedIndex == 3,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('📐 DashboardScreen: Drawings menu item tapped');
                     setState(() {
                       _selectedIndex = 3;
@@ -363,14 +380,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
                 
                 ListTile(
                   leading: const Icon(Icons.schedule),
                   title: const Text('Schedule'),
                   selected: _selectedIndex == 4,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('📅 DashboardScreen: Schedule menu item tapped');
                     setState(() {
                       _selectedIndex = 4;
@@ -378,14 +396,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
                 
                 ListTile(
                   leading: const Icon(Icons.security),
                   title: const Text('Quality & Safety'),
                   selected: _selectedIndex == 5,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('🛡️ DashboardScreen: Quality & Safety menu item tapped');
                     setState(() {
                       _selectedIndex = 5;
@@ -393,14 +412,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
                 
                 ListTile(
                   leading: const Icon(Icons.analytics),
                   title: const Text('Reports'),
                   selected: _selectedIndex == 6,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('📊 DashboardScreen: Reports menu item tapped');
                     setState(() {
                       _selectedIndex = 6;
@@ -408,14 +428,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
                 
                 ListTile(
                   leading: const Icon(Icons.photo_library),
                   title: const Text('Photo Gallery'),
                   selected: _selectedIndex == 7,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('📸 DashboardScreen: Photo Gallery menu item tapped');
                     setState(() {
                       _selectedIndex = 7;
@@ -423,14 +444,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
                 
                 ListTile(
                   leading: const Icon(Icons.attach_money),
                   title: const Text('Financials'),
                   selected: _selectedIndex == 8,
-                  onTap: () {
+                  enabled: projectProvider.hasSelectedProject,
+                  onTap: projectProvider.hasSelectedProject ? () {
                     _logger.i('💰 DashboardScreen: Financials menu item tapped');
                     setState(() {
                       _selectedIndex = 8;
@@ -438,7 +460,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     if (Navigator.canPop(context)) {
                       Navigator.pop(context);
                     }
-                  },
+                  } : null,
                 ),
               ],
             ],
@@ -454,10 +476,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       switch (_selectedIndex) {
         case 0:
-          final screen = projectProvider.hasSelectedProject 
-              ? ProjectDashboardScreen(project: projectProvider.selectedProject!)
-              : MainDashboard(projectService: _projectService, logger: _logger);
-          _logger.d('✅ DashboardScreen: Returning dashboard screen');
+          // Always show general dashboard
+          final screen = MainDashboard(
+            projectService: _projectService, 
+            logger: _logger,
+            onNavigateToProjects: navigateToProjects, // Pass the navigation method
+          );
+          _logger.d('✅ DashboardScreen: Returning general dashboard screen');
           return screen;
         case 1:
           _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen');
@@ -477,7 +502,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
         case 8:
           return const FinancialScreen();
         default:
-          return MainDashboard(projectService: _projectService, logger: _logger);
+          return MainDashboard(
+            projectService: _projectService, 
+            logger: _logger,
+            onNavigateToProjects: navigateToProjects,
+          );
       }
     } catch (e, stackTrace) {
       _logger.e('❌ DashboardScreen: Error getting selected screen',
@@ -570,16 +599,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
 class MainDashboard extends StatelessWidget {
   final ProjectService projectService;
   final Logger logger;
+  final Function({int initialTab}) onNavigateToProjects; // Add callback
   
   const MainDashboard({
     super.key,
     required this.projectService,
     required this.logger,
+    required this.onNavigateToProjects,
   });
 
   @override
   Widget build(BuildContext context) {
-    logger.d('🏗️ MainDashboard: Building dashboard');
+    logger.d('🏗️ MainDashboard: Building general dashboard');
     
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -605,20 +636,21 @@ class MainDashboard extends StatelessWidget {
   Widget _buildMetricsGrid(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 600;
+    final isMobile = screenWidth < 600;
     
-    logger.d('📊 MainDashboard: Building metrics grid, isTablet: $isTablet');
+    logger.d('📊 MainDashboard: Building metrics grid, isTablet: $isTablet, isMobile: $isMobile');
     
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: isTablet ? 3 : 2,
+      crossAxisCount: isMobile ? 1 : (isTablet ? 3 : 3),
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
-      childAspectRatio: isTablet ? 1.2 : 1.1,
+      childAspectRatio: isMobile ? 2.5 : (isTablet ? 1.8 : 2.0),
       children: [
-        // Total Projects (Tracked)
+        // Total Projects (All)
         FutureBuilder<int>(
-          future: _safeGetProjectCount(() => projectService.getTrackedProjectsCount(), 'tracked'),
+          future: _safeGetProjectCount(() => projectService.getAllProjectsCount(), 'total'),
           builder: (context, snapshot) {
             logger.d('📈 MainDashboard: Total projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
             return DashboardCard(
@@ -627,12 +659,12 @@ class MainDashboard extends StatelessWidget {
               icon: Icons.folder,
               color: Colors.blue,
               onTap: () {
-                logger.i('👆 MainDashboard: Total projects card tapped');
+                logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
+                onNavigateToProjects(); // Use callback instead of direct setState
               },
             );
           },
         ),
-
         // Active Projects
         FutureBuilder<int>(
           future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('active'), 'active'),
@@ -645,11 +677,11 @@ class MainDashboard extends StatelessWidget {
               color: Colors.green,
               onTap: () {
                 logger.i('👆 MainDashboard: Active projects card tapped');
+                onNavigateToProjects(initialTab: 1); // Active tab
               },
             );
           },
         ),
-
         // Completed Projects
         FutureBuilder<int>(
           future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('completed'), 'completed'),
@@ -662,6 +694,7 @@ class MainDashboard extends StatelessWidget {
               color: Colors.orange,
               onTap: () {
                 logger.i('👆 MainDashboard: Completed projects card tapped');
+                onNavigateToProjects(initialTab: 2); // Completed tab
               },
             );
           },
@@ -685,8 +718,9 @@ class MainDashboard extends StatelessWidget {
   Widget _buildContentSection(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 800;
+    final isMobile = screenWidth < 600;
     
-    logger.d('🏗️ MainDashboard: Building content section, isTablet: $isTablet');
+    logger.d('🏗️ MainDashboard: Building content section, isTablet: $isTablet, isMobile: $isMobile');
     
     if (isTablet) {
       return Row(
@@ -703,19 +737,27 @@ class MainDashboard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 16),
-          const Expanded(
-            child: WeatherWidget(),
+          Expanded(
+            child: Container(
+              constraints: const BoxConstraints(maxHeight: 400),
+              child: const WeatherWidget(),
+            ),
           ),
         ],
       );
     } else {
-      return const Column(
+      return Column(
         children: [
-          ActivityFeed(),
-          SizedBox(height: 16),
-          WeatherWidget(),
-          SizedBox(height: 16),
-          TodoWidget(),
+          const ActivityFeed(),
+          const SizedBox(height: 16),
+          Container(
+            constraints: BoxConstraints(
+              maxHeight: isMobile ? 300 : 400,
+            ),
+            child: const WeatherWidget(),
+          ),
+          const SizedBox(height: 16),
+          const TodoWidget(),
         ],
       );
     }

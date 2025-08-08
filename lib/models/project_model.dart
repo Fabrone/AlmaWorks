@@ -95,79 +95,67 @@ class ProjectModel {
   bool get isActive => status == 'active';
   bool get isCompleted => status == 'completed';
 
-  // Mock data for testing
-  static List<ProjectModel> getMockProjects() {
-    return [
-      ProjectModel(
-        id: '1',
-        name: 'Downtown Office Complex',
-        description: 'Modern office building with 20 floors',
-        location: 'Nairobi CBD, Kenya',
-        budget: 2400000,
-        status: 'active',
-        startDate: DateTime(2024, 1, 15),
-        endDate: DateTime(2024, 8, 30),
-        projectManager: 'John Smith',
-        teamMembers: ['John Smith', 'Sarah Johnson', 'Mike Davis'],
-        createdAt: DateTime(2024, 1, 1),
-        updatedAt: DateTime.now(),
-      ),
-      ProjectModel(
-        id: '2',
-        name: 'Residential Tower',
-        description: 'High-rise residential apartments',
-        location: 'Westlands, Nairobi',
-        budget: 1800000,
-        status: 'active',
-        startDate: DateTime(2024, 2, 1),
-        endDate: DateTime(2024, 12, 15),
-        projectManager: 'Sarah Johnson',
-        teamMembers: ['Sarah Johnson', 'Mike Davis', 'Lisa Brown'],
-        createdAt: DateTime(2024, 1, 15),
-        updatedAt: DateTime.now(),
-      ),
-      ProjectModel(
-        id: '3',
-        name: 'Shopping Mall Renovation',
-        description: 'Complete renovation of existing mall',
-        location: 'Kilimani, Nairobi',
-        budget: 3200000,
-        status: 'completed',
-        startDate: DateTime(2023, 10, 1),
-        endDate: DateTime(2024, 4, 30),
-        projectManager: 'Mike Davis',
-        teamMembers: ['Mike Davis', 'Lisa Brown', 'Tom Wilson'],
-        createdAt: DateTime(2023, 9, 15),
-        updatedAt: DateTime.now(),
-      ),
-      ProjectModel(
-        id: '4',
-        name: 'Hospital Extension',
-        description: 'New wing addition to existing hospital',
-        location: 'Karen, Nairobi',
-        budget: null,
-        status: null, // Untracked project
-        startDate: DateTime(2024, 3, 1),
-        endDate: DateTime(2025, 2, 28),
-        projectManager: 'Lisa Brown',
-        teamMembers: ['Lisa Brown', 'Tom Wilson'],
-        createdAt: DateTime(2024, 2, 1),
-        updatedAt: DateTime.now(),
-      ),
-      ProjectModel(
-        id: '5',
-        name: 'School Building',
-        description: 'New primary school construction',
-        location: 'Kasarani, Nairobi',
-        budget: null,
-        status: null, // Untracked project
-        startDate: DateTime(2024, 4, 1),
-        endDate: null,
-        projectManager: 'Tom Wilson',
-        teamMembers: ['Tom Wilson', 'John Smith'],
-        createdAt: DateTime(2024, 3, 1),
-        updatedAt: DateTime.now(),
-      ),
-    ];
+  // Calculate progress based on project dates and status
+  double get progress {
+    if (status == 'completed') return 100.0;
+    if (status != 'active') return 0.0;
+    
+    final now = DateTime.now();
+    if (now.isBefore(startDate)) return 0.0;
+    
+    if (endDate == null) {
+      // If no end date, calculate based on time elapsed (rough estimate)
+      final daysSinceStart = now.difference(startDate).inDays;
+      // Assume 1% progress per week for active projects without end date
+      return (daysSinceStart / 7).clamp(0.0, 90.0);
+    }
+    
+    final totalDays = endDate!.difference(startDate).inDays;
+    final elapsedDays = now.difference(startDate).inDays;
+    
+    if (totalDays <= 0) return 0.0;
+    
+    return ((elapsedDays / totalDays) * 100).clamp(0.0, 100.0);
+  }
+
+  // Calculate safety score (placeholder - will be based on real data later)
+  double get safetyScore {
+    // For now, return 0.0 as requested
+    // Later this will be calculated from safety incidents, inspections, etc.
+    return 0.0;
+  }
+
+  // Calculate quality score (placeholder - will be based on real data later)
+  double get qualityScore {
+    // For now, return 0.0 as requested
+    // Later this will be calculated from quality inspections, defects, etc.
+    return 0.0;
+  }
+
+  // Get project health status based on progress and timeline
+  String get healthStatus {
+    if (status != 'active') return 'N/A';
+    
+    final progressValue = progress;
+    final now = DateTime.now();
+    
+    if (endDate != null && now.isAfter(endDate!)) {
+      return progressValue >= 100 ? 'Completed' : 'Overdue';
+    }
+    
+    if (progressValue >= 90) return 'Excellent';
+    if (progressValue >= 70) return 'Good';
+    if (progressValue >= 50) return 'Fair';
+    return 'Behind Schedule';
+  }
+
+  // Get days remaining (if applicable)
+  int? get daysRemaining {
+    if (endDate == null || status != 'active') return null;
+    
+    final now = DateTime.now();
+    if (now.isAfter(endDate!)) return 0;
+    
+    return endDate!.difference(now).inDays;
   }
 }

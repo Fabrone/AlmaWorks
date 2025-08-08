@@ -50,7 +50,7 @@ class ProjectService {
       await _testConnection();
       
     } catch (e, stackTrace) {
-      _logger.e('❌ ProjectService: Failed to initialize Firestore', 
+      _logger.e('❌ ProjectService: Failed to initialize Firestore',
         error: e, stackTrace: stackTrace);
       _isInitialized = false;
     }
@@ -77,16 +77,20 @@ class ProjectService {
     }
   }
 
-  // Get all projects with proper stream management
+  // Get all projects with improved stream management
   Stream<List<ProjectModel>> getAllProjects() {
     const streamKey = 'all_projects';
     _logger.i('📡 ProjectService: Getting all projects stream');
     
-    // Return existing stream if available
-    if (_streamControllers.containsKey(streamKey)) {
+    // Return existing stream if available and controller is not closed
+    if (_streamControllers.containsKey(streamKey) && 
+        !_streamControllers[streamKey]!.isClosed) {
       _logger.d('♻️ ProjectService: Returning existing all projects stream');
       return _streamControllers[streamKey]!.stream;
     }
+    
+    // Clean up any existing controller and subscription
+    _cleanupStream(streamKey);
     
     // Create new stream controller
     final controller = StreamController<List<ProjectModel>>.broadcast();
@@ -141,16 +145,20 @@ class ProjectService {
     }
   }
 
-  // Get projects by status with proper stream management
+  // Get projects by status with improved stream management
   Stream<List<ProjectModel>> getProjectsByStatus(String status) {
     final streamKey = 'projects_$status';
     _logger.i('📡 ProjectService: Getting projects by status: $status');
     
-    // Return existing stream if available
-    if (_streamControllers.containsKey(streamKey)) {
+    // Return existing stream if available and controller is not closed
+    if (_streamControllers.containsKey(streamKey) && 
+        !_streamControllers[streamKey]!.isClosed) {
       _logger.d('♻️ ProjectService: Returning existing $status projects stream');
       return _streamControllers[streamKey]!.stream;
     }
+    
+    // Clean up any existing controller and subscription
+    _cleanupStream(streamKey);
     
     // Create new stream controller
     final controller = StreamController<List<ProjectModel>>.broadcast();
@@ -287,7 +295,7 @@ class ProjectService {
       return docRef.id;
       
     } catch (e, stackTrace) {
-      _logger.e('❌ ProjectService: Failed to add project', 
+      _logger.e('❌ ProjectService: Failed to add project',
         error: e, stackTrace: stackTrace);
       throw Exception('Failed to add project: $e');
     }
@@ -308,7 +316,7 @@ class ProjectService {
       _logger.i('✅ ProjectService: Project updated successfully');
       
     } catch (e, stackTrace) {
-      _logger.e('❌ ProjectService: Failed to update project', 
+      _logger.e('❌ ProjectService: Failed to update project',
         error: e, stackTrace: stackTrace);
       throw Exception('Failed to update project: $e');
     }
@@ -326,7 +334,7 @@ class ProjectService {
       _logger.i('✅ ProjectService: Project deleted successfully');
       
     } catch (e, stackTrace) {
-      _logger.e('❌ ProjectService: Failed to delete project', 
+      _logger.e('❌ ProjectService: Failed to delete project',
         error: e, stackTrace: stackTrace);
       throw Exception('Failed to delete project: $e');
     }
@@ -350,9 +358,30 @@ class ProjectService {
       }
       
     } catch (e, stackTrace) {
-      _logger.e('❌ ProjectService: Failed to get project by ID', 
+      _logger.e('❌ ProjectService: Failed to get project by ID',
         error: e, stackTrace: stackTrace);
       throw Exception('Failed to get project: $e');
+    }
+  }
+
+  // Get total projects count (NEW METHOD)
+  Future<int> getAllProjectsCount() async {
+    _logger.i('🔢 ProjectService: Getting total projects count');
+    
+    try {
+      await _ensureInitialized();
+      
+      final snapshot = await _firestore
+          .collection(_collection)
+          .get();
+      
+      final count = snapshot.docs.length;
+      _logger.i('✅ ProjectService: Found $count total projects');
+      return count;
+      
+    } catch (e) {
+      _logger.e('❌ ProjectService: Failed to get total projects count: $e');
+      return 0;
     }
   }
 
@@ -410,6 +439,22 @@ class ProjectService {
     } catch (e) {
       _logger.w('⚠️ ProjectService: Firebase is not available: $e');
       return false;
+    }
+  }
+
+  void _cleanupStream(String streamKey) {
+    // Cancel existing subscription
+    if (_subscriptions.containsKey(streamKey)) {
+      _subscriptions[streamKey]?.cancel();
+      _subscriptions.remove(streamKey);
+    }
+    
+    // Close existing controller
+    if (_streamControllers.containsKey(streamKey)) {
+      if (!_streamControllers[streamKey]!.isClosed) {
+        _streamControllers[streamKey]!.close();
+      }
+      _streamControllers.remove(streamKey);
     }
   }
 

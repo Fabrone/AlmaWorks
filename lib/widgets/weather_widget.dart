@@ -23,72 +23,98 @@ class _WeatherWidgetState extends State<WeatherWidget> {
   Future<void> _loadWeatherData() async {
     try {
       final data = await _weatherService.getWeatherForSites();
-      setState(() {
-        _weatherData = data;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _weatherData = data;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 1200;
+    
     return Card(
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(isMobile ? 12 : 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min, // FIXED: Prevent overflow
           children: [
+            // Header row
             Row(
               children: [
-                Icon(Icons.wb_sunny, color: Colors.orange),
+                Icon(
+                  Icons.wb_sunny, 
+                  color: Colors.orange,
+                  size: isMobile ? 20 : 24,
+                ),
                 const SizedBox(width: 8),
-                const Text(
-                  'Weather Report',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                Expanded( // FIXED: Wrap text in Expanded
+                  child: Text(
+                    'Weather Report',
+                    style: TextStyle(
+                      fontSize: isMobile ? 16 : 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
-                const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.refresh, size: 20),
+                  icon: Icon(
+                    Icons.refresh, 
+                    size: isMobile ? 18 : 20,
+                  ),
                   onPressed: _loadWeatherData,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            if (_isLoading)
-              const Center(child: CircularProgressIndicator())
-            else if (_weatherData.isEmpty)
-              const Center(child: Text('No weather data available'))
-            else
-              ..._weatherData.map((weather) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _buildWeatherItem(weather),
-              )),
-            const SizedBox(height: 16),
+            SizedBox(height: isMobile ? 12 : 16),
+            
+            // Weather content - FIXED: Constrained height to prevent overflow
+            Container(
+              constraints: BoxConstraints(
+                maxHeight: isMobile ? 200 : (isTablet ? 250 : 300),
+              ),
+              child: _buildWeatherContent(isMobile),
+            ),
+            
+            SizedBox(height: isMobile ? 12 : 16),
+            
+            // Info footer
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(isMobile ? 8 : 12),
               decoration: BoxDecoration(
                 color: Colors.blue.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, color: Colors.blue, size: 16),
+                  Icon(
+                    Icons.info_outline, 
+                    color: Colors.blue, 
+                    size: isMobile ? 14 : 16,
+                  ),
                   const SizedBox(width: 8),
-                  Expanded(
+                  Expanded( // FIXED: Wrap text in Expanded
                     child: Text(
                       'Weather updates every 30 minutes',
                       style: TextStyle(
                         color: Colors.blue[700],
-                        fontSize: 12,
+                        fontSize: isMobile ? 10 : 12,
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -102,67 +128,115 @@ class _WeatherWidgetState extends State<WeatherWidget> {
     );
   }
 
-  Widget _buildWeatherItem(WeatherData weather) {
+  Widget _buildWeatherContent(bool isMobile) {
+    if (_isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(20),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+    
+    if (_weatherData.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            'No weather data available',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: isMobile ? 12 : 14,
+            ),
+          ),
+        ),
+      );
+    }
+    
+    // FIXED: Use ListView.builder with proper constraints
+    return ListView.builder(
+      shrinkWrap: true,
+      itemCount: _weatherData.length,
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
+          child: _buildWeatherItem(_weatherData[index], isMobile),
+        );
+      },
+    );
+  }
+
+  Widget _buildWeatherItem(WeatherData weather, bool isMobile) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(isMobile ? 8 : 12),
       decoration: BoxDecoration(
         color: Colors.grey[50],
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
         children: [
+          // Weather icon
           Container(
-            width: 32,
-            height: 32,
+            width: isMobile ? 28 : 32,
+            height: isMobile ? 28 : 32,
             decoration: BoxDecoration(
               color: weather.getConditionColor().withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(isMobile ? 14 : 16),
             ),
             child: Icon(
-              weather.getWeatherIcon(), 
-              color: weather.getConditionColor(), 
-              size: 16,
+              weather.getWeatherIcon(),
+              color: weather.getConditionColor(),
+              size: isMobile ? 14 : 16,
             ),
           ),
-          const SizedBox(width: 12),
+          SizedBox(width: isMobile ? 8 : 12),
+          
+          // Location and description - FIXED: Proper flex handling
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  weather.location, 
-                  style: const TextStyle(
+                  weather.location,
+                  style: TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                    fontSize: isMobile ? 12 : 14,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(height: 2),
                 Text(
-                  weather.description, 
+                  weather.description,
                   style: TextStyle(
-                    color: Colors.grey[600], 
-                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontSize: isMobile ? 10 : 12,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
+          
+          // Temperature and humidity
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '${weather.temperature}°C', 
-                style: const TextStyle(
+                '${weather.temperature}°C',
+                style: TextStyle(
                   fontWeight: FontWeight.bold,
-                  fontSize: 16,
+                  fontSize: isMobile ? 14 : 16,
                 ),
               ),
               Text(
-                '${weather.humidity}%', 
+                '${weather.humidity}%',
                 style: TextStyle(
                   color: Colors.grey[600],
-                  fontSize: 12,
+                  fontSize: isMobile ? 10 : 12,
                 ),
               ),
             ],

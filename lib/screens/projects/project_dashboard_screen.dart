@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
 import '../../models/project_model.dart';
 import '../../widgets/dashboard_card.dart';
 import '../../widgets/activity_feed.dart';
@@ -7,11 +8,19 @@ import '../../widgets/todo_widget.dart';
 
 class ProjectDashboardScreen extends StatelessWidget {
   final ProjectModel project;
+  final Logger logger;
 
-  const ProjectDashboardScreen({super.key, required this.project});
+  const ProjectDashboardScreen({
+    super.key, 
+    required this.project,
+    required this.logger,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveLogger = logger;
+    effectiveLogger.d('🎨 ProjectDashboardScreen: Building project dashboard for: ${project.name}');
+    
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -106,7 +115,7 @@ class ProjectDashboardScreen extends StatelessWidget {
                 ),
                 Expanded(
                   child: _buildInfoItem(
-                    'End Date', 
+                    'End Date',
                     project.endDate != null ? _formatDate(project.endDate!) : 'TBD'
                   ),
                 ),
@@ -146,85 +155,73 @@ class ProjectDashboardScreen extends StatelessWidget {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 600;
     
-    // Show different metrics based on project status
     List<Widget> cards = [];
     
-    if (project.status == 'active' || project.status == 'completed') {
-      if (project.budget != null) {
-        cards.add(
-          DashboardCard(
-            title: 'Project Budget',
-            value: '\$${(project.budget! / 1000000).toStringAsFixed(1)}M',
-            icon: Icons.attach_money,
-            color: Colors.green,
-            onTap: () {
-              // Navigate to financials
-            },
-          ),
-        );
-      }
-      
-      cards.addAll([
+    // Budget card
+    if (project.budget != null) {
+      cards.add(
         DashboardCard(
-          title: 'Progress',
-          value: project.status == 'completed' ? '100%' : '65%',
-          icon: Icons.trending_up,
-          color: Colors.blue,
+          title: 'Project Budget',
+          value: '\$${(project.budget! / 1000000).toStringAsFixed(1)}M',
+          icon: Icons.attach_money,
+          color: Colors.green,
           onTap: () {
-            // Navigate to schedule
+            // Navigate to financials
           },
         ),
-        DashboardCard(
-          title: 'Team Members',
-          value: '${project.teamMembers.length}',
-          icon: Icons.people,
-          color: Colors.purple,
-          onTap: () {
-            // Navigate to team
-          },
-        ),
-        DashboardCard(
-          title: 'Safety Score',
-          value: project.status == 'completed' ? '9.8' : '9.2',
-          icon: Icons.security,
-          color: Colors.orange,
-          onTap: () {
-            // Navigate to quality & safety
-          },
-        ),
-      ]);
+      );
     } else {
-      // Untracked projects show empty or basic metrics
-      cards.addAll([
+      cards.add(
         DashboardCard(
           title: 'Budget',
-          value: project.budget != null ? '\$${(project.budget! / 1000000).toStringAsFixed(1)}M' : 'TBD',
+          value: 'TBD',
           icon: Icons.attach_money,
           color: Colors.grey,
           onTap: () {
             // Navigate to financials
           },
         ),
-        DashboardCard(
-          title: 'Progress',
-          value: '0%',
-          icon: Icons.trending_up,
-          color: Colors.grey,
-          onTap: () {
-            // Navigate to schedule
-          },
-        ),
-        DashboardCard(
-          title: 'Team Members',
-          value: '${project.teamMembers.length}',
-          icon: Icons.people,
-          color: Colors.grey,
-          onTap: () {
-            // Navigate to team
-          },
-        ),
-      ]);
+      );
     }
+    
+    // Progress card - using calculated progress
+    cards.add(
+      DashboardCard(
+        title: 'Progress',
+        value: '${project.progress.toStringAsFixed(0)}%',
+        icon: Icons.trending_up,
+        color: project.isActive ? Colors.blue : Colors.grey,
+        onTap: () {
+          // Navigate to schedule
+        },
+      ),
+    );
+    
+    // Team members card
+    cards.add(
+      DashboardCard(
+        title: 'Team Members',
+        value: '${project.teamMembers.length}',
+        icon: Icons.people,
+        color: Colors.purple,
+        onTap: () {
+          // Navigate to team
+        },
+      ),
+    );
+    
+    // Safety score card - using calculated safety score (0 for now)
+    cards.add(
+      DashboardCard(
+        title: 'Safety Score',
+        value: project.safetyScore.toStringAsFixed(1),
+        icon: Icons.security,
+        color: Colors.orange,
+        onTap: () {
+          // Navigate to quality & safety
+        },
+      ),
+    );
     
     return GridView.count(
       shrinkWrap: true,
