@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:almaworks/screens/projects/projects_screen.dart';
+import 'package:provider/provider.dart';
+import 'package:logger/logger.dart';
+import 'projects/projects_main_screen.dart';
+import 'projects/project_dashboard_screen.dart';
 import 'financial_screen.dart';
 import 'schedule_screen.dart';
 import 'quality_safety_screen.dart';
-import 'field_productivity_screen.dart';
-import 'bid_management_screen.dart';
-import 'design_coordination_screen.dart';
 import 'reports_screen.dart';
 import 'notifications_screen.dart';
 import 'account_screen.dart';
@@ -15,9 +15,13 @@ import '../widgets/activity_feed.dart';
 import '../widgets/weather_widget.dart';
 import '../widgets/todo_widget.dart';
 import '../widgets/responsive_layout.dart';
+import '../providers/selected_project_provider.dart';
+import '../services/project_service.dart';
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final Logger logger;
+  
+  const DashboardScreen({super.key, required this.logger});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -26,40 +30,56 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  late final ProjectService _projectService;
+  late final Logger _logger;
 
-  final List<Map<String, dynamic>> _menuItems = [
-    {'title': 'Dashboard', 'icon': Icons.dashboard, 'screen': null},
-    {'title': 'Projects', 'icon': Icons.folder, 'screen': const ProjectsScreen()},
-    {'title': 'Financial', 'icon': Icons.attach_money, 'screen': const FinancialScreen()},
-    {'title': 'Schedule', 'icon': Icons.schedule, 'screen': const ScheduleScreen()},
-    {'title': 'Quality & Safety', 'icon': Icons.security, 'screen': const QualitySafetyScreen()},
-    {'title': 'Field Productivity', 'icon': Icons.work, 'screen': const FieldProductivityScreen()},
-    {'title': 'Bid Management', 'icon': Icons.gavel, 'screen': const BidManagementScreen()},
-    {'title': 'Design Coordination', 'icon': Icons.architecture, 'screen': const DesignCoordinationScreen()},
-    {'title': 'Reports', 'icon': Icons.analytics, 'screen': const ReportsScreen()},
-  ];
+  @override
+  void initState() {
+    super.initState();
+    _logger = widget.logger;
+    _projectService = ProjectService();
+    _logger.i('🏗️ DashboardScreen: Initialized with logger and project service');
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ResponsiveLayout(
-      mobile: _buildMobileLayout(),
-      tablet: _buildTabletLayout(),
-      desktop: _buildDesktopLayout(),
+    _logger.d('🎨 DashboardScreen: Building with selectedIndex: $_selectedIndex');
+    
+    return ChangeNotifierProvider(
+      create: (context) {
+        _logger.d('🏗️ DashboardScreen: Creating SelectedProjectProvider');
+        return SelectedProjectProvider();
+      },
+      child: Consumer<SelectedProjectProvider>(
+        builder: (context, projectProvider, child) {
+          _logger.d('🔄 DashboardScreen: Consumer rebuilding, hasSelectedProject: ${projectProvider.hasSelectedProject}');
+          
+          return ResponsiveLayout(
+            mobile: _buildMobileLayout(projectProvider),
+            tablet: _buildTabletLayout(projectProvider),
+            desktop: _buildDesktopLayout(projectProvider),
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildMobileLayout() {
+  Widget _buildMobileLayout(SelectedProjectProvider projectProvider) {
+    _logger.d('📱 DashboardScreen: Building mobile layout');
+    
     return Scaffold(
       key: _scaffoldKey,
-      appBar: _buildAppBar(),
-      drawer: _buildDrawer(),
-      body: _getSelectedScreen(),
+      appBar: _buildAppBar(projectProvider),
+      drawer: _buildDrawer(projectProvider),
+      body: _getSelectedScreen(projectProvider),
     );
   }
 
-  Widget _buildTabletLayout() {
+  Widget _buildTabletLayout(SelectedProjectProvider projectProvider) {
+    _logger.d('📱 DashboardScreen: Building tablet layout');
+    
     return Scaffold(
-      appBar: _buildAppBar(),
+      appBar: _buildAppBar(projectProvider),
       body: Row(
         children: [
           Container(
@@ -74,17 +94,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ],
             ),
-            child: _buildSidebarContent(),
+            child: _buildSidebarContent(projectProvider),
           ),
-          Expanded(child: _getSelectedScreen()),
+          Expanded(child: _getSelectedScreen(projectProvider)),
         ],
       ),
     );
   }
 
-  Widget _buildDesktopLayout() {
+  Widget _buildDesktopLayout(SelectedProjectProvider projectProvider) {
+    _logger.d('🖥️ DashboardScreen: Building desktop layout');
+    
     return Scaffold(
-      appBar: _buildAppBar(),
+      appBar: _buildAppBar(projectProvider),
       body: Row(
         children: [
           Container(
@@ -99,24 +121,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
               ],
             ),
-            child: _buildSidebarContent(),
+            child: _buildSidebarContent(projectProvider),
           ),
-          Expanded(child: _getSelectedScreen()),
+          Expanded(child: _getSelectedScreen(projectProvider)),
         ],
       ),
     );
   }
 
-  PreferredSizeWidget _buildAppBar() {
+  PreferredSizeWidget _buildAppBar(SelectedProjectProvider projectProvider) {
+    String title = 'AlmaWorks';
+    if (_selectedIndex == 0) {
+      title = projectProvider.hasSelectedProject 
+          ? '${projectProvider.selectedProject!.name} - Dashboard'
+          : 'AlmaWorks';
+    } else if (_selectedIndex == 1) {
+      title = 'Projects';
+    } else {
+      title = _getMenuTitle(_selectedIndex);
+    }
+
+    _logger.d('🏷️ DashboardScreen: Building app bar with title: $title');
+
     return AppBar(
       title: Text(
-        _selectedIndex == 0 ? 'AlmaWorks' : _menuItems[_selectedIndex]['title'],
+        title,
         style: const TextStyle(fontWeight: FontWeight.bold),
       ),
       actions: [
         IconButton(
           icon: const Icon(Icons.search),
           onPressed: () {
+            _logger.i('🔍 DashboardScreen: Search button pressed');
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const SearchScreen()),
@@ -126,6 +162,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         IconButton(
           icon: const Icon(Icons.notifications),
           onPressed: () {
+            _logger.i('🔔 DashboardScreen: Notifications button pressed');
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const NotificationsScreen()),
@@ -134,6 +171,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
         GestureDetector(
           onTap: () {
+            _logger.i('👤 DashboardScreen: Account button pressed');
             Navigator.push(
               context,
               MaterialPageRoute(builder: (context) => const AccountScreen()),
@@ -151,13 +189,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildDrawer() {
+  Widget _buildDrawer(SelectedProjectProvider projectProvider) {
+    _logger.d('📋 DashboardScreen: Building drawer');
+    
     return Drawer(
-      child: _buildSidebarContent(),
+      child: _buildSidebarContent(projectProvider),
     );
   }
 
-  Widget _buildSidebarContent() {
+  Widget _buildSidebarContent(SelectedProjectProvider projectProvider) {
+    _logger.d('📋 DashboardScreen: Building sidebar content, hasSelectedProject: ${projectProvider.hasSelectedProject}');
+    
     return Column(
       children: [
         Container(
@@ -195,51 +237,357 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
+          child: ListView(
             padding: EdgeInsets.zero,
-            itemCount: _menuItems.length,
-            itemBuilder: (context, index) {
-              final item = _menuItems[index];
-              return ListTile(
-                leading: Icon(item['icon']),
-                title: Text(item['title']),
-                selected: _selectedIndex == index,
+            children: [
+              // Dashboard
+              ListTile(
+                leading: const Icon(Icons.dashboard),
+                title: const Text('Dashboard'),
+                selected: _selectedIndex == 0,
                 onTap: () {
+                  _logger.i('🏠 DashboardScreen: Dashboard menu item tapped');
                   setState(() {
-                    _selectedIndex = index;
+                    _selectedIndex = 0;
                   });
                   if (Navigator.canPop(context)) {
                     Navigator.pop(context);
                   }
                 },
-              );
-            },
+              ),
+              
+              // Projects
+              ListTile(
+                leading: const Icon(Icons.folder),
+                title: const Text('Projects'),
+                selected: _selectedIndex == 1,
+                onTap: () {
+                  _logger.i('📁 DashboardScreen: Projects menu item tapped');
+                  setState(() {
+                    _selectedIndex = 1;
+                  });
+                  if (Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  }
+                },
+              ),
+
+              // Selected Project Display
+              if (projectProvider.hasSelectedProject) ...[
+                Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.business, size: 16, color: Colors.blue),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Selected Project:',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.blue,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        projectProvider.selectedProject!.name,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        projectProvider.selectedProject!.location,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Project-specific menu items
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    'Project Sections',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.description),
+                  title: const Text('Documents'),
+                  selected: _selectedIndex == 2,
+                  onTap: () {
+                    _logger.i('📄 DashboardScreen: Documents menu item tapped');
+                    setState(() {
+                      _selectedIndex = 2;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.architecture),
+                  title: const Text('Drawings'),
+                  selected: _selectedIndex == 3,
+                  onTap: () {
+                    _logger.i('📐 DashboardScreen: Drawings menu item tapped');
+                    setState(() {
+                      _selectedIndex = 3;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.schedule),
+                  title: const Text('Schedule'),
+                  selected: _selectedIndex == 4,
+                  onTap: () {
+                    _logger.i('📅 DashboardScreen: Schedule menu item tapped');
+                    setState(() {
+                      _selectedIndex = 4;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.security),
+                  title: const Text('Quality & Safety'),
+                  selected: _selectedIndex == 5,
+                  onTap: () {
+                    _logger.i('🛡️ DashboardScreen: Quality & Safety menu item tapped');
+                    setState(() {
+                      _selectedIndex = 5;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.analytics),
+                  title: const Text('Reports'),
+                  selected: _selectedIndex == 6,
+                  onTap: () {
+                    _logger.i('📊 DashboardScreen: Reports menu item tapped');
+                    setState(() {
+                      _selectedIndex = 6;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('Photo Gallery'),
+                  selected: _selectedIndex == 7,
+                  onTap: () {
+                    _logger.i('📸 DashboardScreen: Photo Gallery menu item tapped');
+                    setState(() {
+                      _selectedIndex = 7;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+                
+                ListTile(
+                  leading: const Icon(Icons.attach_money),
+                  title: const Text('Financials'),
+                  selected: _selectedIndex == 8,
+                  onTap: () {
+                    _logger.i('💰 DashboardScreen: Financials menu item tapped');
+                    setState(() {
+                      _selectedIndex = 8;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
+              ],
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _getSelectedScreen() {
-    if (_selectedIndex == 0) {
-      return const DashboardHome();
+  Widget _getSelectedScreen(SelectedProjectProvider projectProvider) {
+    _logger.d('🎯 DashboardScreen: Getting screen for index $_selectedIndex');
+    
+    try {
+      switch (_selectedIndex) {
+        case 0:
+          final screen = projectProvider.hasSelectedProject 
+              ? ProjectDashboardScreen(project: projectProvider.selectedProject!)
+              : MainDashboard(projectService: _projectService, logger: _logger);
+          _logger.d('✅ DashboardScreen: Returning dashboard screen');
+          return screen;
+        case 1:
+          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen');
+          return ProjectsMainScreen(logger: _logger);
+        case 2:
+          return _buildProjectSection('Documents', Icons.description);
+        case 3:
+          return _buildProjectSection('Drawings', Icons.architecture);
+        case 4:
+          return const ScheduleScreen();
+        case 5:
+          return const QualitySafetyScreen();
+        case 6:
+          return const ReportsScreen();
+        case 7:
+          return _buildProjectSection('Photo Gallery', Icons.photo_library);
+        case 8:
+          return const FinancialScreen();
+        default:
+          return MainDashboard(projectService: _projectService, logger: _logger);
+      }
+    } catch (e, stackTrace) {
+      _logger.e('❌ DashboardScreen: Error getting selected screen',
+        error: e, stackTrace: stackTrace);
+      return _buildErrorScreen('Error loading screen', e.toString());
     }
-    return _menuItems[_selectedIndex]['screen'] ?? const DashboardHome();
+  }
+
+  Widget _buildProjectSection(String title, IconData icon) {
+    _logger.d('🏗️ DashboardScreen: Building project section: $title');
+    
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 64, color: Colors.grey),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'This section is under development',
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorScreen(String title, String error) {
+    _logger.w('⚠️ DashboardScreen: Building error screen: $title');
+    
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error,
+              style: const TextStyle(color: Colors.grey),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () {
+                _logger.i('🔄 DashboardScreen: Retry button pressed, going back to dashboard');
+                setState(() {
+                  _selectedIndex = 0;
+                });
+              },
+              child: const Text('Go to Dashboard'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _getMenuTitle(int index) {
+    switch (index) {
+      case 2: return 'Documents';
+      case 3: return 'Drawings';
+      case 4: return 'Schedule';
+      case 5: return 'Quality & Safety';
+      case 6: return 'Reports';
+      case 7: return 'Photo Gallery';
+      case 8: return 'Financials';
+      default: return 'AlmaWorks';
+    }
+  }
+
+  @override
+  void dispose() {
+    _logger.i('🧹 DashboardScreen: Disposing resources');
+    super.dispose();
   }
 }
 
-class DashboardHome extends StatelessWidget {
-  const DashboardHome({super.key});
+class MainDashboard extends StatelessWidget {
+  final ProjectService projectService;
+  final Logger logger;
+  
+  const MainDashboard({
+    super.key,
+    required this.projectService,
+    required this.logger,
+  });
 
   @override
   Widget build(BuildContext context) {
+    logger.d('🏗️ MainDashboard: Building dashboard');
+    
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Project Overview',
+            'General Overview',
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.bold,
@@ -258,62 +606,63 @@ class DashboardHome extends StatelessWidget {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 600;
     
-    // Use the DashboardData model
-    final dashboardData = DashboardData.getMockData();
+    logger.d('📊 MainDashboard: Building metrics grid, isTablet: $isTablet');
     
     return GridView.count(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: isTablet ? 4 : 2,
+      crossAxisCount: isTablet ? 3 : 2,
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
       childAspectRatio: isTablet ? 1.2 : 1.1,
       children: [
-        DashboardCard(
-          title: 'Active Projects',
-          value: '${dashboardData.activeProjects}',
-          icon: Icons.folder,
-          color: Colors.blue,
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const ProjectsScreen()),
+        // Total Projects (Tracked)
+        FutureBuilder<int>(
+          future: _safeGetProjectCount(() => projectService.getTrackedProjectsCount(), 'tracked'),
+          builder: (context, snapshot) {
+            logger.d('📈 MainDashboard: Total projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
+            return DashboardCard(
+              title: 'Total Projects',
+              value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
+              icon: Icons.folder,
+              color: Colors.blue,
+              onTap: () {
+                logger.i('👆 MainDashboard: Total projects card tapped');
+              },
             );
           },
         ),
-        DashboardCard(
-          title: 'Total Budget',
-          value: '\$${dashboardData.totalBudget}M',
-          icon: Icons.attach_money,
-          color: Colors.green,
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const FinancialScreen()),
+
+        // Active Projects
+        FutureBuilder<int>(
+          future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('active'), 'active'),
+          builder: (context, snapshot) {
+            logger.d('📈 MainDashboard: Active projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
+            return DashboardCard(
+              title: 'Active Projects',
+              value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
+              icon: Icons.work,
+              color: Colors.green,
+              onTap: () {
+                logger.i('👆 MainDashboard: Active projects card tapped');
+              },
             );
           },
         ),
-        DashboardCard(
-          title: 'On Schedule',
-          value: '${dashboardData.onSchedulePercentage}%',
-          icon: Icons.schedule,
-          color: Colors.orange,
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const ScheduleScreen()),
-            );
-          },
-        ),
-        DashboardCard(
-          title: 'Safety Score',
-          value: '${dashboardData.safetyScore}',
-          icon: Icons.security,
-          color: Colors.red,
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const QualitySafetyScreen()),
+
+        // Completed Projects
+        FutureBuilder<int>(
+          future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('completed'), 'completed'),
+          builder: (context, snapshot) {
+            logger.d('📈 MainDashboard: Completed projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
+            return DashboardCard(
+              title: 'Completed Projects',
+              value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
+              icon: Icons.check_circle,
+              color: Colors.orange,
+              onTap: () {
+                logger.i('👆 MainDashboard: Completed projects card tapped');
+              },
             );
           },
         ),
@@ -321,9 +670,23 @@ class DashboardHome extends StatelessWidget {
     );
   }
 
+  Future<int> _safeGetProjectCount(Future<int> Function() getCount, String type) async {
+    try {
+      logger.d('🔢 MainDashboard: Getting $type project count safely');
+      final count = await getCount();
+      logger.i('✅ MainDashboard: $type project count retrieved: $count');
+      return count;
+    } catch (e) {
+      logger.e('❌ MainDashboard: Error getting $type project count: $e');
+      return 0;
+    }
+  }
+
   Widget _buildContentSection(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 800;
+    
+    logger.d('🏗️ MainDashboard: Building content section, isTablet: $isTablet');
     
     if (isTablet) {
       return Row(
@@ -356,28 +719,5 @@ class DashboardHome extends StatelessWidget {
         ],
       );
     }
-  }
-}
-
-class DashboardData {
-  final int activeProjects;
-  final double totalBudget;
-  final double onSchedulePercentage;
-  final double safetyScore;
-
-  DashboardData({
-    required this.activeProjects,
-    required this.totalBudget,
-    required this.onSchedulePercentage,
-    required this.safetyScore,
-  });
-
-  static DashboardData getMockData() {
-    return DashboardData(
-      activeProjects: 15,
-      totalBudget: 3.5,
-      onSchedulePercentage: 92.0,
-      safetyScore: 9.5,
-    );
   }
 }

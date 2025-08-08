@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "609637842223",
+    "project_id": "almaworks-b9a2e",
+    "storage_bucket": "almaworks-b9a2e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:609637842223:android:614eb9220c0aa0181c75da",
+        "android_client_info": {
+          "package_name": "com.jvalmacis.almaworks"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAXAcu_XmC4hB6OSv8iPE9r-eA1TLhQO5g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

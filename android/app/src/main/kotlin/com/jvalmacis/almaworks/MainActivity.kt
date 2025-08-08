@@ -1,4 +1,4 @@
-package com.example.almaworks
+package com.jvalmacis.almaworks
 
 import io.flutter.embedding.android.FlutterActivity
 
