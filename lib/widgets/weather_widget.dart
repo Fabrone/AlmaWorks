@@ -45,34 +45,38 @@ class _WeatherWidgetState extends State<WeatherWidget> {
     final isTablet = screenWidth >= 600 && screenWidth < 1200;
     
     return Card(
+      elevation: 2,
       child: Container(
         width: double.infinity,
         padding: EdgeInsets.all(isMobile ? 12 : 16),
+        constraints: BoxConstraints(
+          maxHeight: isMobile ? 300 : (isTablet ? 350 : 400), // Adjusted max height
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min, // FIXED: Prevent overflow
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Header row
             Row(
               children: [
                 Icon(
-                  Icons.wb_sunny, 
+                  Icons.wb_sunny,
                   color: Colors.orange,
                   size: isMobile ? 20 : 24,
                 ),
                 const SizedBox(width: 8),
-                Expanded( // FIXED: Wrap text in Expanded
+                Expanded(
                   child: Text(
                     'Weather Report',
                     style: TextStyle(
                       fontSize: isMobile ? 16 : 18,
                       fontWeight: FontWeight.bold,
                     ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 IconButton(
                   icon: Icon(
-                    Icons.refresh, 
+                    Icons.refresh,
                     size: isMobile ? 18 : 20,
                   ),
                   onPressed: _loadWeatherData,
@@ -81,19 +85,11 @@ class _WeatherWidgetState extends State<WeatherWidget> {
                 ),
               ],
             ),
-            SizedBox(height: isMobile ? 12 : 16),
-            
-            // Weather content - FIXED: Constrained height to prevent overflow
-            Container(
-              constraints: BoxConstraints(
-                maxHeight: isMobile ? 200 : (isTablet ? 250 : 300),
-              ),
-              child: _buildWeatherContent(isMobile),
+            const SizedBox(height: 12),
+            Expanded(
+              child: _buildWeatherContent(isMobile, isTablet),
             ),
-            
-            SizedBox(height: isMobile ? 12 : 16),
-            
-            // Info footer
+            const SizedBox(height: 12),
             Container(
               width: double.infinity,
               padding: EdgeInsets.all(isMobile ? 8 : 12),
@@ -104,12 +100,12 @@ class _WeatherWidgetState extends State<WeatherWidget> {
               child: Row(
                 children: [
                   Icon(
-                    Icons.info_outline, 
-                    color: Colors.blue, 
+                    Icons.info_outline,
+                    color: Colors.blue,
                     size: isMobile ? 14 : 16,
                   ),
                   const SizedBox(width: 8),
-                  Expanded( // FIXED: Wrap text in Expanded
+                  Expanded(
                     child: Text(
                       'Weather updates every 30 minutes',
                       style: TextStyle(
@@ -117,6 +113,7 @@ class _WeatherWidgetState extends State<WeatherWidget> {
                         fontSize: isMobile ? 10 : 12,
                         fontWeight: FontWeight.w500,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
@@ -128,45 +125,39 @@ class _WeatherWidgetState extends State<WeatherWidget> {
     );
   }
 
-  Widget _buildWeatherContent(bool isMobile) {
+  Widget _buildWeatherContent(bool isMobile, bool isTablet) {
     if (_isLoading) {
       return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(20),
-          child: CircularProgressIndicator(),
-        ),
+        child: CircularProgressIndicator(),
       );
     }
     
     if (_weatherData.isEmpty) {
       return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Text(
-            'No weather data available',
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: isMobile ? 12 : 14,
-            ),
+        child: Text(
+          'No weather data available',
+          style: TextStyle(
+            color: Colors.grey[600],
+            fontSize: isMobile ? 12 : 14,
           ),
         ),
       );
     }
     
-    // FIXED: Use ListView.builder with proper constraints
     return ListView.builder(
       shrinkWrap: true,
+      physics: const ClampingScrollPhysics(),
       itemCount: _weatherData.length,
       itemBuilder: (context, index) {
         return Padding(
           padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
-          child: _buildWeatherItem(_weatherData[index], isMobile),
+          child: _buildWeatherItem(_weatherData[index], isMobile, isTablet),
         );
       },
     );
   }
 
-  Widget _buildWeatherItem(WeatherData weather, bool isMobile) {
+  Widget _buildWeatherItem(WeatherData weather, bool isMobile, bool isTablet) {
     return Container(
       padding: EdgeInsets.all(isMobile ? 8 : 12),
       decoration: BoxDecoration(
@@ -174,8 +165,8 @@ class _WeatherWidgetState extends State<WeatherWidget> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Weather icon
           Container(
             width: isMobile ? 28 : 32,
             height: isMobile ? 28 : 32,
@@ -189,9 +180,7 @@ class _WeatherWidgetState extends State<WeatherWidget> {
               size: isMobile ? 14 : 16,
             ),
           ),
-          SizedBox(width: isMobile ? 8 : 12),
-          
-          // Location and description - FIXED: Proper flex handling
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -219,8 +208,6 @@ class _WeatherWidgetState extends State<WeatherWidget> {
               ],
             ),
           ),
-          
-          // Temperature and humidity
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             mainAxisSize: MainAxisSize.min,

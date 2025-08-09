@@ -18,13 +18,16 @@ class DashboardCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+
     return Card(
       elevation: 2,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.all(isMobile ? 12 : 16),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -38,9 +41,9 @@ class DashboardCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Icon(
-                      icon, 
-                      color: color, 
-                      size: 20,
+                      icon,
+                      color: color,
+                      size: isMobile ? 18 : 20,
                     ),
                   ),
                   const Spacer(),
@@ -48,7 +51,7 @@ class DashboardCard extends StatelessWidget {
                     child: Text(
                       value,
                       style: TextStyle(
-                        fontSize: 24,
+                        fontSize: isMobile ? 20 : 24,
                         fontWeight: FontWeight.bold,
                         color: color,
                       ),
@@ -60,7 +63,7 @@ class DashboardCard extends StatelessWidget {
               Text(
                 title,
                 style: TextStyle(
-                  fontSize: 14,
+                  fontSize: isMobile ? 12 : 14,
                   fontWeight: FontWeight.w500,
                   color: Colors.grey[700],
                 ),

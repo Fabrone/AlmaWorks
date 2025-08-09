@@ -40,12 +40,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _logger.i('🏗️ DashboardScreen: Initialized with logger and project service');
   }
 
-  // Move navigation method to the stateful widget to fix setState warning
   void navigateToProjects({int initialTab = 0}) {
     _logger.i('🧭 DashboardScreen: Navigating to projects with initial tab: $initialTab');
     
     setState(() {
-      _selectedIndex = 1; // Projects index
+      _selectedIndex = 1;
     });
     
     _logger.d('✅ DashboardScreen: Successfully navigated to projects section');
@@ -250,7 +249,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
-              // Dashboard
               ListTile(
                 leading: const Icon(Icons.dashboard),
                 title: const Text('Dashboard'),
@@ -260,15 +258,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   setState(() {
                     _selectedIndex = 0;
                   });
-                  // Clear selected project when going to dashboard
                   projectProvider.clearSelection();
                   if (Navigator.canPop(context)) {
                     Navigator.pop(context);
                   }
                 },
               ),
-              
-              // Projects
               ListTile(
                 leading: const Icon(Icons.folder),
                 title: const Text('Projects'),
@@ -283,10 +278,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   }
                 },
               ),
-
-              // Show project sections only when a project is selected or when in projects section
               if (projectProvider.hasSelectedProject || _selectedIndex == 1) ...[
-                // Selected Project Display (only when project is selected)
                 if (projectProvider.hasSelectedProject) ...[
                   Container(
                     margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -337,8 +329,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ],
-
-                // Project-specific menu items
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Text(
@@ -350,7 +340,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.description),
                   title: const Text('Documents'),
@@ -366,7 +355,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } : null,
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.architecture),
                   title: const Text('Drawings'),
@@ -382,7 +370,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } : null,
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.schedule),
                   title: const Text('Schedule'),
@@ -398,7 +385,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } : null,
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.security),
                   title: const Text('Quality & Safety'),
@@ -414,7 +400,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } : null,
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.analytics),
                   title: const Text('Reports'),
@@ -430,7 +415,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } : null,
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.photo_library),
                   title: const Text('Photo Gallery'),
@@ -446,7 +430,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } : null,
                 ),
-                
                 ListTile(
                   leading: const Icon(Icons.attach_money),
                   title: const Text('Financials'),
@@ -476,11 +459,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       switch (_selectedIndex) {
         case 0:
-          // Always show general dashboard
           final screen = MainDashboard(
             projectService: _projectService, 
             logger: _logger,
-            onNavigateToProjects: navigateToProjects, // Pass the navigation method
+            onNavigateToProjects: navigateToProjects,
           );
           _logger.d('✅ DashboardScreen: Returning general dashboard screen');
           return screen;
@@ -599,7 +581,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 class MainDashboard extends StatelessWidget {
   final ProjectService projectService;
   final Logger logger;
-  final Function({int initialTab}) onNavigateToProjects; // Add callback
+  final Function({int initialTab}) onNavigateToProjects;
   
   const MainDashboard({
     super.key,
@@ -648,7 +630,6 @@ class MainDashboard extends StatelessWidget {
       mainAxisSpacing: 12,
       childAspectRatio: isMobile ? 2.5 : (isTablet ? 1.8 : 2.0),
       children: [
-        // Total Projects (All)
         FutureBuilder<int>(
           future: _safeGetProjectCount(() => projectService.getAllProjectsCount(), 'total'),
           builder: (context, snapshot) {
@@ -660,12 +641,11 @@ class MainDashboard extends StatelessWidget {
               color: Colors.blue,
               onTap: () {
                 logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
-                onNavigateToProjects(); // Use callback instead of direct setState
+                onNavigateToProjects();
               },
             );
           },
         ),
-        // Active Projects
         FutureBuilder<int>(
           future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('active'), 'active'),
           builder: (context, snapshot) {
@@ -677,12 +657,11 @@ class MainDashboard extends StatelessWidget {
               color: Colors.green,
               onTap: () {
                 logger.i('👆 MainDashboard: Active projects card tapped');
-                onNavigateToProjects(initialTab: 1); // Active tab
+                onNavigateToProjects(initialTab: 1);
               },
             );
           },
         ),
-        // Completed Projects
         FutureBuilder<int>(
           future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('completed'), 'completed'),
           builder: (context, snapshot) {
@@ -694,7 +673,7 @@ class MainDashboard extends StatelessWidget {
               color: Colors.orange,
               onTap: () {
                 logger.i('👆 MainDashboard: Completed projects card tapped');
-                onNavigateToProjects(initialTab: 2); // Completed tab
+                onNavigateToProjects(initialTab: 2);
               },
             );
           },

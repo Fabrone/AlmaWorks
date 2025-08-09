@@ -28,29 +28,54 @@ class _TodoWidgetState extends State<TodoWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    
     return Card(
+      elevation: 2,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(16),
+        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        constraints: const BoxConstraints(maxHeight: 400),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.assignment, color: Theme.of(context).primaryColor),
+                Icon(Icons.assignment, color: Theme.of(context).primaryColor, size: isMobile ? 20 : 24),
                 const SizedBox(width: 8),
-                const Text(
-                  'Upcoming Deadlines',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
+                Expanded(
+                  child: Text(
+                    'Upcoming Deadlines',
+                    style: TextStyle(
+                      fontSize: isMobile ? 16 : 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            ..._tasks.map((task) => _buildTodoItem(task)),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            Expanded(
+              child: _tasks.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No tasks available',
+                        style: TextStyle(
+                          color: Colors.grey[600],
+                          fontSize: isMobile ? 12 : 14,
+                        ),
+                      ),
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      physics: const ClampingScrollPhysics(),
+                      itemCount: _tasks.length,
+                      itemBuilder: (context, index) => _buildTodoItem(_tasks[index], isMobile),
+                    ),
+            ),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
@@ -76,20 +101,21 @@ class _TodoWidgetState extends State<TodoWidget> {
     );
   }
 
-  Widget _buildTodoItem(Task task) {
+  Widget _buildTodoItem(Task task, bool isMobile) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
+      padding: EdgeInsets.all(isMobile ? 8 : 12),
       decoration: BoxDecoration(
         color: task.isUrgent ? task.priorityColor.withValues(alpha: 0.1) : Colors.grey[50],
         borderRadius: BorderRadius.circular(8),
         border: task.isUrgent ? Border.all(color: task.priorityColor.withValues(alpha: 0.3)) : null,
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 4,
-            height: 32,
+            height: isMobile ? 28 : 32,
             decoration: BoxDecoration(
               color: task.priorityColor,
               borderRadius: BorderRadius.circular(2),
@@ -99,12 +125,13 @@ class _TodoWidgetState extends State<TodoWidget> {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  task.title, 
+                  task.title,
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                    fontSize: isMobile ? 12 : 14,
                     color: task.isUrgent ? task.priorityColor : null,
                   ),
                   maxLines: 2,
@@ -114,18 +141,20 @@ class _TodoWidgetState extends State<TodoWidget> {
                 Row(
                   children: [
                     Icon(
-                      task.isUrgent ? Icons.warning : Icons.schedule, 
-                      size: 12, 
+                      task.isUrgent ? Icons.warning : Icons.schedule,
+                      size: isMobile ? 10 : 12,
                       color: task.priorityColor,
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      task.deadline, 
+                      task.deadline,
                       style: TextStyle(
                         color: task.priorityColor,
-                        fontSize: 12,
+                        fontSize: isMobile ? 10 : 12,
                         fontWeight: FontWeight.w500,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -139,11 +168,11 @@ class _TodoWidgetState extends State<TodoWidget> {
                 color: task.priorityColor,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Text(
+              child: Text(
                 'URGENT',
                 style: TextStyle(
                   color: Colors.white,
-                  fontSize: 10,
+                  fontSize: isMobile ? 8 : 10,
                   fontWeight: FontWeight.bold,
                 ),
               ),
