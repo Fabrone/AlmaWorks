@@ -43,9 +43,20 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
   Widget build(BuildContext context) {
     _logger.d('🎨 AddProjectScreen: Building UI');
     
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Add New Project'),
+        title: const Text(
+          'Add New Project',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: const Color(0xFF0A2E5A),
+        foregroundColor: Colors.white,
         actions: [
           TextButton(
             onPressed: _isLoading ? null : _saveProject,
@@ -58,230 +69,327 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                    ),
                  )
-               : const Text('SAVE', style: TextStyle(color: Colors.white)),
+               : const Text('SAVE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Basic Information',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Project Name *',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a project name';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _descriptionController,
-                      decoration: const InputDecoration(
-                        labelText: 'Description *',
-                        border: OutlineInputBorder(),
-                      ),
-                      maxLines: 3,
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a project description';
-                        }
-                        return null;
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _locationController,
-                      decoration: const InputDecoration(
-                        labelText: 'Location *',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a project location';
-                        }
-                        return null;
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Project Details',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _budgetController,
-                      decoration: const InputDecoration(
-                        labelText: 'Budget (USD)',
-                        border: OutlineInputBorder(),
-                        prefixText: '\$ ',
-                      ),
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    DropdownButtonFormField<String?>(
-                      value: _selectedStatus,
-                      decoration: const InputDecoration(
-                        labelText: 'Status (Optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem<String?>(
-                          value: null,
-                          child: Text('Untracked'),
-                        ),
-                        DropdownMenuItem<String?>(
-                          value: 'active',
-                          child: Text('Active'),
-                        ),
-                        DropdownMenuItem<String?>(
-                          value: 'completed',
-                          child: Text('Completed'),
-                        ),
-                      ],
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedStatus = value;
-                        });
-                        _logger.d('📝 AddProjectScreen: Status changed to $_selectedStatus');
-                      },
-                    ),
-                    const SizedBox(height: 16),
-                    TextFormField(
-                      controller: _projectManagerController,
-                      decoration: const InputDecoration(
-                        labelText: 'Project Manager *',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a project manager';
-                        }
-                        return null;
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Timeline',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 16),
-                    ListTile(
-                      title: const Text('Start Date'),
-                      subtitle: Text(_formatDate(_startDate)),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: () => _selectStartDate(),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        side: BorderSide(color: Colors.grey[400]!),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    ListTile(
-                      title: const Text('End Date (Optional)'),
-                      subtitle: Text(_endDate != null ? _formatDate(_endDate!) : 'Not set'),
-                      trailing: const Icon(Icons.calendar_today),
-                      onTap: () => _selectEndDate(),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        side: BorderSide(color: Colors.grey[400]!),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Team Members',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextFormField(
-                            controller: _teamMemberController,
-                            decoration: const InputDecoration(
-                              labelText: 'Add Team Member',
-                              border: OutlineInputBorder(),
+      body: Column(
+        children: [
+          Expanded(
+            child: Form(
+              key: _formKey,
+              child: ListView(
+                padding: EdgeInsets.all(isMobile ? 12 : 16),
+                children: [
+                  Card(
+                    elevation: 2,
+                    child: Padding(
+                      padding: EdgeInsets.all(isMobile ? 12 : 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Basic Information',
+                            style: TextStyle(
+                              fontSize: isMobile ? 16 : 18, 
+                              fontWeight: FontWeight.bold
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          onPressed: _addTeamMember,
-                          child: const Text('Add'),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    if (_teamMembers.isNotEmpty) ...[
-                      const Text('Team Members:'),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _teamMembers.map((member) {
-                          return Chip(
-                            label: Text(member),
-                            onDeleted: () => _removeTeamMember(member),
-                          );
-                        }).toList(),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          TextFormField(
+                            controller: _nameController,
+                            decoration: const InputDecoration(
+                              labelText: 'Project Name *',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.business),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter a project name';
+                              }
+                              return null;
+                            },
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          TextFormField(
+                            controller: _descriptionController,
+                            decoration: const InputDecoration(
+                              labelText: 'Description *',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.description),
+                            ),
+                            maxLines: 3,
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter a project description';
+                              }
+                              return null;
+                            },
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          TextFormField(
+                            controller: _locationController,
+                            decoration: const InputDecoration(
+                              labelText: 'Location *',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.location_on),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter a project location';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
                       ),
-                    ],
-                  ],
-                ),
+                    ),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  Card(
+                    elevation: 2,
+                    child: Padding(
+                      padding: EdgeInsets.all(isMobile ? 12 : 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Project Details',
+                            style: TextStyle(
+                              fontSize: isMobile ? 16 : 18, 
+                              fontWeight: FontWeight.bold
+                            ),
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          TextFormField(
+                            controller: _budgetController,
+                            decoration: const InputDecoration(
+                              labelText: 'Budget (USD)',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.attach_money),
+                              prefixText: '\$ ',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                            ],
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          DropdownButtonFormField<String?>(
+                            value: _selectedStatus,
+                            decoration: const InputDecoration(
+                              labelText: 'Status (Optional)',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.flag),
+                            ),
+                            items: const [
+                              DropdownMenuItem<String?>(
+                                value: null,
+                                child: Text('Untracked'),
+                              ),
+                              DropdownMenuItem<String?>(
+                                value: 'active',
+                                child: Text('Active'),
+                              ),
+                              DropdownMenuItem<String?>(
+                                value: 'completed',
+                                child: Text('Completed'),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedStatus = value;
+                              });
+                              _logger.d('📝 AddProjectScreen: Status changed to $_selectedStatus');
+                            },
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          TextFormField(
+                            controller: _projectManagerController,
+                            decoration: const InputDecoration(
+                              labelText: 'Project Manager *',
+                              border: OutlineInputBorder(),
+                              prefixIcon: Icon(Icons.person),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.isEmpty) {
+                                return 'Please enter a project manager';
+                              }
+                              return null;
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  Card(
+                    elevation: 2,
+                    child: Padding(
+                      padding: EdgeInsets.all(isMobile ? 12 : 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Timeline',
+                            style: TextStyle(
+                              fontSize: isMobile ? 16 : 18, 
+                              fontWeight: FontWeight.bold
+                            ),
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[400]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: ListTile(
+                              leading: const Icon(Icons.calendar_today, color: Color(0xFF0A2E5A)),
+                              title: const Text('Start Date'),
+                              subtitle: Text(_formatDate(_startDate)),
+                              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                              onTap: () => _selectStartDate(),
+                            ),
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(color: Colors.grey[400]!),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: ListTile(
+                              leading: const Icon(Icons.event, color: Color(0xFF0A2E5A)),
+                              title: const Text('End Date (Optional)'),
+                              subtitle: Text(_endDate != null ? _formatDate(_endDate!) : 'Not set'),
+                              trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                              onTap: () => _selectEndDate(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  SizedBox(height: isMobile ? 12 : 16),
+                  Card(
+                    elevation: 2,
+                    child: Padding(
+                      padding: EdgeInsets.all(isMobile ? 12 : 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Team Members',
+                            style: TextStyle(
+                              fontSize: isMobile ? 16 : 18, 
+                              fontWeight: FontWeight.bold
+                            ),
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextFormField(
+                                  controller: _teamMemberController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Add Team Member',
+                                    border: OutlineInputBorder(),
+                                    prefixIcon: Icon(Icons.person_add),
+                                  ),
+                                  onFieldSubmitted: (_) => _addTeamMember(),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton.icon(
+                                onPressed: _addTeamMember,
+                                icon: const Icon(Icons.add),
+                                label: const Text('Add'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0A2E5A),
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: isMobile ? 12 : 16),
+                          if (_teamMembers.isNotEmpty) ...[
+                            const Text(
+                              'Team Members:',
+                              style: TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _teamMembers.map((member) {
+                                return Chip(
+                                  avatar: CircleAvatar(
+                                    backgroundColor: const Color(0xFF0A2E5A),
+                                    child: Text(
+                                      member.substring(0, 1).toUpperCase(),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  label: Text(member),
+                                  onDeleted: () => _removeTeamMember(member),
+                                  deleteIcon: const Icon(Icons.close, size: 18),
+                                );
+                              }).toList(),
+                            ),
+                          ] else ...[
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.grey[300]!),
+                              ),
+                              child: Column(
+                                children: [
+                                  Icon(Icons.people_outline, 
+                                    size: 48, 
+                                    color: Colors.grey[400]
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    'No team members added yet',
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+          // Footer
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.all(isMobile ? 12 : 16),
+            color: const Color(0xFF0A2E5A),
+            child: Text(
+              '© 2025 JV Alma C.I.S Site Management System',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: isMobile ? 12 : 14,
+                fontWeight: FontWeight.w400,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -324,11 +432,21 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
 
   void _addTeamMember() {
     if (_teamMemberController.text.isNotEmpty) {
-      setState(() {
-        _teamMembers.add(_teamMemberController.text.trim());
-        _teamMemberController.clear();
-      });
-      _logger.i('👥 AddProjectScreen: Team member added. Total: ${_teamMembers.length}');
+      final newMember = _teamMemberController.text.trim();
+      if (!_teamMembers.contains(newMember)) {
+        setState(() {
+          _teamMembers.add(newMember);
+          _teamMemberController.clear();
+        });
+        _logger.i('👥 AddProjectScreen: Team member added. Total: ${_teamMembers.length}');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Team member already exists'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
     }
   }
 
@@ -383,8 +501,12 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
         _logger.i('✅ AddProjectScreen: Project saved successfully with ID: $projectId');
 
         if (mounted) {
-          Navigator.pop(context, true);
-          ScaffoldMessenger.of(context).showSnackBar(
+          // Store context references before async operations
+          final navigator = Navigator.of(context);
+          final scaffoldMessenger = ScaffoldMessenger.of(context);
+          
+          navigator.pop(true);
+          scaffoldMessenger.showSnackBar(
             SnackBar(
               content: Text('Project "${newProject.name}" created successfully!'),
               backgroundColor: Colors.green,

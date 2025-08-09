@@ -21,17 +21,19 @@ class ProjectDashboardScreen extends StatelessWidget {
     final effectiveLogger = logger;
     effectiveLogger.d('🎨 ProjectDashboardScreen: Building project dashboard for: ${project.name}');
     
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildProjectHeader(),
-          const SizedBox(height: 24),
-          _buildProjectMetrics(context),
-          const SizedBox(height: 24),
-          _buildContentSection(context),
-        ],
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildProjectHeader(),
+            const SizedBox(height: 24),
+            _buildProjectMetrics(context),
+            const SizedBox(height: 24),
+            _buildContentSection(context),
+          ],
+        ),
       ),
     );
   }
@@ -223,20 +225,26 @@ class ProjectDashboardScreen extends StatelessWidget {
       ),
     );
     
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: isTablet ? 4 : 2,
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
-      childAspectRatio: isTablet ? 1.2 : 1.1,
-      children: cards,
+    return SizedBox(
+      height: isTablet ? 120 : 240, // Fixed height based on layout
+      child: GridView.count(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisCount: isTablet ? 4 : 2,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
+        childAspectRatio: isTablet ? 2.0 : 1.3,
+        children: cards,
+      ),
     );
   }
 
   Widget _buildContentSection(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth > 800;
+    
+    // Fixed height for all widgets
+    const double widgetHeight = 400.0;
     
     if (isTablet) {
       return Row(
@@ -246,26 +254,44 @@ class ProjectDashboardScreen extends StatelessWidget {
             flex: 2,
             child: Column(
               children: [
-                const ActivityFeed(),
+                SizedBox(
+                  height: widgetHeight,
+                  child: const ActivityFeed(),
+                ),
                 const SizedBox(height: 16),
-                const TodoWidget(),
+                SizedBox(
+                  height: widgetHeight,
+                  child: const TodoWidget(),
+                ),
               ],
             ),
           ),
           const SizedBox(width: 16),
-          const Expanded(
-            child: WeatherWidget(),
+          Expanded(
+            child: SizedBox(
+              height: widgetHeight,
+              child: const WeatherWidget(),
+            ),
           ),
         ],
       );
     } else {
-      return const Column(
+      return Column(
         children: [
-          ActivityFeed(),
-          SizedBox(height: 16),
-          WeatherWidget(),
-          SizedBox(height: 16),
-          TodoWidget(),
+          SizedBox(
+            height: widgetHeight,
+            child: const ActivityFeed(),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: widgetHeight,
+            child: const WeatherWidget(),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: widgetHeight,
+            child: const TodoWidget(),
+          ),
         ],
       );
     }

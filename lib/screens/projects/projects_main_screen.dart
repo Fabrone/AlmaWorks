@@ -62,7 +62,21 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     super.build(context); // Required for AutomaticKeepAliveClientMixin
     _logger.d('🎨 ProjectsMainScreen: Building UI, isLoading: $_isLoading');
     
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    
     return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Projects',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: const Color(0xFF0A2E5A),
+        foregroundColor: Colors.white,
+      ),
       body: Column(
         children: [
           // Navigation-style tab bar
@@ -71,6 +85,8 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
           Expanded(
             child: _buildProjectsList(),
           ),
+          // Footer
+          _buildFooter(context, isMobile),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -87,7 +103,8 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
             _logger.d('🔄 ProjectsMainScreen: Project added successfully, stream will auto-update');
           }
         },
-        child: const Icon(Icons.add),
+        backgroundColor: const Color(0xFF0A2E5A),
+        child: const Icon(Icons.add, color: Colors.white),
       ),
     );
   }
@@ -235,6 +252,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
             child: Padding(
               padding: const EdgeInsets.all(32.0),
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
                     Icons.error_outline,
@@ -285,13 +303,14 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         
         if (filteredProjects.isEmpty) {
           final filterText = _statusFilter == 'All' 
-              ? 'No projects found' 
+              ? 'No projects found'
               : 'No $_statusFilter projects';
           
           return Center(
             child: Padding(
               padding: const EdgeInsets.all(32.0),
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
                     Icons.folder_open,
@@ -337,10 +356,15 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
             padding: const EdgeInsets.all(16),
             itemCount: filteredProjects.length,
             itemBuilder: (context, index) {
-              final project = ProjectModel.fromFirestore(filteredProjects[index]);
-              _logger.d('🏗️ ProjectsMainScreen: Building list item for project: ${project.name}');
-              
-              return _buildProjectCard(project, context);
+              try {
+                final project = ProjectModel.fromFirestore(filteredProjects[index]);
+                _logger.d('🏗️ ProjectsMainScreen: Building list item for project: ${project.name}');
+                
+                return _buildProjectCard(project, context);
+              } catch (e) {
+                _logger.e('❌ ProjectsMainScreen: Error building project card at index $index: $e');
+                return const SizedBox.shrink(); // Return empty widget on error
+              }
             },
           ),
         );
@@ -538,7 +562,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     Provider.of<SelectedProjectProvider>(context, listen: false)
         .selectProject(project);
     
-    // Navigate to project summary screen
+    // Navigate to project summary screen with proper error handling
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -549,6 +573,21 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
       ),
     ).then((_) {
       _logger.d('🔙 ProjectsMainScreen: Returned from project summary');
+    }).catchError((error) {
+      _logger.e('❌ ProjectsMainScreen: Error navigating to project summary: $error');
+      // Store context check before async operations
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error opening project: ${error.toString()}'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        });
+      }
     });
   }
 
@@ -655,6 +694,23 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
           ],
         );
       },
+    );
+  }
+
+  Widget _buildFooter(BuildContext context, bool isMobile) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A),
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
+        ),
+        textAlign: TextAlign.center,
+      ),
     );
   }
 

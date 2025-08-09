@@ -155,8 +155,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AppBar(
       title: Text(
         title,
-        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        style: const TextStyle(
+          fontWeight: FontWeight.bold, 
+          color: Colors.white
+        ),
       ),
+      centerTitle: true,
       backgroundColor: const Color(0xFF0A2E5A), // Darker navy blue
       actions: [
         IconButton(
@@ -756,20 +760,84 @@ class _MainDashboardState extends State<MainDashboard> {
         children: [
           SizedBox(
             height: widgetHeight,
-            child: PageView.builder(
-              controller: _pageController,
-              onPageChanged: (index) {
-                setState(() {
-                  _currentPage = index;
-                });
-              },
-              itemCount: widgets.length,
-              itemBuilder: (context, index) {
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                  child: widgets[index],
-                );
-              },
+            child: Stack(
+              children: [
+                PageView.builder(
+                  controller: _pageController,
+                  onPageChanged: (index) {
+                    setState(() {
+                      _currentPage = index;
+                    });
+                  },
+                  itemCount: widgets.length,
+                  itemBuilder: (context, index) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                      child: widgets[index],
+                    );
+                  },
+                ),
+                // Left arrow button
+                if (_currentPage > 0)
+                  Positioned(
+                    left: 8,
+                    top: widgetHeight / 2 - 24,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0A2E5A).withValues(alpha: 0.9),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        onPressed: () {
+                          _pageController.previousPage(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          );
+                        },
+                        icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                      ),
+                    ),
+                  ),
+                // Right arrow button
+                if (_currentPage < widgets.length - 1)
+                  Positioned(
+                    right: 8,
+                    top: widgetHeight / 2 - 24,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0A2E5A).withValues(alpha: 0.9),
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: IconButton(
+                        onPressed: () {
+                          _pageController.nextPage(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          );
+                        },
+                        icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
+                        padding: const EdgeInsets.all(8),
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(height: 16),
@@ -793,7 +861,7 @@ class _MainDashboardState extends State<MainDashboard> {
           ),
           const SizedBox(height: 16),
           // Navigation buttons
-          Row(
+          /*Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               ElevatedButton.icon(
@@ -829,7 +897,7 @@ class _MainDashboardState extends State<MainDashboard> {
                 ),
               ),
             ],
-          ),
+          ),*/
         ],
       ),
     );
