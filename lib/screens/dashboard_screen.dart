@@ -155,11 +155,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AppBar(
       title: Text(
         title,
-        style: const TextStyle(fontWeight: FontWeight.bold),
+        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
       ),
+      backgroundColor: const Color(0xFF0A2E5A), // Darker navy blue
       actions: [
         IconButton(
-          icon: const Icon(Icons.search),
+          icon: const Icon(Icons.search, color: Colors.white),
           onPressed: () {
             _logger.i('🔍 DashboardScreen: Search button pressed');
             Navigator.push(
@@ -169,7 +170,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           },
         ),
         IconButton(
-          icon: const Icon(Icons.notifications),
+          icon: const Icon(Icons.notifications, color: Colors.white),
           onPressed: () {
             _logger.i('🔔 DashboardScreen: Notifications button pressed');
             Navigator.push(
@@ -190,7 +191,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             padding: EdgeInsets.only(right: 16.0),
             child: CircleAvatar(
               radius: 16,
-              child: Icon(Icons.person, size: 20),
+              backgroundColor: Colors.white,
+              child: Icon(Icons.person, size: 20, color: Color(0xFF0A2E5A)),
             ),
           ),
         ),
@@ -215,7 +217,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           height: 120,
           width: double.infinity,
           decoration: const BoxDecoration(
-            color: Color(0xFF1976D2),
+            color: Color(0xFF0A2E5A), // Darker navy blue
           ),
           child: const Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -578,7 +580,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class MainDashboard extends StatelessWidget {
+class MainDashboard extends StatefulWidget {
   final ProjectService projectService;
   final Logger logger;
   final Function({int initialTab}) onNavigateToProjects;
@@ -591,25 +593,47 @@ class MainDashboard extends StatelessWidget {
   });
 
   @override
+  State<MainDashboard> createState() => _MainDashboardState();
+}
+
+class _MainDashboardState extends State<MainDashboard> {
+  final PageController _pageController = PageController();
+  int _currentPage = 0;
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    logger.d('🏗️ MainDashboard: Building general dashboard');
-    
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 1200;
+    final isDesktop = screenWidth >= 1200;
+
+    widget.logger.d('🏗️ MainDashboard: Building general dashboard, isMobile: $isMobile, isTablet: $isTablet');
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'General Overview',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
+          Padding(
+            padding: EdgeInsets.all(isMobile ? 12 : 16),
+            child: const Text(
+              'General Overview',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-          const SizedBox(height: 16),
           _buildMetricsGrid(context),
-          const SizedBox(height: 24),
-          _buildContentSection(context),
+          const SizedBox(height: 16),
+          _buildContentSection(context, isMobile, isTablet, isDesktop),
+          const SizedBox(height: 16),
+          _buildFooter(context, isMobile),
         ],
       ),
     );
@@ -617,128 +641,214 @@ class MainDashboard extends StatelessWidget {
 
   Widget _buildMetricsGrid(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth > 600;
     final isMobile = screenWidth < 600;
     
-    logger.d('📊 MainDashboard: Building metrics grid, isTablet: $isTablet, isMobile: $isMobile');
+    widget.logger.d('📊 MainDashboard: Building metrics grid, isMobile: $isMobile');
     
-    return GridView.count(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisCount: isMobile ? 1 : (isTablet ? 3 : 3),
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
-      childAspectRatio: isMobile ? 2.5 : (isTablet ? 1.8 : 2.0),
-      children: [
-        FutureBuilder<int>(
-          future: _safeGetProjectCount(() => projectService.getAllProjectsCount(), 'total'),
-          builder: (context, snapshot) {
-            logger.d('📈 MainDashboard: Total projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
-            return DashboardCard(
-              title: 'Total Projects',
-              value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
-              icon: Icons.folder,
-              color: Colors.blue,
-              onTap: () {
-                logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
-                onNavigateToProjects();
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: FutureBuilder<int>(
+              future: _safeGetProjectCount(() => widget.projectService.getAllProjectsCount(), 'total'),
+              builder: (context, snapshot) {
+                widget.logger.d('📈 MainDashboard: Total projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
+                return DashboardCard(
+                  title: 'Total Projects',
+                  value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
+                  icon: Icons.folder,
+                  color: Colors.blue,
+                  onTap: () {
+                    widget.logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
+                    widget.onNavigateToProjects();
+                  },
+                );
               },
-            );
-          },
-        ),
-        FutureBuilder<int>(
-          future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('active'), 'active'),
-          builder: (context, snapshot) {
-            logger.d('📈 MainDashboard: Active projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
-            return DashboardCard(
-              title: 'Active Projects',
-              value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
-              icon: Icons.work,
-              color: Colors.green,
-              onTap: () {
-                logger.i('👆 MainDashboard: Active projects card tapped');
-                onNavigateToProjects(initialTab: 1);
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FutureBuilder<int>(
+              future: _safeGetProjectCount(() => widget.projectService.getProjectCountByStatus('active'), 'active'),
+              builder: (context, snapshot) {
+                widget.logger.d('📈 MainDashboard: Active projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
+                return DashboardCard(
+                  title: 'Active Projects',
+                  value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
+                  icon: Icons.work,
+                  color: Colors.green,
+                  onTap: () {
+                    widget.logger.i('👆 MainDashboard: Active projects card tapped');
+                    widget.onNavigateToProjects(initialTab: 1);
+                  },
+                );
               },
-            );
-          },
-        ),
-        FutureBuilder<int>(
-          future: _safeGetProjectCount(() => projectService.getProjectCountByStatus('completed'), 'completed'),
-          builder: (context, snapshot) {
-            logger.d('📈 MainDashboard: Completed projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
-            return DashboardCard(
-              title: 'Completed Projects',
-              value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
-              icon: Icons.check_circle,
-              color: Colors.orange,
-              onTap: () {
-                logger.i('👆 MainDashboard: Completed projects card tapped');
-                onNavigateToProjects(initialTab: 2);
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FutureBuilder<int>(
+              future: _safeGetProjectCount(() => widget.projectService.getProjectCountByStatus('completed'), 'completed'),
+              builder: (context, snapshot) {
+                widget.logger.d('📈 MainDashboard: Completed projects - hasData: ${snapshot.hasData}, data: ${snapshot.data}, hasError: ${snapshot.hasError}');
+                return DashboardCard(
+                  title: 'Completed Projects',
+                  value: snapshot.hasData ? '${snapshot.data}' : (snapshot.hasError ? '0' : '...'),
+                  icon: Icons.check_circle,
+                  color: Colors.orange,
+                  onTap: () {
+                    widget.logger.i('👆 MainDashboard: Completed projects card tapped');
+                    widget.onNavigateToProjects(initialTab: 2);
+                  },
+                );
               },
-            );
-          },
-        ),
-      ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Future<int> _safeGetProjectCount(Future<int> Function() getCount, String type) async {
     try {
-      logger.d('🔢 MainDashboard: Getting $type project count safely');
+      widget.logger.d('🔢 MainDashboard: Getting $type project count safely');
       final count = await getCount();
-      logger.i('✅ MainDashboard: $type project count retrieved: $count');
+      widget.logger.i('✅ MainDashboard: $type project count retrieved: $count');
       return count;
     } catch (e) {
-      logger.e('❌ MainDashboard: Error getting $type project count: $e');
+      widget.logger.e('❌ MainDashboard: Error getting $type project count: $e');
       return 0;
     }
   }
 
-  Widget _buildContentSection(BuildContext context) {
+  Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final isTablet = screenWidth > 800;
-    final isMobile = screenWidth < 600;
+    final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
+    final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     
-    logger.d('🏗️ MainDashboard: Building content section, isTablet: $isTablet, isMobile: $isMobile');
+    // Fixed height for all widgets to ensure uniformity
+    const double widgetHeight = 400.0;
     
-    if (isTablet) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    widget.logger.d('🏗️ MainDashboard: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
+
+    final widgets = [
+      SizedBox(
+        width: availableWidth,
+        height: widgetHeight,
+        child: const TodoWidget(),
+      ),
+      SizedBox(
+        width: availableWidth,
+        height: widgetHeight,
+        child: const ActivityFeed(),
+      ),
+      SizedBox(
+        width: availableWidth,
+        height: widgetHeight,
+        child: const WeatherWidget(),
+      ),
+    ];
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
+      child: Column(
         children: [
-          Expanded(
-            flex: 2,
-            child: Column(
-              children: [
-                const ActivityFeed(),
-                const SizedBox(height: 16),
-                const TodoWidget(),
-              ],
+          SizedBox(
+            height: widgetHeight,
+            child: PageView.builder(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentPage = index;
+                });
+              },
+              itemCount: widgets.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: widgets[index],
+                );
+              },
             ),
           ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Container(
-              constraints: const BoxConstraints(maxHeight: 400),
-              child: const WeatherWidget(),
+          const SizedBox(height: 16),
+          // Page indicators
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(
+              widgets.length,
+              (index) => Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _currentPage == index
+                      ? const Color(0xFF0A2E5A)
+                      : Colors.grey.withValues(alpha: 0.4),
+                ),
+              ),
             ),
+          ),
+          const SizedBox(height: 16),
+          // Navigation buttons
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton.icon(
+                onPressed: _currentPage > 0
+                    ? () {
+                        _pageController.previousPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Previous'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A2E5A),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: _currentPage < widgets.length - 1
+                    ? () {
+                        _pageController.nextPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.arrow_forward),
+                label: const Text('Next'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A2E5A),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
           ),
         ],
-      );
-    } else {
-      return Column(
-        children: [
-          const ActivityFeed(),
-          const SizedBox(height: 16),
-          Container(
-            constraints: BoxConstraints(
-              maxHeight: isMobile ? 300 : 400,
-            ),
-            child: const WeatherWidget(),
-          ),
-          const SizedBox(height: 16),
-          const TodoWidget(),
-        ],
-      );
-    }
+      ),
+    );
+  }
+
+  Widget _buildFooter(BuildContext context, bool isMobile) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A), // Darker navy blue
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
   }
 }

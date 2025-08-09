@@ -27,7 +27,7 @@ class DashboardCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          padding: EdgeInsets.all(isMobile ? 12 : 16),
+          padding: EdgeInsets.all(isMobile ? 8 : 12),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -35,7 +35,7 @@ class DashboardCard extends StatelessWidget {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.all(6),
                     decoration: BoxDecoration(
                       color: color.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
@@ -43,7 +43,7 @@ class DashboardCard extends StatelessWidget {
                     child: Icon(
                       icon,
                       color: color,
-                      size: isMobile ? 18 : 20,
+                      size: isMobile ? 16 : 18,
                     ),
                   ),
                   const Spacer(),
@@ -51,7 +51,7 @@ class DashboardCard extends StatelessWidget {
                     child: Text(
                       value,
                       style: TextStyle(
-                        fontSize: isMobile ? 20 : 24,
+                        fontSize: isMobile ? 18 : 22,
                         fontWeight: FontWeight.bold,
                         color: color,
                       ),
@@ -59,11 +59,11 @@ class DashboardCard extends StatelessWidget {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 8),
               Text(
                 title,
                 style: TextStyle(
-                  fontSize: isMobile ? 12 : 14,
+                  fontSize: isMobile ? 11 : 13,
                   fontWeight: FontWeight.w500,
                   color: Colors.grey[700],
                 ),

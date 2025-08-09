@@ -13,6 +13,7 @@ class _WeatherWidgetState extends State<WeatherWidget> {
   final WeatherService _weatherService = WeatherService();
   List<WeatherData> _weatherData = [];
   bool _isLoading = true;
+  bool _isExpanded = false;
 
   @override
   void initState() {
@@ -48,13 +49,10 @@ class _WeatherWidgetState extends State<WeatherWidget> {
       elevation: 2,
       child: Container(
         width: double.infinity,
+        height: double.infinity,
         padding: EdgeInsets.all(isMobile ? 12 : 16),
-        constraints: BoxConstraints(
-          maxHeight: isMobile ? 300 : (isTablet ? 350 : 400), // Adjusted max height
-        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
@@ -144,16 +142,34 @@ class _WeatherWidgetState extends State<WeatherWidget> {
       );
     }
     
-    return ListView.builder(
-      shrinkWrap: true,
-      physics: const ClampingScrollPhysics(),
-      itemCount: _weatherData.length,
-      itemBuilder: (context, index) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
-          child: _buildWeatherItem(_weatherData[index], isMobile, isTablet),
-        );
-      },
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            itemCount: _isExpanded ? _weatherData.length : (_weatherData.length > 4 ? 4 : _weatherData.length),
+            itemBuilder: (context, index) {
+              return Padding(
+                padding: EdgeInsets.only(bottom: isMobile ? 8 : 12),
+                child: _buildWeatherItem(_weatherData[index], isMobile, isTablet),
+              );
+            },
+          ),
+        ),
+        if (_weatherData.length > 4)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Center(
+              child: TextButton(
+                onPressed: () {
+                  setState(() {
+                    _isExpanded = !_isExpanded;
+                  });
+                },
+                child: Text(_isExpanded ? 'Show Less' : 'View All Weather Data (${_weatherData.length})'),
+              ),
+            ),
+          ),
+      ],
     );
   }
 

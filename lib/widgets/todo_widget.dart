@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../screens/add_task_screen.dart';
 import '../models/task.dart';
 import '../services/task_service.dart';
 
@@ -13,6 +12,7 @@ class TodoWidget extends StatefulWidget {
 class _TodoWidgetState extends State<TodoWidget> {
   final TaskService _taskService = TaskService();
   List<Task> _tasks = [];
+  bool _isExpanded = false;
 
   @override
   void initState() {
@@ -35,8 +35,8 @@ class _TodoWidgetState extends State<TodoWidget> {
       elevation: 2,
       child: Container(
         width: double.infinity,
+        height: double.infinity,
         padding: EdgeInsets.all(isMobile ? 12 : 16),
-        constraints: const BoxConstraints(maxHeight: 400),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -68,32 +68,32 @@ class _TodoWidgetState extends State<TodoWidget> {
                         ),
                       ),
                     )
-                  : ListView.builder(
-                      shrinkWrap: true,
-                      physics: const ClampingScrollPhysics(),
-                      itemCount: _tasks.length,
-                      itemBuilder: (context, index) => _buildTodoItem(_tasks[index], isMobile),
+                  : Column(
+                      children: [
+                        Expanded(
+                          child: ListView.builder(
+                            itemCount: _isExpanded ? _tasks.length : (_tasks.length > 4 ? 4 : _tasks.length),
+                            itemBuilder: (context, index) {
+                              return _buildTodoItem(_tasks[index], isMobile);
+                            },
+                          ),
+                        ),
+                        if (_tasks.length > 4)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Center(
+                              child: TextButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _isExpanded = !_isExpanded;
+                                  });
+                                },
+                                child: Text(_isExpanded ? 'Show Less' : 'View All Tasks (${_tasks.length})'),
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  final result = await Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const AddTaskScreen()),
-                  );
-                  if (result == true) {
-                    _loadTasks();
-                  }
-                },
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('Add Task'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
             ),
           ],
         ),
