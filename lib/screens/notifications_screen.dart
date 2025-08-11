@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
+import '../widgets/responsive_layout.dart';
 
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  final Logger? logger;
+  
+  const NotificationsScreen({super.key, this.logger});
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
+  late final Logger _logger;
   final List<NotificationItem> _notifications = [
     NotificationItem(
       id: '1',
@@ -52,32 +57,249 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _logger = widget.logger ?? Logger();
+    _logger.i('🔔 NotificationsScreen: Initialized');
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isTablet = screenWidth >= 600 && screenWidth < 1200;
+    
+    return ResponsiveLayout(
+      mobile: _buildMobileLayout(),
+      tablet: _buildTabletLayout(isTablet),
+      desktop: _buildDesktopLayout(),
+    );
+  }
+
+  Widget _buildMobileLayout() {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notifications'),
-        actions: [
-          TextButton(
-            onPressed: _markAllAsRead,
-            child: const Text('Mark All Read', style: TextStyle(color: Colors.white)),
+      appBar: _buildAppBar(),
+      body: Column(
+        children: [
+          Expanded(child: _buildNotificationsList(true)),
+          _buildFooter(context, true),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabletLayout(bool isTablet) {
+    return Scaffold(
+      appBar: _buildAppBar(),
+      body: Row(
+        children: [
+          _buildSidebar(context, isTablet),
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(child: _buildNotificationsList(false)),
+                _buildFooter(context, false),
+              ],
+            ),
           ),
         ],
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _notifications.length,
-        itemBuilder: (context, index) {
-          final notification = _notifications[index];
-          return _buildNotificationItem(notification);
-        },
+    );
+  }
+
+  Widget _buildDesktopLayout() {
+    return Scaffold(
+      appBar: _buildAppBar(),
+      body: Row(
+        children: [
+          _buildSidebar(context, false),
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(child: _buildNotificationsList(false)),
+                _buildFooter(context, false),
+              ],
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: const Text(
+        'Notifications',
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+      centerTitle: true,
+      backgroundColor: const Color(0xFF0A2E5A),
+      foregroundColor: Colors.white,
+      actions: [
+        TextButton(
+          onPressed: _markAllAsRead,
+          child: const Text(
+            'Mark All Read',
+            style: TextStyle(color: Colors.white),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSidebar(BuildContext context, bool isTablet) {
+    return Container(
+      width: isTablet ? 280 : 300,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withValues(alpha: 0.1),
+            blurRadius: 4,
+            offset: const Offset(2, 0),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            height: 120,
+            width: double.infinity,
+            decoration: const BoxDecoration(
+              color: Color(0xFF0A2E5A),
+            ),
+            child: const Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Text(
+                    'AlmaWorks',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16.0),
+                  child: Text(
+                    'Site Management',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.dashboard),
+                  title: const Text('Dashboard'),
+                  onTap: () {
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.folder),
+                  title: const Text('Projects'),
+                  onTap: () {
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.notifications),
+                  title: const Text('Notifications'),
+                  selected: true,
+                  onTap: () {},
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Text(
+                    'System Sections',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.grey,
+                    ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.description),
+                  title: const Text('Documents'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+                ListTile(
+                  leading: const Icon(Icons.architecture),
+                  title: const Text('Drawings'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+                ListTile(
+                  leading: const Icon(Icons.schedule),
+                  title: const Text('Schedule'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+                ListTile(
+                  leading: const Icon(Icons.security),
+                  title: const Text('Quality & Safety'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+                ListTile(
+                  leading: const Icon(Icons.analytics),
+                  title: const Text('Reports'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+                ListTile(
+                  leading: const Icon(Icons.photo_library),
+                  title: const Text('Photo Gallery'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+                ListTile(
+                  leading: const Icon(Icons.attach_money),
+                  title: const Text('Financials'),
+                  enabled: false,
+                  onTap: () {},
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotificationsList(bool isMobile) {
+    return ListView.builder(
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      itemCount: _notifications.length,
+      itemBuilder: (context, index) {
+        final notification = _notifications[index];
+        return _buildNotificationItem(notification);
+      },
     );
   }
 
   Widget _buildNotificationItem(NotificationItem notification) {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
-      color: notification.isRead ? Colors.white : Colors.blue.withValues(alpha: 0.05),
+      color: notification.isRead 
+          ? Colors.white 
+          : const Color(0xFF0A2E5A).withValues(alpha: 0.05),
       child: ListTile(
         leading: Container(
           width: 40,
@@ -113,20 +335,38 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           ],
         ),
         trailing: notification.isRead 
-          ? null 
-          : Container(
-              width: 8,
-              height: 8,
-              decoration: const BoxDecoration(
-                color: Colors.blue,
-                shape: BoxShape.circle,
+            ? null 
+            : Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF0A2E5A),
+                  shape: BoxShape.circle,
+                ),
               ),
-            ),
         onTap: () {
           setState(() {
             notification.isRead = true;
           });
+          _logger.i('📖 NotificationsScreen: Notification marked as read: ${notification.title}');
         },
+      ),
+    );
+  }
+
+  Widget _buildFooter(BuildContext context, bool isMobile) {
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A),
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
+        ),
+        textAlign: TextAlign.center,
       ),
     );
   }
@@ -134,7 +374,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   String _formatTimestamp(DateTime timestamp) {
     final now = DateTime.now();
     final difference = now.difference(timestamp);
-
+    
     if (difference.inMinutes < 60) {
       return '${difference.inMinutes}m ago';
     } else if (difference.inHours < 24) {
@@ -150,6 +390,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         notification.isRead = true;
       }
     });
+    _logger.i('✅ NotificationsScreen: All notifications marked as read');
+  }
+
+  @override
+  void dispose() {
+    _logger.i('🧹 NotificationsScreen: Disposing resources');
+    super.dispose();
   }
 }
 

@@ -4,16 +4,21 @@ import 'package:logger/logger.dart';
 import '../../models/project_model.dart';
 import '../../services/project_service.dart';
 
-class AddProjectScreen extends StatefulWidget {
+class EditProjectScreen extends StatefulWidget {
+  final ProjectModel project;
   final Logger logger;
   
-  const AddProjectScreen({super.key, required this.logger});
+  const EditProjectScreen({
+    super.key,
+    required this.project,
+    required this.logger,
+  });
 
   @override
-  State<AddProjectScreen> createState() => _AddProjectScreenState();
+  State<EditProjectScreen> createState() => _EditProjectScreenState();
 }
 
-class _AddProjectScreenState extends State<AddProjectScreen> {
+class _EditProjectScreenState extends State<EditProjectScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
@@ -36,12 +41,25 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
     super.initState();
     _logger = widget.logger;
     _projectService = ProjectService();
-    _logger.i('🏗️ AddProjectScreen: Initialized');
+    _populateFields();
+    _logger.i('🏗️ EditProjectScreen: Initialized for project: ${widget.project.name}');
+  }
+
+  void _populateFields() {
+    _nameController.text = widget.project.name;
+    _descriptionController.text = widget.project.description;
+    _locationController.text = widget.project.location;
+    _budgetController.text = widget.project.budget?.toString() ?? '';
+    _projectManagerController.text = widget.project.projectManager;
+    _selectedStatus = widget.project.status;
+    _startDate = widget.project.startDate;
+    _endDate = widget.project.endDate;
+    _teamMembers.addAll(widget.project.teamMembers);
   }
 
   @override
   Widget build(BuildContext context) {
-    _logger.d('🎨 AddProjectScreen: Building UI');
+    _logger.d('🎨 EditProjectScreen: Building UI');
     
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
@@ -58,9 +76,9 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
     final isMobile = screenWidth < 600;
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Add New Project',
-          style: TextStyle(
+        title: Text(
+          'Edit ${widget.project.name}',
+          style: const TextStyle(
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -85,7 +103,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                     SizedBox(height: isMobile ? 12 : 16),
                     _buildTeamMembersCard(isMobile),
                     SizedBox(height: isMobile ? 24 : 32),
-                    _buildSaveButton(),
+                    _buildUpdateButton(),
                     SizedBox(height: isMobile ? 12 : 16),
                   ],
                 ),
@@ -103,9 +121,9 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
     final isMobile = screenWidth < 600;
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Add New Project',
-          style: TextStyle(
+        title: Text(
+          'Edit ${widget.project.name}',
+          style: const TextStyle(
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -134,7 +152,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                           SizedBox(height: isMobile ? 12 : 16),
                           _buildTeamMembersCard(isMobile),
                           SizedBox(height: isMobile ? 24 : 32),
-                          _buildSaveButton(),
+                          _buildUpdateButton(),
                           SizedBox(height: isMobile ? 12 : 16),
                         ],
                       ),
@@ -171,11 +189,11 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
             decoration: const BoxDecoration(
               color: Color(0xFF0A2E5A),
             ),
-            child: const Column(
+            child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Padding(
+                const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16.0),
                   child: Text(
                     'AlmaWorks',
@@ -187,13 +205,15 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                   ),
                 ),
                 Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Text(
                     'Site Management',
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 16,
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ],
@@ -218,8 +238,8 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                   },
                 ),
                 ListTile(
-                  leading: const Icon(Icons.add),
-                  title: const Text('Add Project'),
+                  leading: const Icon(Icons.edit),
+                  title: const Text('Edit Project'),
                   selected: true,
                   onTap: () {},
                 ),
@@ -406,7 +426,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                 setState(() {
                   _selectedStatus = value;
                 });
-                _logger.d('📝 AddProjectScreen: Status changed to $_selectedStatus');
+                _logger.d('📝 EditProjectScreen: Status changed to $_selectedStatus');
               },
             ),
             SizedBox(height: isMobile ? 12 : 16),
@@ -582,12 +602,12 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
     );
   }
 
-  Widget _buildSaveButton() {
+  Widget _buildUpdateButton() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: ElevatedButton(
-        onPressed: _isLoading ? null : _saveProject,
+        onPressed: _isLoading ? null : _updateProject,
         style: ElevatedButton.styleFrom(
           backgroundColor: const Color(0xFF0A2E5A),
           foregroundColor: Colors.white,
@@ -609,11 +629,11 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                     ),
                   ),
                   SizedBox(width: 12),
-                  Text('Creating Project...', style: TextStyle(fontSize: 16)),
+                  Text('Updating Project...', style: TextStyle(fontSize: 16)),
                 ],
               )
             : const Text(
-                'Create Project',
+                'Update Project',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
       ),
@@ -642,23 +662,23 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
   }
 
   Future<void> _selectStartDate() async {
-    _logger.d('📅 AddProjectScreen: Selecting start date');
+    _logger.d('📅 EditProjectScreen: Selecting start date');
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: _startDate,
-      firstDate: DateTime.now().subtract(const Duration(days: 365)),
+      firstDate: DateTime.now().subtract(const Duration(days: 365 * 2)),
       lastDate: DateTime.now().add(const Duration(days: 365 * 5)),
     );
     if (picked != null && picked != _startDate) {
       setState(() {
         _startDate = picked;
       });
-      _logger.i('✅ AddProjectScreen: Start date selected: $_startDate');
+      _logger.i('✅ EditProjectScreen: Start date selected: $_startDate');
     }
   }
 
   Future<void> _selectEndDate() async {
-    _logger.d('📅 AddProjectScreen: Selecting end date');
+    _logger.d('📅 EditProjectScreen: Selecting end date');
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: _endDate ?? _startDate.add(const Duration(days: 365)),
@@ -669,7 +689,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
       setState(() {
         _endDate = picked;
       });
-      _logger.i('✅ AddProjectScreen: End date selected: $_endDate');
+      _logger.i('✅ EditProjectScreen: End date selected: $_endDate');
     }
   }
 
@@ -681,7 +701,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
           _teamMembers.add(newMember);
           _teamMemberController.clear();
         });
-        _logger.i('👥 AddProjectScreen: Team member added. Total: ${_teamMembers.length}');
+        _logger.i('👥 EditProjectScreen: Team member added. Total: ${_teamMembers.length}');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -697,26 +717,26 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
     setState(() {
       _teamMembers.remove(member);
     });
-    _logger.i('👥 AddProjectScreen: Team member removed: $member');
+    _logger.i('👥 EditProjectScreen: Team member removed: $member');
   }
 
-  void _saveProject() async {
-    _logger.i('💾 AddProjectScreen: Save project initiated');
+  void _updateProject() async {
+    _logger.i('💾 EditProjectScreen: Update project initiated');
     
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
       try {
-        _logger.d('🏗️ AddProjectScreen: Creating project model');
+        _logger.d('🏗️ EditProjectScreen: Creating updated project model');
         
         List<String> allTeamMembers = List.from(_teamMembers);
         if (!allTeamMembers.contains(_projectManagerController.text.trim())) {
           allTeamMembers.insert(0, _projectManagerController.text.trim());
         }
 
-        final newProject = ProjectModel(
-          id: '',
+        final updatedProject = ProjectModel(
+          id: widget.project.id,
           name: _nameController.text.trim(),
           description: _descriptionController.text.trim(),
           location: _locationController.text.trim(),
@@ -728,16 +748,16 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
           endDate: _endDate,
           projectManager: _projectManagerController.text.trim(),
           teamMembers: allTeamMembers,
-          createdAt: DateTime.now(),
+          createdAt: widget.project.createdAt,
           updatedAt: DateTime.now(),
         );
 
-        _logger.i('📋 AddProjectScreen: Project model created - Name: ${newProject.name}');
-        _logger.d('📤 AddProjectScreen: Saving to Firestore...');
+        _logger.i('📋 EditProjectScreen: Updated project model created - Name: ${updatedProject.name}');
+        _logger.d('📤 EditProjectScreen: Updating in Firestore...');
 
-        final projectId = await _projectService.addProject(newProject);
+        await _projectService.updateProject(updatedProject);
         
-        _logger.i('✅ AddProjectScreen: Project saved successfully with ID: $projectId');
+        _logger.i('✅ EditProjectScreen: Project updated successfully');
 
         if (mounted) {
           final navigator = Navigator.of(context);
@@ -746,20 +766,20 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
           navigator.pop(true);
           scaffoldMessenger.showSnackBar(
             SnackBar(
-              content: Text('Project "${newProject.name}" created successfully!'),
+              content: Text('Project "${updatedProject.name}" updated successfully!'),
               backgroundColor: Colors.green,
               duration: const Duration(seconds: 3),
             ),
           );
         }
       } catch (e, stackTrace) {
-        _logger.e('❌ AddProjectScreen: Error saving project',
+        _logger.e('❌ EditProjectScreen: Error updating project',
           error: e, stackTrace: stackTrace);
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error creating project: ${e.toString()}'),
+              content: Text('Error updating project: ${e.toString()}'),
               backgroundColor: Colors.red,
               duration: const Duration(seconds: 5),
             ),
@@ -773,13 +793,13 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
         }
       }
     } else {
-      _logger.w('⚠️ AddProjectScreen: Form validation failed');
+      _logger.w('⚠️ EditProjectScreen: Form validation failed');
     }
   }
 
   @override
   void dispose() {
-    _logger.i('🧹 AddProjectScreen: Disposing controllers');
+    _logger.i('🧹 EditProjectScreen: Disposing controllers');
     _nameController.dispose();
     _descriptionController.dispose();
     _locationController.dispose();

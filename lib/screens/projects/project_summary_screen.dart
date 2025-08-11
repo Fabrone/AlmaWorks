@@ -5,11 +5,12 @@ import '../../widgets/dashboard_card.dart';
 import '../../widgets/activity_feed.dart';
 import '../../widgets/weather_widget.dart';
 import '../../widgets/todo_widget.dart';
+import 'edit_project_screen.dart';
 
 class ProjectSummaryScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
-
+  
   const ProjectSummaryScreen({
     super.key, 
     required this.project,
@@ -23,7 +24,7 @@ class ProjectSummaryScreen extends StatefulWidget {
 class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
-
+  
   @override
   void dispose() {
     _pageController.dispose();
@@ -55,9 +56,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             icon: const Icon(Icons.edit),
             onPressed: () {
               widget.logger.i('✏️ ProjectSummaryScreen: Edit button pressed');
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Edit functionality coming soon')),
-              );
+              _navigateToEditProject();
             },
           ),
         ],
@@ -68,40 +67,63 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
           if (!isMobile) _buildSidebar(context, isTablet),
           // Main content
           Expanded(
-            child: Column(
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Padding(
-                          padding: EdgeInsets.all(isMobile ? 12 : 16),
-                          child: Text(
-                            'Project Overview',
-                            style: TextStyle(
-                              fontSize: isMobile ? 20 : 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                        _buildProjectMetrics(context, isMobile, isTablet, isDesktop),
-                        const SizedBox(height: 16),
-                        _buildProjectHeader(isMobile),
-                        const SizedBox(height: 16),
-                        _buildContentSection(context, isMobile, isTablet, isDesktop),
-                        const SizedBox(height: 16),
-                      ],
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.all(isMobile ? 12 : 16),
+                    child: Text(
+                      'Project Overview',
+                      style: TextStyle(
+                        fontSize: isMobile ? 20 : 24,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
-                ),
-                _buildFooter(context, isMobile),
-              ],
+                  _buildProjectMetrics(context, isMobile, isTablet, isDesktop),
+                  const SizedBox(height: 16),
+                  _buildProjectHeader(isMobile),
+                  const SizedBox(height: 16),
+                  _buildContentSection(context, isMobile, isTablet, isDesktop),
+                  const SizedBox(height: 16),
+                  // Footer is now part of the scrollable content
+                  _buildFooter(context, isMobile),
+                ],
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  void _navigateToEditProject() {
+    widget.logger.i('✏️ ProjectSummaryScreen: Navigating to edit project: ${widget.project.name}');
+    
+    if (!mounted) return;
+    
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    
+    navigator.push(
+      MaterialPageRoute(
+        builder: (context) => EditProjectScreen(
+          project: widget.project,
+          logger: widget.logger,
+        ),
+      ),
+    ).then((result) {
+      if (result == true && mounted) {
+        widget.logger.d('🔄 ProjectSummaryScreen: Project edited successfully, returning to summary');
+        scaffoldMessenger.showSnackBar(
+          const SnackBar(
+            content: Text('Project updated successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    });
   }
 
   Widget _buildSidebar(BuildContext context, bool isTablet) {
@@ -240,87 +262,18 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     
     widget.logger.d('📊 ProjectSummaryScreen: Building project metrics, isMobile: $isMobile, isTablet: $isTablet, isDesktop: $isDesktop');
     
-    List<Widget> cards = [];
-    
-    // Budget card
-    if (widget.project.budget != null) {
-      cards.add(
-        DashboardCard(
-          title: 'Project Budget',
-          value: '\$${(widget.project.budget! / 1000000).toStringAsFixed(1)}M',
-          icon: Icons.attach_money,
-          color: Colors.green,
-          onTap: () {
-            widget.logger.i('👆 ProjectSummaryScreen: Budget card tapped');
-          },
-        ),
-      );
-    } else {
-      cards.add(
-        DashboardCard(
-          title: 'Budget',
-          value: 'TBD',
-          icon: Icons.attach_money,
-          color: Colors.grey,
-          onTap: () {
-            widget.logger.i('👆 ProjectSummaryScreen: Budget (TBD) card tapped');
-          },
-        ),
-      );
-    }
-    
-    // Progress card
-    cards.add(
-      DashboardCard(
-        title: 'Progress',
-        value: '${widget.project.progress.toStringAsFixed(0)}%',
-        icon: Icons.trending_up,
-        color: widget.project.isActive ? Colors.blue : Colors.grey,
-        onTap: () {
-          widget.logger.i('👆 ProjectSummaryScreen: Progress card tapped');
-        },
-      ),
-    );
-    
-    // Team members card
-    cards.add(
-      DashboardCard(
-        title: 'Team Members',
-        value: '${widget.project.teamMembers.length}',
-        icon: Icons.people,
-        color: Colors.purple,
-        onTap: () {
-          widget.logger.i('👆 ProjectSummaryScreen: Team members card tapped');
-          _showTeamMembers(context);
-        },
-      ),
-    );
-    
-    // Safety score card
-    cards.add(
-      DashboardCard(
-        title: 'Safety Score',
-        value: widget.project.safetyScore.toStringAsFixed(1),
-        icon: Icons.security,
-        color: Colors.orange,
-        onTap: () {
-          widget.logger.i('👆 ProjectSummaryScreen: Safety score card tapped');
-        },
-      ),
-    );
-    
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
       child: Row(
         children: [
           Expanded(
             child: FutureBuilder<int>(
-              future: Future.value(cards.length),
+              future: Future.value(1),
               builder: (context, snapshot) {
                 return DashboardCard(
                   title: 'Project Budget',
                   value: widget.project.budget != null 
-                      ? '\$${(widget.project.budget! / 1000000).toStringAsFixed(1)}M' 
+                      ? '\$${(widget.project.budget! / 1000000).toStringAsFixed(1)}M'
                       : 'TBD',
                   icon: Icons.attach_money,
                   color: Colors.green,

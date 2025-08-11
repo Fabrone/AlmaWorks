@@ -4,6 +4,7 @@ import 'package:logger/logger.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'add_project_screen.dart';
 import 'project_summary_screen.dart';
+import 'edit_project_screen.dart';
 import '../../models/project_model.dart';
 import '../../services/project_service.dart';
 import '../../providers/selected_project_provider.dart';
@@ -13,7 +14,7 @@ class ProjectsMainScreen extends StatefulWidget {
   final int initialTabIndex;
   
   const ProjectsMainScreen({
-    super.key, 
+    super.key,
     required this.logger,
     this.initialTabIndex = 0,
   });
@@ -22,22 +23,19 @@ class ProjectsMainScreen extends StatefulWidget {
   State<ProjectsMainScreen> createState() => _ProjectsMainScreenState();
 }
 
-class _ProjectsMainScreenState extends State<ProjectsMainScreen> 
+class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late TabController _tabController;
   late final ProjectService _projectService;
   late final Logger _logger;
   
-  // Status filter variables - Only 3 tabs now
   String _statusFilter = 'All';
   bool _isLoading = true;
   
-  // Status counts for tabs - Only 3 tabs: All, Active, Completed
   int _allCount = 0;
   int _activeCount = 0;
   int _completedCount = 0;
   
-  // Cache for all projects to avoid repeated queries
   List<QueryDocumentSnapshot> _allProjects = [];
 
   @override
@@ -48,45 +46,41 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     super.initState();
     _logger = widget.logger;
     _tabController = TabController(
-      length: 3, // Changed to 3 tabs
+      length: 3,
       vsync: this,
       initialIndex: widget.initialTabIndex,
     );
     _projectService = ProjectService();
     
-    _logger.i('🏗️ ProjectsMainScreen: Initialized with ${_tabController.length} tabs, initial index: ${widget.initialTabIndex}');
+    switch (widget.initialTabIndex) {
+      case 0:
+        _statusFilter = 'All';
+        break;
+      case 1:
+        _statusFilter = 'active';
+        break;
+      case 2:
+        _statusFilter = 'completed';
+        break;
+    }
+    
+    _logger.i('🏗️ ProjectsMainScreen: Initialized with ${_tabController.length} tabs, initial index: ${widget.initialTabIndex}, filter: $_statusFilter');
   }
 
   @override
   Widget build(BuildContext context) {
-    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    super.build(context);
     _logger.d('🎨 ProjectsMainScreen: Building UI, isLoading: $_isLoading');
     
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    
+    // We'll use a simple Scaffold without duplicating the sidebar
+    // The parent DashboardScreen already provides the sidebar
     return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'Projects',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-      ),
       body: Column(
         children: [
-          // Navigation-style tab bar
           _buildNavigationTabBar(),
-          // Projects list
           Expanded(
             child: _buildProjectsList(),
           ),
-          // Footer
-          _buildFooter(context, isMobile),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -229,7 +223,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     );
   }
 
-  // This is the key method - using StreamBuilder like your CMMS pattern
   Widget _buildProjectsList() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
@@ -291,18 +284,15 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
           );
         }
         
-        // Cache all projects for better performance
         _allProjects = snapshot.data!.docs;
         _isLoading = false;
         
-        // Update counts based on all projects (not filtered)
         _updateStatusCounts(_allProjects);
         
-        // Get filtered projects
         final filteredProjects = _getFilteredProjects();
         
         if (filteredProjects.isEmpty) {
-          final filterText = _statusFilter == 'All' 
+          final filterText = _statusFilter == 'All'
               ? 'No projects found'
               : 'No $_statusFilter projects';
           
@@ -343,7 +333,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         return RefreshIndicator(
           onRefresh: () async {
             _logger.i('🔄 ProjectsMainScreen: Pull to refresh triggered');
-            // Force a rebuild to refresh streams
             setState(() {
               _isLoading = true;
             });
@@ -363,7 +352,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
                 return _buildProjectCard(project, context);
               } catch (e) {
                 _logger.e('❌ ProjectsMainScreen: Error building project card at index $index: $e');
-                return const SizedBox.shrink(); // Return empty widget on error
+                return const SizedBox.shrink();
               }
             },
           ),
@@ -372,7 +361,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     );
   }
 
-  // Fixed: Update status counts from all projects - Only 3 categories now
   void _updateStatusCounts(List<QueryDocumentSnapshot> allDocs) {
     final newAllCount = allDocs.length;
     int newActiveCount = 0;
@@ -389,12 +377,9 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         case 'completed':
           newCompletedCount++;
           break;
-        // Projects with null status or other statuses are only counted in "All"
-        // They don't get their own category
       }
     }
     
-    // Only update if counts actually changed
     if (_allCount != newAllCount ||
         _activeCount != newActiveCount ||
         _completedCount != newCompletedCount) {
@@ -411,7 +396,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     }
   }
 
-  // Get filtered projects from cached data - Only 3 filters now
   List<QueryDocumentSnapshot> _getFilteredProjects() {
     if (_statusFilter == 'All') {
       return _allProjects;
@@ -450,7 +434,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
                     child: Text(
                       project.name.substring(0, 1).toUpperCase(),
                       style: const TextStyle(
-                        color: Colors.white, 
+                        color: Colors.white,
                         fontWeight: FontWeight.bold,
                         fontSize: 16,
                       ),
@@ -558,24 +542,29 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
   void _navigateToProjectSummary(ProjectModel project, BuildContext context) {
     _logger.i('🧭 ProjectsMainScreen: Navigating to project summary: ${project.name}');
     
-    // Set the selected project in the provider
-    Provider.of<SelectedProjectProvider>(context, listen: false)
-        .selectProject(project);
+    // Try to find the provider in the current context first
+    try {
+      final provider = Provider.of<SelectedProjectProvider>(context, listen: false);
+      provider.selectProject(project);
+    } catch (e) {
+      _logger.w('⚠️ ProjectsMainScreen: Provider not found in current context, will handle in summary screen');
+    }
     
-    // Navigate to project summary screen with proper error handling
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ProjectSummaryScreen(
-          project: project,
-          logger: _logger,
+        builder: (context) => ChangeNotifierProvider(
+          create: (context) => SelectedProjectProvider()..selectProject(project),
+          child: ProjectSummaryScreen(
+            project: project,
+            logger: _logger,
+          ),
         ),
       ),
     ).then((_) {
       _logger.d('🔙 ProjectsMainScreen: Returned from project summary');
     }).catchError((error) {
       _logger.e('❌ ProjectsMainScreen: Error navigating to project summary: $error');
-      // Store context check before async operations
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -614,10 +603,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
                 title: const Text('Edit Project'),
                 onTap: () {
                   Navigator.pop(context);
-                  _logger.i('✏️ ProjectsMainScreen: Edit project selected');
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Edit functionality coming soon')),
-                  );
+                  _navigateToEditProject(project, context);
                 },
               ),
               ListTile(
@@ -633,6 +619,23 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         );
       },
     );
+  }
+
+  void _navigateToEditProject(ProjectModel project, BuildContext context) {
+    _logger.i('✏️ ProjectsMainScreen: Navigating to edit project: ${project.name}');
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditProjectScreen(
+          project: project,
+          logger: _logger,
+        ),
+      ),
+    ).then((result) {
+      if (result == true) {
+        _logger.d('🔄 ProjectsMainScreen: Project edited successfully, stream will auto-update');
+      }
+    });
   }
 
   void _confirmDeleteProject(BuildContext context, ProjectModel project) {
@@ -661,7 +664,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
                 final scaffoldMessenger = ScaffoldMessenger.of(context);
                 final navigator = Navigator.of(context);
                 
-                navigator.pop(); // Close dialog first
+                navigator.pop();
                 
                 try {
                   await _projectService.deleteProject(project.id);
@@ -697,23 +700,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     );
   }
 
-  Widget _buildFooter(BuildContext context, bool isMobile) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isMobile ? 12 : 16),
-      color: const Color(0xFF0A2E5A),
-      child: Text(
-        '© 2025 JV Alma C.I.S Site Management System',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: isMobile ? 12 : 14,
-          fontWeight: FontWeight.w400,
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
-  }
-
   String _formatBudget(double budget) {
     if (budget >= 1000000) {
       return '${(budget / 1000000).toStringAsFixed(1)}M';
@@ -731,7 +717,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
       case 'completed':
         return Colors.orange;
       default:
-        return Colors.grey; // Untracked
+        return Colors.grey;
     }
   }
 

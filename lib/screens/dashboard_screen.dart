@@ -28,6 +28,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
+  int _projectsTabIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ProjectService _projectService;
   late final Logger _logger;
@@ -45,6 +46,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     setState(() {
       _selectedIndex = 1;
+      _projectsTabIndex = initialTab;
     });
     
     _logger.d('✅ DashboardScreen: Successfully navigated to projects section');
@@ -156,12 +158,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       title: Text(
         title,
         style: const TextStyle(
-          fontWeight: FontWeight.bold, 
+          fontWeight: FontWeight.bold,
           color: Colors.white
         ),
       ),
       centerTitle: true,
-      backgroundColor: const Color(0xFF0A2E5A), // Darker navy blue
+      backgroundColor: const Color(0xFF0A2E5A),
       actions: [
         IconButton(
           icon: const Icon(Icons.search, color: Colors.white),
@@ -221,7 +223,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           height: 120,
           width: double.infinity,
           decoration: const BoxDecoration(
-            color: Color(0xFF0A2E5A), // Darker navy blue
+            color: Color(0xFF0A2E5A),
           ),
           child: const Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -278,6 +280,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _logger.i('📁 DashboardScreen: Projects menu item tapped');
                   setState(() {
                     _selectedIndex = 1;
+                    _projectsTabIndex = 0;
                   });
                   if (Navigator.canPop(context)) {
                     Navigator.pop(context);
@@ -466,15 +469,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       switch (_selectedIndex) {
         case 0:
           final screen = MainDashboard(
-            projectService: _projectService, 
+            projectService: _projectService,
             logger: _logger,
             onNavigateToProjects: navigateToProjects,
           );
           _logger.d('✅ DashboardScreen: Returning general dashboard screen');
           return screen;
         case 1:
-          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen');
-          return ProjectsMainScreen(logger: _logger);
+          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen with tab index: $_projectsTabIndex');
+          return ProjectsMainScreen(
+            logger: _logger,
+            initialTabIndex: _projectsTabIndex,
+          );
         case 2:
           return _buildProjectSection('Documents', Icons.description);
         case 3:
@@ -491,7 +497,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           return const FinancialScreen();
         default:
           return MainDashboard(
-            projectService: _projectService, 
+            projectService: _projectService,
             logger: _logger,
             onNavigateToProjects: navigateToProjects,
           );
@@ -619,6 +625,8 @@ class _MainDashboardState extends State<MainDashboard> {
 
     widget.logger.d('🏗️ MainDashboard: Building general dashboard, isMobile: $isMobile, isTablet: $isTablet');
 
+    // Use SingleChildScrollView to make the entire content scrollable
+    // and include the footer at the bottom of the content
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -637,6 +645,7 @@ class _MainDashboardState extends State<MainDashboard> {
           const SizedBox(height: 16),
           _buildContentSection(context, isMobile, isTablet, isDesktop),
           const SizedBox(height: 16),
+          // Footer is now part of the scrollable content
           _buildFooter(context, isMobile),
         ],
       ),
@@ -665,7 +674,7 @@ class _MainDashboardState extends State<MainDashboard> {
                   color: Colors.blue,
                   onTap: () {
                     widget.logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
-                    widget.onNavigateToProjects();
+                    widget.onNavigateToProjects(initialTab: 0);
                   },
                 );
               },
@@ -731,7 +740,6 @@ class _MainDashboardState extends State<MainDashboard> {
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     
-    // Fixed height for all widgets to ensure uniformity
     const double widgetHeight = 400.0;
     
     widget.logger.d('🏗️ MainDashboard: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
@@ -777,7 +785,6 @@ class _MainDashboardState extends State<MainDashboard> {
                     );
                   },
                 ),
-                // Left arrow button
                 if (_currentPage > 0)
                   Positioned(
                     left: 8,
@@ -807,7 +814,6 @@ class _MainDashboardState extends State<MainDashboard> {
                       ),
                     ),
                   ),
-                // Right arrow button
                 if (_currentPage < widgets.length - 1)
                   Positioned(
                     right: 8,
@@ -841,7 +847,6 @@ class _MainDashboardState extends State<MainDashboard> {
             ),
           ),
           const SizedBox(height: 16),
-          // Page indicators
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(
@@ -860,44 +865,6 @@ class _MainDashboardState extends State<MainDashboard> {
             ),
           ),
           const SizedBox(height: 16),
-          // Navigation buttons
-          /*Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton.icon(
-                onPressed: _currentPage > 0
-                    ? () {
-                        _pageController.previousPage(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Previous'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0A2E5A),
-                  foregroundColor: Colors.white,
-                ),
-              ),
-              ElevatedButton.icon(
-                onPressed: _currentPage < widgets.length - 1
-                    ? () {
-                        _pageController.nextPage(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Next'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0A2E5A),
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ],
-          ),*/
         ],
       ),
     );
@@ -907,7 +874,7 @@ class _MainDashboardState extends State<MainDashboard> {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 12 : 16),
-      color: const Color(0xFF0A2E5A), // Darker navy blue
+      color: const Color(0xFF0A2E5A),
       child: Text(
         '© 2025 JV Alma C.I.S Site Management System',
         style: TextStyle(
