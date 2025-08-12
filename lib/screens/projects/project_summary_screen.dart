@@ -1,12 +1,16 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/screens/documents_screen.dart';
+import 'package:almaworks/screens/drawings_screen.dart';
 import 'package:almaworks/screens/projects/edit_project_screen.dart';
+import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/widgets/activity_feed.dart';
 import 'package:almaworks/widgets/dashboard_card.dart';
 import 'package:almaworks/widgets/todo_widget.dart';
 import 'package:almaworks/widgets/weather_widget.dart';
+import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class ProjectSummaryScreen extends StatefulWidget {
   final ProjectModel project;
@@ -36,64 +40,65 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   Widget build(BuildContext context) {
     widget.logger.d('🎨 ProjectSummaryScreen: Building project summary for: ${widget.project.name}');
 
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    final isTablet = screenWidth >= 600 && screenWidth < 1200;
-    final isDesktop = screenWidth >= 1200;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          widget.project.name,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
+    return BaseLayout(
+      title: widget.project.name,
+      project: widget.project,
+      logger: widget.logger,
+      selectedMenuItem: 'Overview',
+      onMenuItemSelected: _handleMenuNavigation,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.edit),
+          onPressed: () {
+            widget.logger.i('✏️ ProjectSummaryScreen: Edit button pressed');
+            _navigateToEditProject();
+          },
         ),
-        centerTitle: true,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () {
-              widget.logger.i('✏️ ProjectSummaryScreen: Edit button pressed');
-              _navigateToEditProject();
-            },
-          ),
-        ],
-      ),
-      body: Row(
-        children: [
-          if (!isMobile) _buildSidebar(context, isTablet),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: EdgeInsets.all(isMobile ? 12 : 16),
-                    child: Text(
-                      'Project Overview',
-                      style: TextStyle(
-                        fontSize: isMobile ? 20 : 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  _buildProjectMetrics(context, isMobile, isTablet, isDesktop),
-                  const SizedBox(height: 16),
-                  _buildProjectHeader(isMobile),
-                  const SizedBox(height: 16),
-                  _buildContentSection(context, isMobile, isTablet, isDesktop),
-                  const SizedBox(height: 16),
-                  _buildFooter(context, isMobile),
-                ],
-              ),
-            ),
-          ),
-        ],
+      ],
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildProjectContent(context),
+            _buildFooter(context),
+          ],
+        ),
       ),
     );
+  }
+
+  void _handleMenuNavigation(String menuItem) {
+    widget.logger.d('🧭 ProjectSummaryScreen: Navigation to: $menuItem');
+    
+    switch (menuItem) {
+      case 'Switch Project':
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ProjectsMainScreen(logger: widget.logger),
+          ),
+        );
+        break;
+      case 'Overview':
+        // Already on overview screen
+        break;
+      case 'Documents':
+        _navigateToDocuments();
+        break;
+      case 'Drawings':
+        _navigateToDrawings();
+        break;
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$menuItem section coming soon',
+              style: GoogleFonts.poppins(),
+            ),
+          ),
+        );
+        break;
+    }
   }
 
   void _navigateToEditProject() {
@@ -140,127 +145,77 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     );
   }
 
-  Widget _buildSidebar(BuildContext context, bool isTablet) {
-    return Container(
-      width: isTablet ? 280 : 300,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(2, 0),
+  void _navigateToDrawings() {
+    widget.logger.i('🏗️ ProjectSummaryScreen: Navigating to drawings for project: ${widget.project.name}');
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DrawingsScreen(
+          project: widget.project,
+          logger: widget.logger,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProjectContent(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isMobile = screenWidth < 600;
+    final isTablet = screenWidth >= 600 && screenWidth < 1200;
+    final isDesktop = screenWidth >= 1200;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: EdgeInsets.all(isMobile ? 12 : 16),
+          child: Text(
+            'Project Overview',
+            style: GoogleFonts.poppins(
+              fontSize: isMobile ? 20 : 24,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ],
+        ),
+        _buildProjectMetrics(context, isMobile, isTablet, isDesktop),
+        const SizedBox(height: 16),
+        _buildProjectHeader(isMobile),
+        const SizedBox(height: 16),
+        _buildContentSection(context, isMobile, isTablet, isDesktop),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+
+  Widget _buildFooter(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        border: Border(
+          top: BorderSide(color: Colors.grey[200]!),
+        ),
       ),
       child: Column(
         children: [
-          Container(
-            height: 120,
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              color: Color(0xFF0A2E5A),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    widget.project.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    'Project Dashboard',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ],
+          Text(
+            'AlmaWorks Construction Management',
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF0A2E5A),
             ),
           ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.dashboard),
-                  title: const Text('Overview'),
-                  selected: true,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description),
-                  title: const Text('Documents'),
-                  onTap: _navigateToDocuments, // Updated to navigate to DocumentsScreen
-                ),
-                ListTile(
-                  leading: const Icon(Icons.architecture),
-                  title: const Text('Drawings'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Drawings section coming soon')),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.schedule),
-                  title: const Text('Schedule'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Schedule section coming soon')),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.security),
-                  title: const Text('Quality & Safety'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Quality & Safety section coming soon')),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.analytics),
-                  title: const Text('Reports'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Reports section coming soon')),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.photo_library),
-                  title: const Text('Photo Gallery'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Photo Gallery section coming soon')),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.attach_money),
-                  title: const Text('Financials'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Financials section coming soon')),
-                    );
-                  },
-                ),
-              ],
+          const SizedBox(height: 8),
+          Text(
+            'End of Project Overview',
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: Colors.grey[600],
             ),
           ),
         ],
@@ -355,7 +310,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                       children: [
                         Text(
                           widget.project.name,
-                          style: const TextStyle(
+                          style: GoogleFonts.poppins(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
                           ),
@@ -363,7 +318,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                         const SizedBox(height: 4),
                         Text(
                           widget.project.location,
-                          style: TextStyle(
+                          style: GoogleFonts.poppins(
                             color: Colors.grey[600],
                             fontSize: 14,
                           ),
@@ -388,7 +343,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               const SizedBox(height: 16),
               Text(
                 widget.project.description,
-                style: TextStyle(
+                style: GoogleFonts.poppins(
                   color: Colors.grey[700],
                   fontSize: 14,
                 ),
@@ -444,7 +399,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(
+          style: GoogleFonts.poppins(
             fontSize: 12,
             color: Colors.grey[600],
             fontWeight: FontWeight.w500,
@@ -453,7 +408,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
         const SizedBox(height: 2),
         Text(
           value,
-          style: const TextStyle(
+          style: GoogleFonts.poppins(
             fontSize: 14,
             fontWeight: FontWeight.w600,
           ),
@@ -469,7 +424,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: const Text('Team Members'),
+          title: Text('Team Members', style: GoogleFonts.poppins()),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView.builder(
@@ -483,8 +438,8 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   leading: CircleAvatar(
                     child: Text(member.substring(0, 1).toUpperCase()),
                   ),
-                  title: Text(member),
-                  subtitle: isManager ? const Text('Project Manager') : null,
+                  title: Text(member, style: GoogleFonts.poppins()),
+                  subtitle: isManager ? Text('Project Manager', style: GoogleFonts.poppins()) : null,
                   trailing: isManager ? const Icon(Icons.star, color: Colors.amber) : null,
                 );
               },
@@ -493,7 +448,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+              child: Text('Close', style: GoogleFonts.poppins()),
             ),
           ],
         );
@@ -631,23 +586,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildFooter(BuildContext context, bool isMobile) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isMobile ? 12 : 16),
-      color: const Color(0xFF0A2E5A),
-      child: Text(
-        '© 2025 JV Alma C.I.S Site Management System',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: isMobile ? 12 : 14,
-          fontWeight: FontWeight.w400,
-        ),
-        textAlign: TextAlign.center,
       ),
     );
   }

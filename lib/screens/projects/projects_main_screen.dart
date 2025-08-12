@@ -8,6 +8,7 @@ import 'edit_project_screen.dart';
 import '../../models/project_model.dart';
 import '../../services/project_service.dart';
 import '../../providers/selected_project_provider.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class ProjectsMainScreen extends StatefulWidget {
   final Logger logger;
@@ -72,9 +73,20 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     super.build(context);
     _logger.d('🎨 ProjectsMainScreen: Building UI, isLoading: $_isLoading');
     
-    // We'll use a simple Scaffold without duplicating the sidebar
-    // The parent DashboardScreen already provides the sidebar
+    // This screen should only show Dashboard and Projects navigation, not project-specific menu items
     return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Projects',
+          style: GoogleFonts.poppins(
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        centerTitle: true,
+        backgroundColor: const Color(0xFF0A2E5A),
+        foregroundColor: Colors.white,
+      ),
       body: Column(
         children: [
           _buildNavigationTabBar(),

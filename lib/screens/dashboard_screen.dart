@@ -2,10 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
 import 'projects/projects_main_screen.dart';
-import 'financial_screen.dart';
-import 'schedule_screen.dart';
-import 'quality_safety_screen.dart';
-import 'reports_screen.dart';
 import 'notifications_screen.dart';
 import 'account_screen.dart';
 import 'search_screen.dart';
@@ -28,7 +24,6 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
-  int _projectsTabIndex = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ProjectService _projectService;
   late final Logger _logger;
@@ -46,7 +41,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     setState(() {
       _selectedIndex = 1;
-      _projectsTabIndex = initialTab;
     });
     
     _logger.d('✅ DashboardScreen: Successfully navigated to projects section');
@@ -146,8 +140,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       title = 'AlmaWorks - Dashboard';
     } else if (_selectedIndex == 1) {
       title = 'Projects';
-    } else if (projectProvider.hasSelectedProject && _selectedIndex > 1) {
-      title = '${projectProvider.selectedProject!.name} - ${_getMenuTitle(_selectedIndex)}';
     } else {
       title = _getMenuTitle(_selectedIndex);
     }
@@ -157,13 +149,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return AppBar(
       title: Text(
         title,
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.white
-        ),
+        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
       ),
-      centerTitle: true,
-      backgroundColor: const Color(0xFF0A2E5A),
+      backgroundColor: const Color(0xFF0A2E5A), // Darker navy blue
       actions: [
         IconButton(
           icon: const Icon(Icons.search, color: Colors.white),
@@ -223,7 +211,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           height: 120,
           width: double.infinity,
           decoration: const BoxDecoration(
-            color: Color(0xFF0A2E5A),
+            color: Color(0xFF0A2E5A), // Darker navy blue
           ),
           child: const Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -280,181 +268,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _logger.i('📁 DashboardScreen: Projects menu item tapped');
                   setState(() {
                     _selectedIndex = 1;
-                    _projectsTabIndex = 0;
                   });
                   if (Navigator.canPop(context)) {
                     Navigator.pop(context);
                   }
                 },
               ),
-              if (projectProvider.hasSelectedProject || _selectedIndex == 1) ...[
-                if (projectProvider.hasSelectedProject) ...[
-                  Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            const Icon(Icons.business, size: 16, color: Colors.blue),
-                            const SizedBox(width: 8),
-                            const Text(
-                              'Selected Project:',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.blue,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          projectProvider.selectedProject!.name,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          projectProvider.selectedProject!.location,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey[600],
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text(
-                    'Project Sections',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description),
-                  title: const Text('Documents'),
-                  selected: _selectedIndex == 2,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('📄 DashboardScreen: Documents menu item tapped');
-                    setState(() {
-                      _selectedIndex = 2;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.architecture),
-                  title: const Text('Drawings'),
-                  selected: _selectedIndex == 3,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('📐 DashboardScreen: Drawings menu item tapped');
-                    setState(() {
-                      _selectedIndex = 3;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.schedule),
-                  title: const Text('Schedule'),
-                  selected: _selectedIndex == 4,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('📅 DashboardScreen: Schedule menu item tapped');
-                    setState(() {
-                      _selectedIndex = 4;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.security),
-                  title: const Text('Quality & Safety'),
-                  selected: _selectedIndex == 5,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('🛡️ DashboardScreen: Quality & Safety menu item tapped');
-                    setState(() {
-                      _selectedIndex = 5;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.analytics),
-                  title: const Text('Reports'),
-                  selected: _selectedIndex == 6,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('📊 DashboardScreen: Reports menu item tapped');
-                    setState(() {
-                      _selectedIndex = 6;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.photo_library),
-                  title: const Text('Photo Gallery'),
-                  selected: _selectedIndex == 7,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('📸 DashboardScreen: Photo Gallery menu item tapped');
-                    setState(() {
-                      _selectedIndex = 7;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-                ListTile(
-                  leading: const Icon(Icons.attach_money),
-                  title: const Text('Financials'),
-                  selected: _selectedIndex == 8,
-                  enabled: projectProvider.hasSelectedProject,
-                  onTap: projectProvider.hasSelectedProject ? () {
-                    _logger.i('💰 DashboardScreen: Financials menu item tapped');
-                    setState(() {
-                      _selectedIndex = 8;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  } : null,
-                ),
-              ],
             ],
           ),
         ),
@@ -469,35 +288,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       switch (_selectedIndex) {
         case 0:
           final screen = MainDashboard(
-            projectService: _projectService,
+            projectService: _projectService, 
             logger: _logger,
             onNavigateToProjects: navigateToProjects,
           );
           _logger.d('✅ DashboardScreen: Returning general dashboard screen');
           return screen;
         case 1:
-          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen with tab index: $_projectsTabIndex');
-          return ProjectsMainScreen(
-            logger: _logger,
-            initialTabIndex: _projectsTabIndex,
-          );
-        case 2:
-          return _buildProjectSection('Documents', Icons.description);
-        case 3:
-          return _buildProjectSection('Drawings', Icons.architecture);
-        case 4:
-          return const ScheduleScreen();
-        case 5:
-          return const QualitySafetyScreen();
-        case 6:
-          return const ReportsScreen();
-        case 7:
-          return _buildProjectSection('Photo Gallery', Icons.photo_library);
-        case 8:
-          return const FinancialScreen();
+          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen');
+          return ProjectsMainScreen(logger: _logger);
         default:
           return MainDashboard(
-            projectService: _projectService,
+            projectService: _projectService, 
             logger: _logger,
             onNavigateToProjects: navigateToProjects,
           );
@@ -509,30 +311,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Widget _buildProjectSection(String title, IconData icon) {
-    _logger.d('🏗️ DashboardScreen: Building project section: $title');
-    
-    return Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 64, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            const Text(
-              'This section is under development',
-              style: TextStyle(color: Colors.grey),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _buildErrorScreen(String title, String error) {
     _logger.w('⚠️ DashboardScreen: Building error screen: $title');
@@ -572,13 +350,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   String _getMenuTitle(int index) {
     switch (index) {
-      case 2: return 'Documents';
-      case 3: return 'Drawings';
-      case 4: return 'Schedule';
-      case 5: return 'Quality & Safety';
-      case 6: return 'Reports';
-      case 7: return 'Photo Gallery';
-      case 8: return 'Financials';
+      case 0: return 'Dashboard';
+      case 1: return 'Projects';
       default: return 'AlmaWorks';
     }
   }
@@ -625,8 +398,6 @@ class _MainDashboardState extends State<MainDashboard> {
 
     widget.logger.d('🏗️ MainDashboard: Building general dashboard, isMobile: $isMobile, isTablet: $isTablet');
 
-    // Use SingleChildScrollView to make the entire content scrollable
-    // and include the footer at the bottom of the content
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -645,7 +416,6 @@ class _MainDashboardState extends State<MainDashboard> {
           const SizedBox(height: 16),
           _buildContentSection(context, isMobile, isTablet, isDesktop),
           const SizedBox(height: 16),
-          // Footer is now part of the scrollable content
           _buildFooter(context, isMobile),
         ],
       ),
@@ -674,7 +444,7 @@ class _MainDashboardState extends State<MainDashboard> {
                   color: Colors.blue,
                   onTap: () {
                     widget.logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
-                    widget.onNavigateToProjects(initialTab: 0);
+                    widget.onNavigateToProjects();
                   },
                 );
               },
@@ -740,6 +510,7 @@ class _MainDashboardState extends State<MainDashboard> {
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     
+    // Fixed height for all widgets to ensure uniformity
     const double widgetHeight = 400.0;
     
     widget.logger.d('🏗️ MainDashboard: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
@@ -768,85 +539,24 @@ class _MainDashboardState extends State<MainDashboard> {
         children: [
           SizedBox(
             height: widgetHeight,
-            child: Stack(
-              children: [
-                PageView.builder(
-                  controller: _pageController,
-                  onPageChanged: (index) {
-                    setState(() {
-                      _currentPage = index;
-                    });
-                  },
-                  itemCount: widgets.length,
-                  itemBuilder: (context, index) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                      child: widgets[index],
-                    );
-                  },
-                ),
-                if (_currentPage > 0)
-                  Positioned(
-                    left: 8,
-                    top: widgetHeight / 2 - 24,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0A2E5A).withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        onPressed: () {
-                          _pageController.previousPage(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
-                        },
-                        icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      ),
-                    ),
-                  ),
-                if (_currentPage < widgets.length - 1)
-                  Positioned(
-                    right: 8,
-                    top: widgetHeight / 2 - 24,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0A2E5A).withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        onPressed: () {
-                          _pageController.nextPage(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
-                        },
-                        icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      ),
-                    ),
-                  ),
-              ],
+            child: PageView.builder(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentPage = index;
+                });
+              },
+              itemCount: widgets.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: widgets[index],
+                );
+              },
             ),
           ),
           const SizedBox(height: 16),
+          // Page indicators
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(
@@ -865,6 +575,44 @@ class _MainDashboardState extends State<MainDashboard> {
             ),
           ),
           const SizedBox(height: 16),
+          // Navigation buttons
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton.icon(
+                onPressed: _currentPage > 0
+                    ? () {
+                        _pageController.previousPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('Previous'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A2E5A),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: _currentPage < widgets.length - 1
+                    ? () {
+                        _pageController.nextPage(
+                          duration: const Duration(milliseconds: 300),
+                          curve: Curves.easeInOut,
+                        );
+                      }
+                    : null,
+                icon: const Icon(Icons.arrow_forward),
+                label: const Text('Next'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0A2E5A),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -874,7 +622,7 @@ class _MainDashboardState extends State<MainDashboard> {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 12 : 16),
-      color: const Color(0xFF0A2E5A),
+      color: const Color(0xFF0A2E5A), // Darker navy blue
       child: Text(
         '© 2025 JV Alma C.I.S Site Management System',
         style: TextStyle(

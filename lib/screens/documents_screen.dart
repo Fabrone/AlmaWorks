@@ -1,22 +1,26 @@
-import 'dart:io';
+import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/drawings_screen.dart';
 import 'package:almaworks/screens/projects/project_summary_screen.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:almaworks/screens/projects/projects_main_screen.dart';
+import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:logger/logger.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:logger/logger.dart';
 import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
-import 'package:google_fonts/google_fonts.dart';
-import '../../models/project_model.dart';
 import 'dart:typed_data';
 
 class DocumentsScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
+  
   const DocumentsScreen({
     super.key,
     required this.project,
@@ -32,7 +36,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   late TabController _clientSubTabController;
   late TabController _subContractorSubTabController;
   late TabController _supplierSubTabController;
-  bool _isLoading = false; // Now used to disable FAB
+  bool _isLoading = false;
   double? _uploadProgress;
 
   final List<String> _mainTabs = ['Client', 'Sub-Contractor', 'Supplier'];
@@ -60,191 +64,120 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   @override
   Widget build(BuildContext context) {
     widget.logger.d('🎨 DocumentsScreen: Building UI');
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    final isTablet = screenWidth >= 600 && screenWidth < 1200;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          '${widget.project.name} - Documents',
-          style: GoogleFonts.poppins(
-            fontWeight: FontWeight.bold,
-            color: Colors.white,
-          ),
-        ),
-        centerTitle: true,
+    return BaseLayout(
+      title: '${widget.project.name} - Documents',
+      project: widget.project,
+      logger: widget.logger,
+      selectedMenuItem: 'Documents',
+      onMenuItemSelected: _handleMenuNavigation,
+      floatingActionButton: FloatingActionButton(
+        onPressed: _isLoading ? null : _addDocument,
         backgroundColor: const Color(0xFF0A2E5A),
         foregroundColor: Colors.white,
+        child: const Icon(Icons.file_upload),
       ),
-      body: Row(
+      child: Column(
         children: [
-          if (!isMobile) _buildSidebar(context, isTablet),
+          TabBar(
+            controller: _mainTabController,
+            tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
+            labelColor: const Color(0xFF0A2E5A),
+            unselectedLabelColor: Colors.grey,
+            labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
           Expanded(
-            child: Column(
+            child: TabBarView(
+              controller: _mainTabController,
               children: [
-                TabBar(
-                  controller: _mainTabController,
-                  tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
-                  labelColor: const Color(0xFF0A2E5A),
-                  unselectedLabelColor: Colors.grey,
-                  labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                ),
-                Expanded(
-                  child: TabBarView(
-                    controller: _mainTabController,
-                    children: [
-                      _buildRoleSection('Client', _clientSubTabController),
-                      _buildRoleSection('Sub-Contractor', _subContractorSubTabController),
-                      _buildRoleSection('Supplier', _supplierSubTabController),
-                    ],
-                  ),
-                ),
+                _buildRoleSection('Client', _clientSubTabController),
+                _buildRoleSection('Sub-Contractor', _subContractorSubTabController),
+                _buildRoleSection('Supplier', _supplierSubTabController),
               ],
             ),
           ),
+          _buildFooter(context),
         ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _addDocument, // Disable when loading
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-        child: const Icon(Icons.file_upload), // Changed icon to upload
       ),
     );
   }
 
-  Widget _buildSidebar(BuildContext context, bool isTablet) {
-    return Container(
-      width: isTablet ? 280 : 300,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withAlpha((255 * 0.1).round()), // Replaced withAlpha
-            blurRadius: 4,
-            offset: const Offset(2, 0),
+  void _handleMenuNavigation(String menuItem) {
+    widget.logger.d('🧭 DocumentsScreen: Navigation to: $menuItem');
+    
+    switch (menuItem) {
+      case 'Switch Project':
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ProjectsMainScreen(logger: widget.logger),
           ),
-        ],
+        );
+        break;
+      case 'Overview':
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => ProjectSummaryScreen(
+              project: widget.project,
+              logger: widget.logger,
+            ),
+          ),
+        );
+        break;
+      case 'Documents':
+        // Already on documents screen
+        break;
+      case 'Drawings':
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => DrawingsScreen(
+              project: widget.project,
+              logger: widget.logger,
+            ),
+          ),
+        );
+        break;
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$menuItem section coming soon',
+              style: GoogleFonts.poppins(),
+            ),
+          ),
+        );
+        break;
+    }
+  }
+
+  Widget _buildFooter(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        border: Border(
+          top: BorderSide(color: Colors.grey[200]!),
+        ),
       ),
       child: Column(
         children: [
-          Container(
-            height: 120,
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              color: Color(0xFF0A2E5A),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    widget.project.name,
-                    style: GoogleFonts.poppins(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    'Project Dashboard',
-                    style: GoogleFonts.poppins(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
-                  ),
-                ),
-              ],
+          Text(
+            'AlmaWorks Construction Management',
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF0A2E5A),
             ),
           ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.dashboard),
-                  title: Text('Overview', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => ProjectSummaryScreen(
-                          project: widget.project,
-                          logger: widget.logger,
-                        ),
-                      ),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description),
-                  title: Text('Documents', style: GoogleFonts.poppins()),
-                  selected: true,
-                  selectedTileColor: Colors.blueGrey[50],
-                ),
-                ListTile(
-                  leading: const Icon(Icons.architecture),
-                  title: Text('Drawings', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Drawings section coming soon', style: GoogleFonts.poppins())),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.schedule),
-                  title: Text('Schedule', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Schedule section coming soon', style: GoogleFonts.poppins())),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.security),
-                  title: Text('Quality & Safety', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Quality & Safety section coming soon', style: GoogleFonts.poppins())),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.analytics),
-                  title: Text('Reports', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Reports section coming soon', style: GoogleFonts.poppins())),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.photo_library),
-                  title: Text('Photo Gallery', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Photo Gallery section coming soon', style: GoogleFonts.poppins())),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.attach_money),
-                  title: Text('Financials', style: GoogleFonts.poppins()),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Financials section coming soon', style: GoogleFonts.poppins())),
-                    );
-                  },
-                ),
-              ],
+          const SizedBox(height: 8),
+          Text(
+            'End of Documents Section',
+            style: GoogleFonts.poppins(
+              fontSize: 14,
+              color: Colors.grey[600],
             ),
           ),
         ],
@@ -341,87 +274,10 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                   ),
                 );
               }),
-            _buildFooter(context, MediaQuery.of(context).size.width < 600),
           ],
         );
       },
     );
-  }
-
-  IconData _getDocumentIcon(String type) {
-    switch (type.toLowerCase()) {
-      case 'pdf':
-        return Icons.picture_as_pdf;
-      case 'docx':
-      case 'doc':
-        return Icons.description;
-      case 'pptx':
-      case 'ppt':
-        return Icons.slideshow;
-      case 'txt':
-        return Icons.text_snippet;
-      default:
-        return Icons.insert_drive_file;
-    }
-  }
-
-  Color _getFileIconColor(String type) {
-    switch (type.toLowerCase()) {
-      case 'pdf':
-        return Colors.red[600]!;
-      case 'docx':
-      case 'doc':
-        return Colors.blueGrey[600]!;
-      case 'pptx':
-      case 'ppt':
-        return Colors.orange[600]!;
-      case 'txt':
-        return Colors.grey[600]!;
-      default:
-        return Colors.grey[600]!;
-    }
-  }
-
-  Future<String?> _getDocumentTitle() async {
-    String? title;
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: Text('Enter Document Title', style: GoogleFonts.poppins()),
-          content: TextField(
-            autofocus: true,
-            decoration: InputDecoration(
-              labelText: 'Title (e.g., RFI, Close Out doc)',
-              border: const OutlineInputBorder(),
-              labelStyle: GoogleFonts.poppins(),
-            ),
-            style: GoogleFonts.poppins(),
-            onChanged: (val) => title = val.trim(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            TextButton(
-              onPressed: () {
-                if (title != null && title!.isNotEmpty) {
-                  Navigator.pop(ctx, true);
-                } else {
-                  if (!mounted) return; // Added mounted check
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    SnackBar(content: Text('Please enter a title', style: GoogleFonts.poppins())),
-                  );
-                }
-              },
-              child: Text('OK', style: GoogleFonts.poppins()),
-            ),
-          ],
-        );
-      },
-    );
-    return result == true ? title : null;
   }
 
   Future<void> _addDocument() async {
@@ -449,7 +305,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'docx', 'pptx', 'txt', 'doc', 'ppt'],
-      withData: true, // Ensure bytes are available for web
+      withData: true,
     );
 
     if (result == null || result.files.isEmpty) {
@@ -475,7 +331,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       throw Exception('Could not read file data');
     }
 
-    if (!mounted) return; // Added mounted check before showDialog
+    if (!mounted) return;
     final bool? confirmUpload = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -582,8 +438,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         }
       }, onError: (e) {
         widget.logger.e('Upload progress error: $e');
-        if (mounted) { // Added mounted check
-          Navigator.pop(context); // Close progress dialog on error
+        if (mounted) {
+          Navigator.pop(context);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text('Upload failed: ${e.toString()}', style: GoogleFonts.poppins()),
@@ -611,7 +467,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       });
 
       if (mounted) {
-        Navigator.pop(context); // Close progress dialog
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Document "$title" added successfully!', style: GoogleFonts.poppins()),
@@ -622,7 +478,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     } catch (e) {
       widget.logger.e('❌ DocumentsScreen: Error adding document', error: e);
       if (mounted) {
-        Navigator.pop(context); // Close progress dialog
+        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error adding document: ${e.toString()}', style: GoogleFonts.poppins()),
@@ -637,6 +493,82 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         });
       }
     }
+  }
+
+  IconData _getDocumentIcon(String type) {
+    switch (type.toLowerCase()) {
+      case 'pdf':
+        return Icons.picture_as_pdf;
+      case 'docx':
+      case 'doc':
+        return Icons.description;
+      case 'pptx':
+      case 'ppt':
+        return Icons.slideshow;
+      case 'txt':
+        return Icons.text_snippet;
+      default:
+        return Icons.insert_drive_file;
+    }
+  }
+
+  Color _getFileIconColor(String type) {
+    switch (type.toLowerCase()) {
+      case 'pdf':
+        return Colors.red[600]!;
+      case 'docx':
+      case 'doc':
+        return Colors.blueGrey[600]!;
+      case 'pptx':
+      case 'ppt':
+        return Colors.orange[600]!;
+      case 'txt':
+        return Colors.grey[600]!;
+      default:
+        return Colors.grey[600]!;
+    }
+  }
+
+  Future<String?> _getDocumentTitle() async {
+    String? title;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: Text('Enter Document Title', style: GoogleFonts.poppins()),
+          content: TextField(
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Title (e.g., RFI, Close Out doc)',
+              border: const OutlineInputBorder(),
+              labelStyle: GoogleFonts.poppins(),
+            ),
+            style: GoogleFonts.poppins(),
+            onChanged: (val) => title = val.trim(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel', style: GoogleFonts.poppins()),
+            ),
+            TextButton(
+              onPressed: () {
+                if (title != null && title!.isNotEmpty) {
+                  Navigator.pop(ctx, true);
+                } else {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('Please enter a title', style: GoogleFonts.poppins())),
+                  );
+                }
+              },
+              child: Text('OK', style: GoogleFonts.poppins()),
+            ),
+          ],
+        );
+      },
+    );
+    return result == true ? title : null;
   }
 
   String _getContentType(String extension) {
@@ -791,23 +723,6 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         );
       }
     }
-  }
-
-  Widget _buildFooter(BuildContext context, bool isMobile) {
-    return Container(
-      width: double.infinity,
-      padding: EdgeInsets.all(isMobile ? 12 : 16),
-      color: const Color(0xFF0A2E5A),
-      child: Text(
-        '© 2025 JV Alma C.I.S Site Management System',
-        style: GoogleFonts.poppins(
-          color: Colors.white,
-          fontSize: isMobile ? 12 : 14,
-          fontWeight: FontWeight.w400,
-        ),
-        textAlign: TextAlign.center,
-      ),
-    );
   }
 
   String _formatDate(Timestamp timestamp) {

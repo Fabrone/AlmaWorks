@@ -99,18 +99,23 @@ service cloud.firestore {
       allow read, write: if true;
     }
     
-    // NEW: Rules for RecentSearches collection
+    // Rules for RecentSearches collection
     match /RecentSearches/{searchId} {
       allow read, write: if true;
     }
     
-    // NEW: Rules for UserProfiles collection
+    // Rules for UserProfiles collection
     match /UserProfiles/{userId} {
       allow read, write: if true;
     }
     
-    // NEW: Rules for SystemLogs collection
+    // Rules for SystemLogs collection
     match /SystemLogs/{logId} {
+      allow read, write: if true;
+    }
+    
+    // NEW: Rules for Drawings collection
+    match /Drawings/{drawingId} {
       allow read, write: if true;
     }
   }
