@@ -1,18 +1,19 @@
+import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/documents_screen.dart';
+import 'package:almaworks/screens/projects/edit_project_screen.dart';
+import 'package:almaworks/widgets/activity_feed.dart';
+import 'package:almaworks/widgets/dashboard_card.dart';
+import 'package:almaworks/widgets/todo_widget.dart';
+import 'package:almaworks/widgets/weather_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
-import '../../models/project_model.dart';
-import '../../widgets/dashboard_card.dart';
-import '../../widgets/activity_feed.dart';
-import '../../widgets/weather_widget.dart';
-import '../../widgets/todo_widget.dart';
-import 'edit_project_screen.dart';
 
 class ProjectSummaryScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
-  
+
   const ProjectSummaryScreen({
-    super.key, 
+    super.key,
     required this.project,
     required this.logger,
   });
@@ -24,7 +25,7 @@ class ProjectSummaryScreen extends StatefulWidget {
 class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
-  
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -34,12 +35,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   @override
   Widget build(BuildContext context) {
     widget.logger.d('🎨 ProjectSummaryScreen: Building project summary for: ${widget.project.name}');
-    
+
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
     final isTablet = screenWidth >= 600 && screenWidth < 1200;
     final isDesktop = screenWidth >= 1200;
-    
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -63,9 +64,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       ),
       body: Row(
         children: [
-          // Sidebar for tablet and desktop
           if (!isMobile) _buildSidebar(context, isTablet),
-          // Main content
           Expanded(
             child: SingleChildScrollView(
               child: Column(
@@ -87,7 +86,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   const SizedBox(height: 16),
                   _buildContentSection(context, isMobile, isTablet, isDesktop),
                   const SizedBox(height: 16),
-                  // Footer is now part of the scrollable content
                   _buildFooter(context, isMobile),
                 ],
               ),
@@ -100,12 +98,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   void _navigateToEditProject() {
     widget.logger.i('✏️ ProjectSummaryScreen: Navigating to edit project: ${widget.project.name}');
-    
+
     if (!mounted) return;
-    
+
     final navigator = Navigator.of(context);
     final scaffoldMessenger = ScaffoldMessenger.of(context);
-    
+
     navigator.push(
       MaterialPageRoute(
         builder: (context) => EditProjectScreen(
@@ -124,6 +122,22 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
         );
       }
     });
+  }
+
+  void _navigateToDocuments() {
+    widget.logger.i('📂 ProjectSummaryScreen: Navigating to documents for project: ${widget.project.name}');
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DocumentsScreen(
+          project: widget.project,
+          logger: widget.logger,
+        ),
+      ),
+    );
   }
 
   Widget _buildSidebar(BuildContext context, bool isTablet) {
@@ -190,11 +204,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                 ListTile(
                   leading: const Icon(Icons.description),
                   title: const Text('Documents'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Documents section coming soon')),
-                    );
-                  },
+                  onTap: _navigateToDocuments, // Updated to navigate to DocumentsScreen
                 ),
                 ListTile(
                   leading: const Icon(Icons.architecture),
@@ -259,9 +269,8 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   }
 
   Widget _buildProjectMetrics(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
-    
     widget.logger.d('📊 ProjectSummaryScreen: Building project metrics, isMobile: $isMobile, isTablet: $isTablet, isDesktop: $isDesktop');
-    
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
       child: Row(
@@ -272,7 +281,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               builder: (context, snapshot) {
                 return DashboardCard(
                   title: 'Project Budget',
-                  value: widget.project.budget != null 
+                  value: widget.project.budget != null
                       ? '\$${(widget.project.budget! / 1000000).toStringAsFixed(1)}M'
                       : 'TBD',
                   icon: Icons.attach_money,
@@ -316,7 +325,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   Widget _buildProjectHeader(bool isMobile) {
     widget.logger.d('🏗️ ProjectSummaryScreen: Building project header');
-    
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
       child: Card(
@@ -333,7 +342,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                     child: Text(
                       widget.project.name.substring(0, 1),
                       style: const TextStyle(
-                        color: Colors.white, 
+                        color: Colors.white,
                         fontWeight: FontWeight.bold,
                         fontSize: 18,
                       ),
@@ -404,7 +413,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   Expanded(
                     child: _buildInfoItem(
                       'End Date',
-                      widget.project.endDate != null ? _formatDate(widget.project.endDate!) : 'TBD'
+                      widget.project.endDate != null ? _formatDate(widget.project.endDate!) : 'TBD',
                     ),
                   ),
                 ],
@@ -414,10 +423,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: _buildInfoItem(
-                        'Days Remaining',
-                         '${widget.project.daysRemaining} days'
-                      ),
+                      child: _buildInfoItem('Days Remaining', '${widget.project.daysRemaining} days'),
                     ),
                     Expanded(
                       child: _buildInfoItem('Health Status', widget.project.healthStatus),
@@ -458,7 +464,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   void _showTeamMembers(BuildContext context) {
     widget.logger.i('👥 ProjectSummaryScreen: Showing team members dialog');
-    
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -472,7 +478,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               itemBuilder: (context, index) {
                 final member = widget.project.teamMembers[index];
                 final isManager = member == widget.project.projectManager;
-                
+
                 return ListTile(
                   leading: CircleAvatar(
                     child: Text(member.substring(0, 1).toUpperCase()),
@@ -499,10 +505,9 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
-    
-    // Fixed height for all widgets to ensure uniformity
+
     const double widgetHeight = 400.0;
-    
+
     widget.logger.d('🏗️ ProjectSummaryScreen: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
 
     final widgets = [
@@ -546,7 +551,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                     );
                   },
                 ),
-                // Left arrow button
                 if (_currentPage > 0)
                   Positioned(
                     left: 8,
@@ -576,7 +580,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                       ),
                     ),
                   ),
-                // Right arrow button
                 if (_currentPage < widgets.length - 1)
                   Positioned(
                     right: 8,
@@ -610,7 +613,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          // Page indicators
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(
