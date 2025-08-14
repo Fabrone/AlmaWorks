@@ -5,7 +5,7 @@ import 'projects/projects_main_screen.dart';
 import 'projects/project_summary_screen.dart';
 import 'financial_screen.dart';
 import 'schedule_screen.dart';
-import 'quality_safety_screen.dart';
+//import 'quality_and_safety_screen.dart';
 import 'reports_screen.dart';
 import '../models/project_model.dart';
 import '../services/project_service.dart';
@@ -627,11 +627,11 @@ class _SearchScreenState extends State<SearchScreen> {
         MaterialPageRoute(builder: (context) => ScheduleScreen(project: _projects.isNotEmpty ? _projects.first : ProjectModel.defaultModel(), logger: _logger)),
       );
       break;
-    case 'quality_safety':
+    /*case 'quality_safety':
       navigator.push(
-        MaterialPageRoute(builder: (context) => const QualitySafetyScreen()),
+        MaterialPageRoute(builder: (context) => const QualityAndSafetyScreen()),
       );
-      break;
+      break;*/
     case 'reports':
       navigator.push(
         MaterialPageRoute(builder: (context) => const ReportsScreen()),

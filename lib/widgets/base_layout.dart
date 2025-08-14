@@ -4,6 +4,7 @@ import 'package:almaworks/screens/projects/project_summary_screen.dart';
 import 'package:almaworks/screens/documents_screen.dart';
 import 'package:almaworks/screens/drawings_screen.dart';
 import 'package:almaworks/screens/schedule_screen.dart';
+import 'package:almaworks/screens/quality_and_safety_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -278,14 +279,26 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Quality & Safety selected');
                   if (isMobile) Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Quality & Safety section coming soon',
-                        style: GoogleFonts.poppins(),
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => QualityAndSafetyScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(
