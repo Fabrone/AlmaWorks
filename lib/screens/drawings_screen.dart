@@ -1,16 +1,16 @@
 import 'dart:io';
+import 'package:almaworks/models/drawing_model.dart';
+import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/screens/documents_screen.dart';
 import 'package:almaworks/screens/projects/project_summary_screen.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
+import 'package:almaworks/services/drawing_service.dart';
+import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:logger/logger.dart';
 import 'package:google_fonts/google_fonts.dart';
-import '../models/project_model.dart';
-import '../models/drawing_model.dart';
-import '../services/drawing_service.dart';
-import '../widgets/base_layout.dart';
 
 class DrawingsScreen extends StatefulWidget {
   final ProjectModel project;
