@@ -1,7 +1,9 @@
+import 'package:almaworks/models/project_model.dart';
 import 'package:flutter/material.dart';
+import 'package:logger/logger.dart';
 
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({super.key});
+  const ScheduleScreen({super.key, required ProjectModel project, required Logger logger});
 
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();

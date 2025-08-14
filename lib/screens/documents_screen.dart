@@ -1,7 +1,4 @@
 import 'package:almaworks/models/project_model.dart';
-import 'package:almaworks/screens/drawings_screen.dart';
-import 'package:almaworks/screens/projects/project_summary_screen.dart';
-import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -70,117 +67,69 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       project: widget.project,
       logger: widget.logger,
       selectedMenuItem: 'Documents',
-      onMenuItemSelected: _handleMenuNavigation,
+      onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
       floatingActionButton: FloatingActionButton(
         onPressed: _isLoading ? null : _addDocument,
         backgroundColor: const Color(0xFF0A2E5A),
         foregroundColor: Colors.white,
         child: const Icon(Icons.file_upload),
       ),
-      child: Column(
-        children: [
-          TabBar(
-            controller: _mainTabController,
-            tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
-            labelColor: const Color(0xFF0A2E5A),
-            unselectedLabelColor: Colors.grey,
-            labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-          ),
-          Expanded(
-            child: TabBarView(
-              controller: _mainTabController,
-              children: [
-                _buildRoleSection('Client', _clientSubTabController),
-                _buildRoleSection('Sub-Contractor', _subContractorSubTabController),
-                _buildRoleSection('Supplier', _supplierSubTabController),
-              ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    children: [
+                      TabBar(
+                        controller: _mainTabController,
+                        tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
+                        labelColor: const Color(0xFF0A2E5A),
+                        unselectedLabelColor: Colors.grey,
+                        labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                      ),
+                      SizedBox(
+                        height: constraints.maxHeight - 48 - 48, // Subtract TabBar and footer height
+                        child: TabBarView(
+                          controller: _mainTabController,
+                          children: [
+                            _buildRoleSection('Client', _clientSubTabController),
+                            _buildRoleSection('Sub-Contractor', _subContractorSubTabController),
+                            _buildRoleSection('Supplier', _supplierSubTabController),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  _buildFooter(context),
+                ],
+              ),
             ),
-          ),
-          _buildFooter(context),
-        ],
+          );
+        },
       ),
     );
   }
 
-  void _handleMenuNavigation(String menuItem) {
-    widget.logger.d('🧭 DocumentsScreen: Navigation to: $menuItem');
-    
-    switch (menuItem) {
-      case 'Switch Project':
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProjectsMainScreen(logger: widget.logger),
-          ),
-        );
-        break;
-      case 'Overview':
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProjectSummaryScreen(
-              project: widget.project,
-              logger: widget.logger,
-            ),
-          ),
-        );
-        break;
-      case 'Documents':
-        // Already on documents screen
-        break;
-      case 'Drawings':
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DrawingsScreen(
-              project: widget.project,
-              logger: widget.logger,
-            ),
-          ),
-        );
-        break;
-      default:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$menuItem section coming soon',
-              style: GoogleFonts.poppins(),
-            ),
-          ),
-        );
-        break;
-    }
-  }
-
   Widget _buildFooter(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A),
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
         ),
-      ),
-      child: Column(
-        children: [
-          Text(
-            'AlmaWorks Construction Management',
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF0A2E5A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'End of Documents Section',
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
+        textAlign: TextAlign.center,
       ),
     );
   }

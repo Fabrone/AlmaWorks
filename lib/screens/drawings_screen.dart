@@ -1,9 +1,6 @@
 import 'dart:io';
 import 'package:almaworks/models/drawing_model.dart';
 import 'package:almaworks/models/project_model.dart';
-import 'package:almaworks/screens/documents_screen.dart';
-import 'package:almaworks/screens/projects/project_summary_screen.dart';
-import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/services/drawing_service.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -52,7 +49,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       project: widget.project,
       logger: widget.logger,
       selectedMenuItem: 'Drawings',
-      onMenuItemSelected: _handleMenuNavigation, // Updated to use proper navigation method
+      onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
       floatingActionButton: _tabController.index == 0
           ? FloatingActionButton(
               onPressed: _isUploading ? null : _uploadDrawing,
@@ -70,137 +67,85 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                   : const Icon(Icons.upload_file),
             )
           : null,
-      child: Column(
-        children: [
-          // Tab Bar
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withValues(alpha: 0.1),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: TabBar(
-              controller: _tabController,
-              labelColor: const Color(0xFF0A2E5A),
-              unselectedLabelColor: Colors.grey[600],
-              indicatorColor: const Color(0xFF0A2E5A),
-              indicatorWeight: 3,
-              labelStyle: GoogleFonts.poppins(
-                fontWeight: FontWeight.w600,
-                fontSize: 16,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight,
               ),
-              unselectedLabelStyle: GoogleFonts.poppins(
-                fontWeight: FontWeight.w500,
-                fontSize: 16,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    children: [
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.grey.withValues(alpha: 0.1),
+                              blurRadius: 4,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: TabBar(
+                          controller: _tabController,
+                          labelColor: const Color(0xFF0A2E5A),
+                          unselectedLabelColor: Colors.grey[600],
+                          indicatorColor: const Color(0xFF0A2E5A),
+                          indicatorWeight: 3,
+                          labelStyle: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                          unselectedLabelStyle: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 16,
+                          ),
+                          tabs: const [
+                            Tab(text: 'Revisions'),
+                            Tab(text: 'As Built'),
+                          ],
+                        ),
+                      ),
+                      SizedBox(
+                        height: constraints.maxHeight - 48 - 48, // Subtract TabBar and footer height
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildRevisionsTab(),
+                            _buildAsBuiltTab(),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  _buildFooter(context),
+                ],
               ),
-              tabs: const [
-                Tab(text: 'Revisions'),
-                Tab(text: 'As Built'),
-              ],
             ),
-          ),
-          
-          // Tab Content
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildRevisionsTab(),
-                _buildAsBuiltTab(),
-              ],
-            ),
-          ),
-          
-          _buildFooter(context),
-        ],
+          );
+        },
       ),
     );
   }
 
-  void _handleMenuNavigation(String menuItem) {
-    widget.logger.d('🧭 DrawingsScreen: Navigation to: $menuItem');
-    
-    switch (menuItem) {
-      case 'Switch Project':
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProjectsMainScreen(logger: widget.logger),
-          ),
-        );
-        break;
-      case 'Overview':
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ProjectSummaryScreen(
-              project: widget.project,
-              logger: widget.logger,
-            ),
-          ),
-        );
-        break;
-      case 'Documents':
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => DocumentsScreen(
-              project: widget.project,
-              logger: widget.logger,
-            ),
-          ),
-        );
-        break;
-      case 'Drawings':
-        // Already on drawings screen
-        break;
-      default:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$menuItem section coming soon',
-              style: GoogleFonts.poppins(),
-            ),
-          ),
-        );
-        break;
-    }
-  }
-
   Widget _buildFooter(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A),
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
         ),
-      ),
-      child: Column(
-        children: [
-          Text(
-            'AlmaWorks Construction Management',
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF0A2E5A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'End of Drawings Section',
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
+        textAlign: TextAlign.center,
       ),
     );
   }
@@ -739,11 +684,9 @@ class _DrawingsScreenState extends State<DrawingsScreen>
   void _handleRevisionAction(String action, DrawingModel drawing) async {
     switch (action) {
       case 'view':
-        // Implement view functionality
         widget.logger.d('👁️ DrawingsScreen: View drawing: ${drawing.fileName}');
         break;
       case 'download':
-        // Implement download functionality
         widget.logger.d('⬇️ DrawingsScreen: Download drawing: ${drawing.fileName}');
         break;
       case 'mark_final':
@@ -758,11 +701,9 @@ class _DrawingsScreenState extends State<DrawingsScreen>
   void _handleAsBuiltAction(String action, DrawingModel drawing) async {
     switch (action) {
       case 'view':
-        // Implement view functionality
         widget.logger.d('👁️ DrawingsScreen: View as-built: ${drawing.fileName}');
         break;
       case 'download':
-        // Implement download functionality
         widget.logger.d('⬇️ DrawingsScreen: Download as-built: ${drawing.fileName}');
         break;
     }

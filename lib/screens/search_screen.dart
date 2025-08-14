@@ -624,7 +624,7 @@ class _SearchScreenState extends State<SearchScreen> {
       break;
     case 'schedule':
       navigator.push(
-        MaterialPageRoute(builder: (context) => const ScheduleScreen()),
+        MaterialPageRoute(builder: (context) => ScheduleScreen(project: _projects.isNotEmpty ? _projects.first : ProjectModel.defaultModel(), logger: _logger)),
       );
       break;
     case 'quality_safety':

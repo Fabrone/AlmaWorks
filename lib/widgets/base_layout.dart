@@ -1,5 +1,9 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
+import 'package:almaworks/screens/projects/project_summary_screen.dart';
+import 'package:almaworks/screens/documents_screen.dart';
+import 'package:almaworks/screens/drawings_screen.dart';
+import 'package:almaworks/screens/schedule_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -9,8 +13,8 @@ class BaseLayout extends StatelessWidget {
   final String title;
   final ProjectModel? project;
   final Logger logger;
-  final String selectedMenuItem; 
-  final Function(String) onMenuItemSelected; 
+  final String selectedMenuItem;
+  final Function(String) onMenuItemSelected;
   final Widget? floatingActionButton;
   final List<Widget>? actions;
 
@@ -87,7 +91,7 @@ class BaseLayout extends StatelessWidget {
   Widget _buildSidebarContent(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
-    
+
     return Column(
       children: [
         Container(
@@ -154,7 +158,26 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Overview selected');
                   if (isMobile) Navigator.pop(context);
-                  onMenuItemSelected('Overview');
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProjectSummaryScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(
@@ -165,7 +188,26 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Documents selected');
                   if (isMobile) Navigator.pop(context);
-                  onMenuItemSelected('Documents');
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => DocumentsScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(
@@ -176,7 +218,26 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Drawings selected');
                   if (isMobile) Navigator.pop(context);
-                  onMenuItemSelected('Drawings');
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => DrawingsScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(
@@ -187,13 +248,30 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Schedule selected');
                   if (isMobile) Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Schedule section coming soon', style: GoogleFonts.poppins())),
-                  );
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ScheduleScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
+                      ),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.security),
+                leading: const Icon(Icons.shield_sharp),
                 title: Text('Quality & Safety', style: GoogleFonts.poppins()),
                 selected: selectedMenuItem == 'Quality & Safety',
                 selectedTileColor: Colors.blueGrey[50],
@@ -201,12 +279,17 @@ class BaseLayout extends StatelessWidget {
                   logger.i('🧭 BaseLayout: Quality & Safety selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Quality & Safety section coming soon', style: GoogleFonts.poppins())),
+                    SnackBar(
+                      content: Text(
+                        'Quality & Safety section coming soon',
+                        style: GoogleFonts.poppins(),
+                      ),
+                    ),
                   );
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.analytics),
+                leading: const Icon(Icons.insert_chart),
                 title: Text('Reports', style: GoogleFonts.poppins()),
                 selected: selectedMenuItem == 'Reports',
                 selectedTileColor: Colors.blueGrey[50],
@@ -214,7 +297,12 @@ class BaseLayout extends StatelessWidget {
                   logger.i('🧭 BaseLayout: Reports selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Reports section coming soon', style: GoogleFonts.poppins())),
+                    SnackBar(
+                      content: Text(
+                        'Reports section coming soon',
+                        style: GoogleFonts.poppins(),
+                      ),
+                    ),
                   );
                 },
               ),
@@ -227,12 +315,17 @@ class BaseLayout extends StatelessWidget {
                   logger.i('🧭 BaseLayout: Photo Gallery selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Photo Gallery section coming soon', style: GoogleFonts.poppins())),
+                    SnackBar(
+                      content: Text(
+                        'Photo Gallery section coming soon',
+                        style: GoogleFonts.poppins(),
+                      ),
+                    ),
                   );
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.attach_money),
+                leading: const Icon(Icons.account_balance),
                 title: Text('Financials', style: GoogleFonts.poppins()),
                 selected: selectedMenuItem == 'Financials',
                 selectedTileColor: Colors.blueGrey[50],
@@ -240,7 +333,12 @@ class BaseLayout extends StatelessWidget {
                   logger.i('🧭 BaseLayout: Financials selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Financials section coming soon', style: GoogleFonts.poppins())),
+                    SnackBar(
+                      content: Text(
+                        'Financials section coming soon',
+                        style: GoogleFonts.poppins(),
+                      ),
+                    ),
                   );
                 },
               ),

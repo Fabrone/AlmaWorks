@@ -158,4 +158,6 @@ class ProjectModel {
     
     return endDate!.difference(now).inDays;
   }
+
+  static defaultModel() {}
 }
