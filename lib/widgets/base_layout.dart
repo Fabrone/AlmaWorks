@@ -1,7 +1,7 @@
+import 'package:almaworks/models/project_model.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
-import '../models/project_model.dart';
 
 class BaseLayout extends StatelessWidget {
   final Widget child;

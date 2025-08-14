@@ -73,7 +73,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     super.build(context);
     _logger.d('🎨 ProjectsMainScreen: Building UI, isLoading: $_isLoading');
     
-    // This screen should only show Dashboard and Projects navigation, not project-specific menu items
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -253,45 +252,49 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         
         if (snapshot.hasError) {
           _logger.e('Firestore error: ${snapshot.error}');
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 64,
-                    color: Colors.red[400],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Error loading projects',
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.red[600],
-                      fontWeight: FontWeight.w500,
+          return _buildContentWithFooter(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.error_outline,
+                      size: 64,
+                      color: Colors.red[400],
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Please check your connection and try again',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[600],
+                    const SizedBox(height: 16),
+                    Text(
+                      'Error loading projects',
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.red[600],
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      'Please check your connection and try again',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
         }
         
         if (!snapshot.hasData) {
-          return const Center(
-            child: Padding(
-              padding: EdgeInsets.all(32.0),
-              child: CircularProgressIndicator(),
+          return _buildContentWithFooter(
+            child: const Center(
+              child: Padding(
+                padding: EdgeInsets.all(32.0),
+                child: CircularProgressIndicator(),
+              ),
             ),
           );
         }
@@ -308,35 +311,37 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
               ? 'No projects found'
               : 'No $_statusFilter projects';
           
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(32.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.folder_open,
-                    size: 64,
-                    color: Colors.grey[400],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    filterText,
-                    style: TextStyle(
-                      fontSize: 18,
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
+          return _buildContentWithFooter(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.folder_open,
+                      size: 64,
+                      color: Colors.grey[400],
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap the + button to create your first project',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Colors.grey[500],
+                    const SizedBox(height: 16),
+                    Text(
+                      filterText,
+                      style: TextStyle(
+                        fontSize: 18,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      'Tap the + button to create your first project',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[500],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -353,20 +358,59 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
               _isLoading = false;
             });
           },
-          child: ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: filteredProjects.length,
-            itemBuilder: (context, index) {
-              try {
-                final project = ProjectModel.fromFirestore(filteredProjects[index]);
-                _logger.d('🏗️ ProjectsMainScreen: Building list item for project: ${project.name}');
-                
-                return _buildProjectCard(project, context);
-              } catch (e) {
-                _logger.e('❌ ProjectsMainScreen: Error building project card at index $index: $e');
-                return const SizedBox.shrink();
-              }
-            },
+          child: _buildContentWithFooter(
+            child: ListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              padding: const EdgeInsets.all(16),
+              itemCount: filteredProjects.length,
+              itemBuilder: (context, index) {
+                try {
+                  final project = ProjectModel.fromFirestore(filteredProjects[index]);
+                  _logger.d('🏗️ ProjectsMainScreen: Building list item for project: ${project.name}');
+                  
+                  return _buildProjectCard(project, context);
+                } catch (e) {
+                  _logger.e('❌ ProjectsMainScreen: Error building project card at index $index: $e');
+                  return const SizedBox.shrink();
+                }
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildContentWithFooter({required Widget child}) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              minHeight: constraints.maxHeight,
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                child,
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(isMobile ? 12 : 16),
+                  color: const Color(0xFF0A2E5A),
+                  child: Text(
+                    '© 2025 JV Alma C.I.S Site Management System',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: isMobile ? 12 : 14,
+                      fontWeight: FontWeight.w400,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -554,7 +598,6 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
   void _navigateToProjectSummary(ProjectModel project, BuildContext context) {
     _logger.i('🧭 ProjectsMainScreen: Navigating to project summary: ${project.name}');
     
-    // Try to find the provider in the current context first
     try {
       final provider = Provider.of<SelectedProjectProvider>(context, listen: false);
       provider.selectProject(project);

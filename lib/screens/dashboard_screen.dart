@@ -24,6 +24,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedIndex = 0;
+  int _projectsInitialTab = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ProjectService _projectService;
   late final Logger _logger;
@@ -41,9 +42,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     setState(() {
       _selectedIndex = 1;
+      _projectsInitialTab = initialTab;
     });
     
-    _logger.d('✅ DashboardScreen: Successfully navigated to projects section');
+    _logger.d('✅ DashboardScreen: Successfully navigated to projects section with tab: $initialTab');
   }
 
   @override
@@ -149,7 +151,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title,
         style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
       ),
-      backgroundColor: const Color(0xFF0A2E5A), // Darker navy blue
+      backgroundColor: const Color(0xFF0A2E5A),
       actions: [
         IconButton(
           icon: const Icon(Icons.search, color: Colors.white),
@@ -209,7 +211,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           height: 120,
           width: double.infinity,
           decoration: const BoxDecoration(
-            color: Color(0xFF0A2E5A), // Darker navy blue
+            color: Color(0xFF0A2E5A),
           ),
           child: const Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -266,6 +268,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   _logger.i('📁 DashboardScreen: Projects menu item tapped');
                   setState(() {
                     _selectedIndex = 1;
+                    _projectsInitialTab = 0;
                   });
                   if (Navigator.canPop(context)) {
                     Navigator.pop(context);
@@ -293,8 +296,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _logger.d('✅ DashboardScreen: Returning general dashboard screen');
           return screen;
         case 1:
-          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen');
-          return ProjectsMainScreen(logger: _logger);
+          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen with initialTab: $_projectsInitialTab');
+          return ProjectsMainScreen(
+            logger: _logger,
+            initialTabIndex: _projectsInitialTab,
+          );
         default:
           return MainDashboard(
             projectService: _projectService, 
@@ -345,7 +351,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  
   @override
   void dispose() {
     _logger.i('🧹 DashboardScreen: Disposing resources');
@@ -353,7 +358,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// MainDashboard class remains unchanged
 class MainDashboard extends StatefulWidget {
   final ProjectService projectService;
   final Logger logger;
@@ -434,8 +438,8 @@ class _MainDashboardState extends State<MainDashboard> {
                   icon: Icons.folder,
                   color: Colors.blue,
                   onTap: () {
-                    widget.logger.i('👆 MainDashboard: Total projects card tapped - navigating to projects');
-                    widget.onNavigateToProjects();
+                    widget.logger.i('👆 MainDashboard: Total projects card tapped - navigating to All Projects tab');
+                    widget.onNavigateToProjects(initialTab: 0);
                   },
                 );
               },
@@ -453,7 +457,7 @@ class _MainDashboardState extends State<MainDashboard> {
                   icon: Icons.work,
                   color: Colors.green,
                   onTap: () {
-                    widget.logger.i('👆 MainDashboard: Active projects card tapped');
+                    widget.logger.i('👆 MainDashboard: Active projects card tapped - navigating to Active Projects tab');
                     widget.onNavigateToProjects(initialTab: 1);
                   },
                 );
@@ -472,7 +476,7 @@ class _MainDashboardState extends State<MainDashboard> {
                   icon: Icons.check_circle,
                   color: Colors.orange,
                   onTap: () {
-                    widget.logger.i('👆 MainDashboard: Completed projects card tapped');
+                    widget.logger.i('👆 MainDashboard: Completed projects card tapped - navigating to Completed Projects tab');
                     widget.onNavigateToProjects(initialTab: 2);
                   },
                 );
@@ -500,10 +504,8 @@ class _MainDashboardState extends State<MainDashboard> {
     final screenWidth = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
-    
-    // Fixed height for all widgets to ensure uniformity
     const double widgetHeight = 400.0;
-    
+
     widget.logger.d('🏗️ MainDashboard: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
 
     final widgets = [
@@ -526,7 +528,8 @@ class _MainDashboardState extends State<MainDashboard> {
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
-      child: Column(
+      child: Stack(
+        alignment: Alignment.center,
         children: [
           SizedBox(
             height: widgetHeight,
@@ -544,65 +547,79 @@ class _MainDashboardState extends State<MainDashboard> {
                   child: widgets[index],
                 );
               },
+              // Improve responsiveness with faster transitions
+              physics: const BouncingScrollPhysics(),
+              pageSnapping: true,
+              scrollBehavior: const ScrollBehavior().copyWith(
+                scrollbars: false,
+                overscroll: false,
+              ),
             ),
           ),
-          const SizedBox(height: 16),
+          // Previous Button
+          Positioned(
+            left: 0,
+            child: _currentPage > 0
+                ? FloatingActionButton(
+                    onPressed: () {
+                      _pageController.previousPage(
+                        duration: const Duration(milliseconds: 200), // Faster transition
+                        curve: Curves.easeInOutCubic, // Smoother curve
+                      );
+                    },
+                    mini: true,
+                    backgroundColor: const Color(0xFF0A2E5A),
+                    child: const Icon(
+                      Icons.arrow_left,
+                      color: Colors.white,
+                      size: 30,
+                      weight: 800, // Bold arrow
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+          // Next Button
+          Positioned(
+            right: 0,
+            child: _currentPage < widgets.length - 1
+                ? FloatingActionButton(
+                    onPressed: () {
+                      _pageController.nextPage(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOutCubic,
+                      );
+                    },
+                    mini: true,
+                    backgroundColor: const Color(0xFF0A2E5A),
+                    child: const Icon(
+                      Icons.arrow_right,
+                      color: Colors.white,
+                      size: 30,
+                      weight: 800,
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
           // Page indicators
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              widgets.length,
-              (index) => Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _currentPage == index
-                      ? const Color(0xFF0A2E5A)
-                      : Colors.grey.withValues(alpha: 0.4),
+          Positioned(
+            bottom: 8,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                widgets.length,
+                (index) => Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _currentPage == index
+                        ? const Color(0xFF0A2E5A)
+                        : Colors.grey.withValues(alpha: 0.4),
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          // Navigation buttons
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              ElevatedButton.icon(
-                onPressed: _currentPage > 0
-                    ? () {
-                        _pageController.previousPage(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.arrow_back),
-                label: const Text('Previous'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0A2E5A),
-                  foregroundColor: Colors.white,
-                ),
-              ),
-              ElevatedButton.icon(
-                onPressed: _currentPage < widgets.length - 1
-                    ? () {
-                        _pageController.nextPage(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeInOut,
-                        );
-                      }
-                    : null,
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Next'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF0A2E5A),
-                  foregroundColor: Colors.white,
-                ),
-              ),
-            ],
           ),
         ],
       ),
@@ -613,7 +630,7 @@ class _MainDashboardState extends State<MainDashboard> {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 12 : 16),
-      color: const Color(0xFF0A2E5A), // Darker navy blue
+      color: const Color(0xFF0A2E5A),
       child: Text(
         '© 2025 JV Alma C.I.S Site Management System',
         style: TextStyle(
