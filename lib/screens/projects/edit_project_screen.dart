@@ -1,3 +1,4 @@
+import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:logger/logger.dart';
@@ -61,54 +62,35 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
   Widget build(BuildContext context) {
     _logger.d('🎨 EditProjectScreen: Building UI');
     
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    final isTablet = screenWidth >= 600 && screenWidth < 1200;
-    
-    if (isMobile) {
-      return _buildMobileLayout();
-    }
-    return _buildTabletDesktopLayout(isTablet);
-  }
-
-  Widget _buildMobileLayout() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Edit ${widget.project.name}',
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-      ),
-      body: Form(
+    return BaseLayout(
+      title: 'Edit ${widget.project.name}',
+      project: widget.project,
+      selectedMenuItem: 'Edit Project', // No specific menu item selected
+      logger: _logger,
+      onMenuItemSelected: _handleMenuNavigation,
+      child: Form(
         key: _formKey,
         child: SingleChildScrollView(
           child: Column(
             children: [
               Padding(
-                padding: EdgeInsets.all(isMobile ? 12 : 16),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    _buildBasicInformationCard(isMobile),
-                    SizedBox(height: isMobile ? 12 : 16),
-                    _buildProjectDetailsCard(isMobile),
-                    SizedBox(height: isMobile ? 12 : 16),
-                    _buildTimelineCard(isMobile),
-                    SizedBox(height: isMobile ? 12 : 16),
-                    _buildTeamMembersCard(isMobile),
-                    SizedBox(height: isMobile ? 24 : 32),
+                    _buildBasicInformationCard(false),
+                    const SizedBox(height: 16),
+                    _buildProjectDetailsCard(false),
+                    const SizedBox(height: 16),
+                    _buildTimelineCard(false),
+                    const SizedBox(height: 16),
+                    _buildTeamMembersCard(false),
+                    const SizedBox(height: 32),
                     _buildUpdateButton(),
-                    SizedBox(height: isMobile ? 12 : 16),
+                    const SizedBox(height: 16),
                   ],
                 ),
               ),
-              _buildFooter(context, isMobile),
+              _buildFooter(context, false),
             ],
           ),
         ),
@@ -116,210 +98,43 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     );
   }
 
-  Widget _buildTabletDesktopLayout(bool isTablet) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'Edit ${widget.project.name}',
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        centerTitle: true,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-      ),
-      body: Row(
-        children: [
-          _buildSidebar(context, isTablet),
-          Expanded(
-            child: Form(
-              key: _formKey,
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    Padding(
-                      padding: EdgeInsets.all(isMobile ? 12 : 16),
-                      child: Column(
-                        children: [
-                          _buildBasicInformationCard(isMobile),
-                          SizedBox(height: isMobile ? 12 : 16),
-                          _buildProjectDetailsCard(isMobile),
-                          SizedBox(height: isMobile ? 12 : 16),
-                          _buildTimelineCard(isMobile),
-                          SizedBox(height: isMobile ? 12 : 16),
-                          _buildTeamMembersCard(isMobile),
-                          SizedBox(height: isMobile ? 24 : 32),
-                          _buildUpdateButton(),
-                          SizedBox(height: isMobile ? 12 : 16),
-                        ],
-                      ),
-                    ),
-                    _buildFooter(context, isMobile),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSidebar(BuildContext context, bool isTablet) {
-    return Container(
-      width: isTablet ? 280 : 300,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(2, 0),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Container(
-            height: 120,
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              color: Color(0xFF0A2E5A),
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    'AlmaWorks',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    'Site Management',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.dashboard),
-                  title: const Text('Dashboard'),
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.folder),
-                  title: const Text('Projects'),
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.edit),
-                  title: const Text('Edit Project'),
-                  selected: true,
-                  onTap: () {},
-                ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text(
-                    'Project Sections',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description),
-                  title: const Text('Documents'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.architecture),
-                  title: const Text('Drawings'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.schedule),
-                  title: const Text('Schedule'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.security),
-                  title: const Text('Quality & Safety'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.analytics),
-                  title: const Text('Reports'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.photo_library),
-                  title: const Text('Photo Gallery'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.attach_money),
-                  title: const Text('Financials'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+  void _handleMenuNavigation(String menuItem) {
+    switch (menuItem) {
+      case 'Switch Project':
+        Navigator.pushReplacementNamed(context, '/projects');
+        break;
+      case 'Overview':
+        Navigator.pushReplacementNamed(context, '/project-summary');
+        break;
+      case 'Documents':
+        Navigator.pushReplacementNamed(context, '/documents');
+        break;
+      case 'Drawings':
+        Navigator.pushReplacementNamed(context, '/drawings');
+        break;
+      default:
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$menuItem section coming soon')),
+        );
+    }
   }
 
   Widget _buildBasicInformationCard(bool isMobile) {
     return Card(
       elevation: 2,
       child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Basic Information',
               style: TextStyle(
-                fontSize: isMobile ? 16 : 18,
+                fontSize: 18,
                 fontWeight: FontWeight.bold
               ),
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _nameController,
               decoration: const InputDecoration(
@@ -334,7 +149,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                 return null;
               },
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _descriptionController,
               decoration: const InputDecoration(
@@ -350,7 +165,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                 return null;
               },
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _locationController,
               decoration: const InputDecoration(
@@ -375,18 +190,18 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     return Card(
       elevation: 2,
       child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Project Details',
               style: TextStyle(
-                fontSize: isMobile ? 16 : 18,
+                fontSize: 18,
                 fontWeight: FontWeight.bold
               ),
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _budgetController,
               decoration: const InputDecoration(
@@ -400,7 +215,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                 FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
               ],
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             DropdownButtonFormField<String?>(
               value: _selectedStatus,
               decoration: const InputDecoration(
@@ -429,7 +244,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                 _logger.d('📝 EditProjectScreen: Status changed to $_selectedStatus');
               },
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             TextFormField(
               controller: _projectManagerController,
               decoration: const InputDecoration(
@@ -454,18 +269,18 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     return Card(
       elevation: 2,
       child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Timeline',
               style: TextStyle(
-                fontSize: isMobile ? 16 : 18,
+                fontSize: 18,
                 fontWeight: FontWeight.bold
               ),
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             Container(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey[400]!),
@@ -479,7 +294,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                 onTap: () => _selectStartDate(),
               ),
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             Container(
               decoration: BoxDecoration(
                 border: Border.all(color: Colors.grey[400]!),
@@ -503,18 +318,18 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     return Card(
       elevation: 2,
       child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               'Team Members',
               style: TextStyle(
-                fontSize: isMobile ? 16 : 18,
+                fontSize: 18,
                 fontWeight: FontWeight.bold
               ),
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
@@ -540,7 +355,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                 ),
               ],
             ),
-            SizedBox(height: isMobile ? 12 : 16),
+            const SizedBox(height: 16),
             if (_teamMembers.isNotEmpty) ...[
               const Text(
                 'Team Members:',
@@ -643,13 +458,13 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
   Widget _buildFooter(BuildContext context, bool isMobile) {
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      padding: const EdgeInsets.all(16),
       color: const Color(0xFF0A2E5A),
       child: Text(
         '© 2025 JV Alma C.I.S Site Management System',
         style: TextStyle(
           color: Colors.white,
-          fontSize: isMobile ? 12 : 14,
+          fontSize: 14,
           fontWeight: FontWeight.w400,
         ),
         textAlign: TextAlign.center,

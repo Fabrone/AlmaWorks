@@ -140,8 +140,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       title = 'AlmaWorks - Dashboard';
     } else if (_selectedIndex == 1) {
       title = 'Projects';
-    } else {
-      title = _getMenuTitle(_selectedIndex);
     }
 
     _logger.d('🏷️ DashboardScreen: Building app bar with title: $title');
@@ -203,7 +201,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildSidebarContent(SelectedProjectProvider projectProvider) {
-    _logger.d('📋 DashboardScreen: Building sidebar content, hasSelectedProject: ${projectProvider.hasSelectedProject}');
+    _logger.d('📋 DashboardScreen: Building simplified sidebar content');
     
     return Column(
       children: [
@@ -311,7 +309,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-
   Widget _buildErrorScreen(String title, String error) {
     _logger.w('⚠️ DashboardScreen: Building error screen: $title');
     
@@ -348,14 +345,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  String _getMenuTitle(int index) {
-    switch (index) {
-      case 0: return 'Dashboard';
-      case 1: return 'Projects';
-      default: return 'AlmaWorks';
-    }
-  }
-
+  
   @override
   void dispose() {
     _logger.i('🧹 DashboardScreen: Disposing resources');
@@ -363,6 +353,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
+// MainDashboard class remains unchanged
 class MainDashboard extends StatefulWidget {
   final ProjectService projectService;
   final Logger logger;
