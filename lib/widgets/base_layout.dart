@@ -1,4 +1,5 @@
 import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -125,7 +126,6 @@ class BaseLayout extends StatelessWidget {
             ],
           ),
         ),
-
         Expanded(
           child: ListView(
             padding: EdgeInsets.zero,
@@ -136,8 +136,14 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Switch Project',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Switch Project selected');
                   if (isMobile) Navigator.pop(context);
-                  onMenuItemSelected('Switch Project');
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => ProjectsMainScreen(logger: logger),
+                    ),
+                  );
                 },
               ),
               ListTile(
@@ -146,6 +152,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Overview',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Overview selected');
                   if (isMobile) Navigator.pop(context);
                   onMenuItemSelected('Overview');
                 },
@@ -156,6 +163,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Documents',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Documents selected');
                   if (isMobile) Navigator.pop(context);
                   onMenuItemSelected('Documents');
                 },
@@ -166,6 +174,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Drawings',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Drawings selected');
                   if (isMobile) Navigator.pop(context);
                   onMenuItemSelected('Drawings');
                 },
@@ -176,6 +185,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Schedule',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Schedule selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Schedule section coming soon', style: GoogleFonts.poppins())),
@@ -188,6 +198,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Quality & Safety',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Quality & Safety selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Quality & Safety section coming soon', style: GoogleFonts.poppins())),
@@ -200,6 +211,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Reports',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Reports selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Reports section coming soon', style: GoogleFonts.poppins())),
@@ -212,6 +224,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Photo Gallery',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Photo Gallery selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Photo Gallery section coming soon', style: GoogleFonts.poppins())),
@@ -224,6 +237,7 @@ class BaseLayout extends StatelessWidget {
                 selected: selectedMenuItem == 'Financials',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
+                  logger.i('🧭 BaseLayout: Financials selected');
                   if (isMobile) Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(content: Text('Financials section coming soon', style: GoogleFonts.poppins())),

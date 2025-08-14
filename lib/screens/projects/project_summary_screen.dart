@@ -55,14 +55,24 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
           },
         ),
       ],
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildProjectContent(context),
-            _buildFooter(context),
-          ],
-        ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildProjectContent(context),
+                  _buildFooter(context),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -191,34 +201,19 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   }
 
   Widget _buildFooter(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.grey[50],
-        border: Border(
-          top: BorderSide(color: Colors.grey[200]!),
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A),
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
         ),
-      ),
-      child: Column(
-        children: [
-          Text(
-            'AlmaWorks Construction Management',
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF0A2E5A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'End of Project Overview',
-            style: GoogleFonts.poppins(
-              fontSize: 14,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
+        textAlign: TextAlign.center,
       ),
     );
   }
@@ -460,7 +455,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     final screenWidth = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
-
     const double widgetHeight = 400.0;
 
     widget.logger.d('🏗️ ProjectSummaryScreen: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
@@ -485,102 +479,91 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
-      child: Column(
+      child: Stack(
+        alignment: Alignment.center,
         children: [
           SizedBox(
             height: widgetHeight,
-            child: Stack(
-              children: [
-                PageView.builder(
-                  controller: _pageController,
-                  onPageChanged: (index) {
-                    setState(() {
-                      _currentPage = index;
-                    });
-                  },
-                  itemCount: widgets.length,
-                  itemBuilder: (context, index) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4.0),
-                      child: widgets[index],
-                    );
-                  },
-                ),
-                if (_currentPage > 0)
-                  Positioned(
-                    left: 8,
-                    top: widgetHeight / 2 - 24,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0A2E5A).withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        onPressed: () {
-                          _pageController.previousPage(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
-                        },
-                        icon: const Icon(Icons.arrow_back_ios, color: Colors.white, size: 20),
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      ),
-                    ),
-                  ),
-                if (_currentPage < widgets.length - 1)
-                  Positioned(
-                    right: 8,
-                    top: widgetHeight / 2 - 24,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0A2E5A).withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: IconButton(
-                        onPressed: () {
-                          _pageController.nextPage(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
-                        },
-                        icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
-                        padding: const EdgeInsets.all(8),
-                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                      ),
-                    ),
-                  ),
-              ],
+            child: PageView.builder(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() {
+                  _currentPage = index;
+                });
+              },
+              itemCount: widgets.length,
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: widgets[index],
+                );
+              },
+              physics: const BouncingScrollPhysics(),
+              pageSnapping: true,
+              scrollBehavior: const ScrollBehavior().copyWith(
+                scrollbars: false,
+                overscroll: false,
+              ),
             ),
           ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(
-              widgets.length,
-              (index) => Container(
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _currentPage == index
-                      ? const Color(0xFF0A2E5A)
-                      : Colors.grey.withValues(alpha: 0.4),
+          Positioned(
+            left: 0,
+            child: _currentPage > 0
+                ? FloatingActionButton(
+                    onPressed: () {
+                      _pageController.previousPage(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOutCubic,
+                      );
+                    },
+                    mini: true,
+                    backgroundColor: const Color(0xFF0A2E5A),
+                    child: const Icon(
+                      Icons.arrow_left,
+                      color: Colors.white,
+                      size: 30,
+                      weight: 800,
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+          Positioned(
+            right: 0,
+            child: _currentPage < widgets.length - 1
+                ? FloatingActionButton(
+                    onPressed: () {
+                      _pageController.nextPage(
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOutCubic,
+                      );
+                    },
+                    mini: true,
+                    backgroundColor: const Color(0xFF0A2E5A),
+                    child: const Icon(
+                      Icons.arrow_right,
+                      color: Colors.white,
+                      size: 30,
+                      weight: 800,
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+          Positioned(
+            bottom: 8,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(
+                widgets.length,
+                (index) => Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _currentPage == index
+                        ? const Color(0xFF0A2E5A)
+                        : Colors.grey.withValues(alpha: 0.4),
+                  ),
                 ),
               ),
             ),
