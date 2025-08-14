@@ -1,3 +1,10 @@
+import 'package:almaworks/providers/selected_project_provider.dart';
+import 'package:almaworks/services/project_service.dart';
+import 'package:almaworks/widgets/activity_feed.dart';
+import 'package:almaworks/widgets/dashboard_card.dart';
+import 'package:almaworks/widgets/responsive_layout.dart';
+import 'package:almaworks/widgets/todo_widget.dart';
+import 'package:almaworks/widgets/weather_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
@@ -5,13 +12,6 @@ import 'projects/projects_main_screen.dart';
 import 'notifications_screen.dart';
 import 'account_screen.dart';
 import 'search_screen.dart';
-import '../widgets/dashboard_card.dart';
-import '../widgets/activity_feed.dart';
-import '../widgets/weather_widget.dart';
-import '../widgets/todo_widget.dart';
-import '../widgets/responsive_layout.dart';
-import '../providers/selected_project_provider.dart';
-import '../services/project_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   final Logger logger;
