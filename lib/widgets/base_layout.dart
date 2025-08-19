@@ -5,6 +5,7 @@ import 'package:almaworks/screens/documents_screen.dart';
 import 'package:almaworks/screens/drawings_screen.dart';
 import 'package:almaworks/screens/schedule_screen.dart';
 import 'package:almaworks/screens/quality_and_safety_screen.dart';
+import 'package:almaworks/screens/reports_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -309,14 +310,26 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Reports selected');
                   if (isMobile) Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Reports section coming soon',
-                        style: GoogleFonts.poppins(),
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ReportsScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(

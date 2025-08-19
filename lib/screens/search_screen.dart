@@ -6,7 +6,7 @@ import 'projects/project_summary_screen.dart';
 import 'financial_screen.dart';
 import 'schedule_screen.dart';
 //import 'quality_and_safety_screen.dart';
-import 'reports_screen.dart';
+//import 'reports_screen.dart';
 import '../models/project_model.dart';
 import '../services/project_service.dart';
 import '../widgets/responsive_layout.dart';
@@ -631,12 +631,12 @@ class _SearchScreenState extends State<SearchScreen> {
       navigator.push(
         MaterialPageRoute(builder: (context) => const QualityAndSafetyScreen()),
       );
-      break;*/
+      break;
     case 'reports':
       navigator.push(
         MaterialPageRoute(builder: (context) => const ReportsScreen()),
       );
-      break;
+      break;*/
     default:
       scaffoldMessenger.showSnackBar(
         SnackBar(

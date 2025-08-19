@@ -50,6 +50,13 @@ dependencies:
   google_fonts: ^6.3.0
   intl: ^0.20.2
   url_launcher: ^6.3.2
+  txt_docx: ^2.0.0
+  signature: ^5.5.0
+  docx_template: ^0.4.0
+  image_picker: ^1.2.0
+  google_ml_kit: ^0.20.0
+  google_mlkit_text_recognition: ^0.15.0
+  universal_html: ^2.2.4
 
 dev_dependencies:
   flutter_test:
@@ -61,6 +68,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -72,6 +80,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon.png" 
 
   # To add assets to your application, add an assets section, like this:
   # assets:
