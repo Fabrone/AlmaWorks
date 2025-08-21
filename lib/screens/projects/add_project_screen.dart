@@ -198,7 +198,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
             ),
             SizedBox(height: isMobile ? 12 : 16),
             DropdownButtonFormField<String?>(
-              value: _selectedStatus,
+              initialValue: _selectedStatus,
               decoration: const InputDecoration(
                 labelText: 'Status (Optional)',
                 border: OutlineInputBorder(),

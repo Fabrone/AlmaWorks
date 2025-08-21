@@ -217,7 +217,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String?>(
-              value: _selectedStatus,
+              initialValue: _selectedStatus,
               decoration: const InputDecoration(
                 labelText: 'Status (Optional)',
                 border: OutlineInputBorder(),
