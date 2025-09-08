@@ -1,4 +1,5 @@
 import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/photo_gallery_screen.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/screens/projects/project_summary_screen.dart';
 import 'package:almaworks/screens/documents_screen.dart';
@@ -340,14 +341,26 @@ class BaseLayout extends StatelessWidget {
                 onTap: () {
                   logger.i('🧭 BaseLayout: Photo Gallery selected');
                   if (isMobile) Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        'Photo Gallery section coming soon',
-                        style: GoogleFonts.poppins(),
+                  if (project != null) {
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => PhotoGalleryScreen(
+                          project: project!,
+                          logger: logger,
+                        ),
                       ),
-                    ),
-                  );
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'No project selected',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
+                    );
+                  }
                 },
               ),
               ListTile(

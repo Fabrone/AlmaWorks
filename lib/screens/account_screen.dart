@@ -539,7 +539,8 @@ class _AccountScreenState extends State<AccountScreen> {
                   });
                   _logger.i('🔔 AccountScreen: Notifications ${value ? 'enabled' : 'disabled'}');
                 },
-                activeColor: const Color(0xFF0A2E5A),
+                activeThumbColor: const Color(0xFF0A2E5A),
+
               ),
             ),
             _buildSettingsTile(
@@ -553,7 +554,8 @@ class _AccountScreenState extends State<AccountScreen> {
                   });
                   _logger.i('🌙 AccountScreen: Dark mode ${value ? 'enabled' : 'disabled'}');
                 },
-                activeColor: const Color(0xFF0A2E5A),
+                activeThumbColor: const Color(0xFF0A2E5A),
+
               ),
             ),
             _buildSettingsTile(
