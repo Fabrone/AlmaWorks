@@ -224,7 +224,7 @@ class _SearchScreenState extends State<SearchScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
+            color: const Color(0xFF0A2E5A).withValues(alpha: 25),
             blurRadius: 4,
             offset: const Offset(2, 0),
           ),
@@ -442,7 +442,7 @@ class _SearchScreenState extends State<SearchScreen> {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: const Color(0xFF0A2E5A).withValues(alpha: 0.1),
+            color: const Color(0xFF0A2E5A).withValues(alpha: 25),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Icon(
@@ -571,81 +571,92 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _navigateToResult(SearchResult result) async {
-  // Save to recent searches
-  try {
-    await FirebaseFirestore.instance.collection('RecentSearches').add({
-      'title': result.title,
-      'description': result.description,
-      'icon': result.icon.toString().split('.').last,
-      'screenType': result.screenType,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-  } catch (e) {
-    _logger.e('❌ SearchScreen: Error saving recent search: $e');
-  }
+    // Save to recent searches
+    try {
+      await FirebaseFirestore.instance.collection('RecentSearches').add({
+        'title': result.title,
+        'description': result.description,
+        'icon': result.icon.toString().split('.').last,
+        'screenType': result.screenType,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      _logger.e('❌ SearchScreen: Error saving recent search: $e');
+    }
 
-  if (!mounted) return;
-  
-  final navigator = Navigator.of(context);
-  final scaffoldMessenger = ScaffoldMessenger.of(context);
-  
-  navigator.pop(); // Close search screen
+    if (!mounted) return;
+    
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    
+    navigator.pop(); // Close search screen
 
-  // Navigate based on screen type
-  switch (result.screenType) {
-    case 'projects':
-      navigator.push(
-        MaterialPageRoute(
-          builder: (context) => ProjectsMainScreen(logger: _logger),
-        ),
-      );
-      break;
-    case 'project_detail':
-      if (result.projectId != null) {
-        try {
-          final project = _projects.firstWhere((p) => p.id == result.projectId);
-          navigator.push(
-            MaterialPageRoute(
-              builder: (context) => ProjectSummaryScreen(
-                project: project,
-                logger: _logger,
+    // Navigate based on screen type
+    switch (result.screenType) {
+      case 'projects':
+        navigator.push(
+          MaterialPageRoute(
+            builder: (context) => ProjectsMainScreen(logger: _logger),
+          ),
+        );
+        break;
+      case 'project_detail':
+        if (result.projectId != null) {
+          try {
+            final project = _projects.firstWhere((p) => p.id == result.projectId);
+            navigator.push(
+              MaterialPageRoute(
+                builder: (context) => ProjectSummaryScreen(
+                  project: project,
+                  logger: _logger,
+                ),
               ),
-            ),
-          );
-        } catch (e) {
-          _logger.e('❌ SearchScreen: Project not found: ${result.projectId}');
+            );
+          } catch (e) {
+            _logger.e('❌ SearchScreen: Project not found: ${result.projectId}');
+          }
         }
-      }
-      break;
-    case 'financial':
-      navigator.push(
-        MaterialPageRoute(builder: (context) => const FinancialScreen()),
-      );
-      break;
-    case 'schedule':
-      navigator.push(
-        MaterialPageRoute(builder: (context) => ScheduleScreen(project: _projects.isNotEmpty ? _projects.first : ProjectModel.defaultModel(), logger: _logger)),
-      );
-      break;
-    /*case 'quality_safety':
-      navigator.push(
-        MaterialPageRoute(builder: (context) => const QualityAndSafetyScreen()),
-      );
-      break;
-    case 'reports':
-      navigator.push(
-        MaterialPageRoute(builder: (context) => const ReportsScreen()),
-      );
-      break;*/
-    default:
-      scaffoldMessenger.showSnackBar(
-        SnackBar(
-          content: Text('Navigating to ${result.title}'),
-          duration: const Duration(seconds: 2),
-        ),
-      );
+        break;
+      case 'financial':
+        // Provide required parameters to FinancialScreen
+        navigator.push(
+          MaterialPageRoute(
+            builder: (context) => FinancialScreen(
+              project: _projects.isNotEmpty ? _projects.first : ProjectModel.defaultModel(), // Pass a project
+              logger: _logger, // Pass the logger
+            ),
+          ),
+        );
+        break;
+      case 'schedule':
+        navigator.push(
+          MaterialPageRoute(
+            builder: (context) => ScheduleScreen(
+              project: _projects.isNotEmpty ? _projects.first : ProjectModel.defaultModel(),
+              logger: _logger,
+            ),
+          ),
+        );
+        break;
+      /*case 'quality_safety':
+        navigator.push(
+          MaterialPageRoute(builder: (context) => const QualityAndSafetyScreen()),
+        );
+        break;
+      case 'reports':
+        navigator.push(
+          MaterialPageRoute(builder: (context) => const ReportsScreen()),
+        );
+        break;*/
+      default:
+        scaffoldMessenger.showSnackBar(
+          SnackBar(
+            content: Text('Navigating to ${result.title}'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+    }
   }
-}
 
   @override
   void dispose() {

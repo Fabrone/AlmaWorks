@@ -7,115 +7,119 @@ service cloud.firestore {
       allow read, write: if true;
     }
         
-    // Specific rules for Projects collection
+		// Rules for Projects collection
     match /Projects/{projectId} {
       allow read, write: if true;
-            
+
       // Allow access to subcollections
       match /tasks/{taskId} {
         allow read, write: if true;
       }
-            
+
       match /activities/{activityId} {
         allow read, write: if true;
       }
-            
+
       match /documents/{documentId} {
         allow read, write: if true;
       }
-            
+
       match /photos/{photoId} {
         allow read, write: if true;
       }
+
+      match /Drawings/{drawingId} {
+        allow read, write: if true;
+      }
     }
-        
+
     // Rules for Tasks collection
     match /Tasks/{taskId} {
       allow read, write: if true;
     }
-        
-    // Rules for Users collection (for future use)
+
+    // Rules for Users collection
     match /Users/{userId} {
       allow read, write: if true;
     }
-        
+
     // Rules for ActivityItems collection
     match /ActivityItems/{activityId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Notifications collection
     match /Notifications/{notificationId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Reports collection
     match /Reports/{reportId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Settings collection
     match /Settings/{settingId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Attendance collection
     match /Attendance/{attendanceId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Weather collection
     match /Weather/{weatherId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Financial collection
-    match /Financial/{financialId} {
+    match /Financials/{financialId} {
       allow read, write: if true;
     }
-        
+
     // Rules for Schedule collection
     match /Schedule/{scheduleId} {
       allow read, write: if true;
     }
-        
+
+    // Rules for Resources collection
+    match /Resources/{resourceId} {
+      allow read, write: if true;
+    }
+
     // Rules for QualitySafety collection
     match /QualitySafety/{qualitySafetyId} {
       allow read, write: if true;
     }
-        
+
     // Rules for BidManagement collection
     match /BidManagement/{bidId} {
       allow read, write: if true;
     }
-        
+
     // Rules for DesignCoordination collection
     match /DesignCoordination/{designId} {
       allow read, write: if true;
     }
-        
+
     // Rules for FieldProductivity collection
     match /FieldProductivity/{productivityId} {
       allow read, write: if true;
     }
-    
+
     // Rules for RecentSearches collection
     match /RecentSearches/{searchId} {
       allow read, write: if true;
     }
-    
+
     // Rules for UserProfiles collection
     match /UserProfiles/{userId} {
       allow read, write: if true;
     }
-    
+
     // Rules for SystemLogs collection
     match /SystemLogs/{logId} {
-      allow read, write: if true;
-    }
-    
-    // NEW: Rules for Drawings collection
-    match /Drawings/{drawingId} {
       allow read, write: if true;
     }
   }

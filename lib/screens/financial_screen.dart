@@ -1,260 +1,318 @@
+import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/models/financial_document_model.dart'; // Import the new model
+import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:logger/logger.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:dio/dio.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:typed_data';
 
 class FinancialScreen extends StatefulWidget {
-  const FinancialScreen({super.key});
+  final ProjectModel project;
+  final Logger logger;
+
+  const FinancialScreen({
+    super.key,
+    required this.project,
+    required this.logger,
+  });
 
   @override
   State<FinancialScreen> createState() => _FinancialScreenState();
 }
 
-class _FinancialScreenState extends State<FinancialScreen> with SingleTickerProviderStateMixin {
+class _FinancialScreenState extends State<FinancialScreen> with TickerProviderStateMixin {
   late TabController _tabController;
+  bool _isLoading = false; // Loading state
+
+  final List<String> _tabs = ['Client', 'Subcontractor', 'Supplier'];
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: _tabs.length, vsync: this);
+    widget.logger.i('💰 FinancialScreen: Initialized for project: ${widget.project.name}');
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          Container(
-            color: Colors.white,
-            child: TabBar(
-              controller: _tabController,
-              isScrollable: true,
-              labelColor: Theme.of(context).primaryColor,
-              unselectedLabelColor: Colors.grey,
-              indicatorColor: Theme.of(context).primaryColor,
-              tabs: const [
-                Tab(text: 'Budget'),
-                Tab(text: 'Cost Coding'),
-                Tab(text: 'Invoices'),
-                Tab(text: 'Payments'),
-                Tab(text: 'Lien Waivers'),
-              ],
-            ),
-          ),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildBudgetTab(),
-                _buildCostCodingTab(),
-                _buildInvoicesTab(),
-                _buildPaymentsTab(),
-                _buildLienWaiversTab(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+    widget.logger.d('🎨 FinancialScreen: Building UI');
 
-  Widget _buildBudgetTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
+    return BaseLayout(
+      title: '${widget.project.name} - Financials',
+      project: widget.project,
+      logger: widget.logger,
+      selectedMenuItem: 'Financials',
+      onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
+      floatingActionButton: FloatingActionButton(
+        onPressed: _isLoading ? null : _uploadFinancialDocument,
+        backgroundColor: const Color(0xFF0A2E5A),
+        foregroundColor: Colors.white,
+        child: const Icon(Icons.upload_file),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: constraints.maxHeight,
+              ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Budget Overview', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  _buildBudgetItem('Total Budget', '\$2,400,000', '\$2,400,000', 1.0),
-                  _buildBudgetItem('Committed', '\$1,800,000', '\$2,400,000', 0.75),
-                  _buildBudgetItem('Spent', '\$1,200,000', '\$2,400,000', 0.5),
-                  _buildBudgetItem('Remaining', '\$1,200,000', '\$2,400,000', 0.5),
+                  Column(
+                    children: [
+                      TabBar(
+                        controller: _tabController,
+                        tabs: _tabs.map((tab) => Tab(text: tab)).toList(),
+                        labelColor: const Color(0xFF0A2E5A),
+                        unselectedLabelColor: Colors.grey,
+                        labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                      ),
+                      SizedBox(
+                        height: constraints.maxHeight - 48 - 48, // Subtract TabBar and footer height
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: _tabs.map((tab) => _buildFinancialSection(tab)).toList(),
+                        ),
+                      ),
+                    ],
+                  ),
+                  _buildFooter(context),
                 ],
               ),
             ),
-          ),
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Budget by Category', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  _buildCategoryItem('Labor', '\$800,000', 0.6),
-                  _buildCategoryItem('Materials', '\$600,000', 0.8),
-                  _buildCategoryItem('Equipment', '\$300,000', 0.4),
-                  _buildCategoryItem('Subcontractors', '\$700,000', 0.7),
-                ],
-              ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildFooter(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 600;
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(isMobile ? 12 : 16),
+      color: const Color(0xFF0A2E5A),
+      child: Text(
+        '© 2025 JV Alma C.I.S Site Management System',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: isMobile ? 12 : 14,
+          fontWeight: FontWeight.w400,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  Widget _buildFinancialSection(String role) {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('projects')
+          .doc(widget.project.id)
+          .collection('financials')
+          .where('role', isEqualTo: role)
+          .orderBy('uploadedAt', descending: true)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          widget.logger.e('Firestore error: ${snapshot.error}');
+          return Center(
+            child: Text(
+              'Error loading financial documents',
+              style: GoogleFonts.poppins(color: Colors.red[600]),
             ),
+          );
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final docs = snapshot.data!.docs;
+        return ListView(
+          children: [
+            if (docs.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Center(
+                  child: Text(
+                    'No financial documents in this section',
+                    style: GoogleFonts.poppins(color: Colors.grey[600]),
+                  ),
+                ),
+              )
+            else
+              ...docs.map((doc) {
+                final docData = doc.data() as Map<String, dynamic>;
+                final financialDocument = FinancialDocumentModel.fromMap(doc.id, docData);
+                return ListTile(
+                  title: Text(financialDocument.title, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
+                  subtitle: Text(
+                    '${financialDocument.fileName} - Uploaded: ${_formatDate(docData['uploadedAt'] as Timestamp)}',
+                    style: GoogleFonts.poppins(color: Colors.grey[600]),
+                  ),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.download),
+                    onPressed: financialDocument.url != null
+                        ? () => _downloadDocument(financialDocument.url!, financialDocument.fileName)
+                        : null, // Disable the button if URL is null
+                  ),
+                );
+              }),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _uploadFinancialDocument() async {
+    widget.logger.i('📤 FinancialScreen: Initiating upload financial document');
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'docx', 'pptx', 'txt', 'doc', 'ppt'],
+      withData: true,
+    );
+
+    if (result == null || result.files.isEmpty) {
+      widget.logger.w('📤 FinancialScreen: No document selected');
+      return;
+    }
+
+    final platformFile = result.files.single;
+    final fileName = platformFile.name;
+    Uint8List? fileBytes;
+
+    if (platformFile.bytes != null) {
+      fileBytes = platformFile.bytes!;
+      widget.logger.d('📤 FinancialScreen: File bytes available (web)');
+    } else {
+      widget.logger.w('📤 FinancialScreen: File bytes not available');
+      return;
+    }
+
+    if (!mounted) return;
+    final bool? confirmUpload = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Confirm Upload', style: GoogleFonts.poppins()),
+        content: Text('Upload: $fileName?', style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Upload', style: GoogleFonts.poppins()),
           ),
         ],
       ),
     );
-  }
 
-  Widget _buildBudgetItem(String label, String amount, String total, double progress) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.w500)),
-              Text(amount, style: const TextStyle(fontWeight: FontWeight.bold)),
-            ],
+    if (confirmUpload != true) {
+      widget.logger.d('📤 FinancialScreen: Upload cancelled by user');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('projects/${widget.project.id}/financials/${timestamp}_$fileName');
+
+      final uploadTask = storageRef.putData(fileBytes);
+
+      await uploadTask;
+      final url = await storageRef.getDownloadURL();
+      widget.logger.d('📤 FinancialScreen: Upload complete, URL obtained');
+
+      // Create a FinancialDocumentModel instance
+      FinancialDocumentModel financialDocument = FinancialDocumentModel(
+        id: '', // ID will be generated by Firestore
+        title: fileName,
+        url: url,
+        projectId: widget.project.id,
+        projectName: widget.project.name,
+        uploadedAt: DateTime.now(),
+        role: 'Client', // Set the appropriate role here
+        fileName: fileName, // Set the fileName here
+      );
+
+      // Save the financial document to Firestore
+      await FirebaseFirestore.instance
+          .collection('projects')
+          .doc(widget.project.id)
+          .collection('financials')
+          .add(financialDocument.toMap());
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Document "$fileName" uploaded successfully!', style: GoogleFonts.poppins()),
           ),
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: progress,
-            backgroundColor: Colors.grey[300],
-            valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).primaryColor),
+        );
+        widget.logger.i('✅ FinancialScreen: Document uploaded successfully: $fileName');
+      }
+    } catch (e) {
+      widget.logger.e('❌ FinancialScreen: Error adding document', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error uploading document: ${e.toString()}', style: GoogleFonts.poppins()),
           ),
-        ],
-      ),
-    );
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 
-  Widget _buildCategoryItem(String category, String amount, double progress) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 2,
-            child: Text(category, style: const TextStyle(fontWeight: FontWeight.w500)),
+  Future<void> _downloadDocument(String url, String name) async {
+    widget.logger.i('⬇️ FinancialScreen: Downloading document: $name');
+    try {
+      final dir = await getDownloadsDirectory();
+      final filePath = '${dir?.path}/$name';
+      await Dio().download(url, filePath);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Downloaded to $filePath', style: GoogleFonts.poppins()),
           ),
-          Expanded(
-            flex: 3,
-            child: LinearProgressIndicator(
-              value: progress,
-              backgroundColor: Colors.grey[300],
-              valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).primaryColor),
-            ),
+        );
+      }
+    } catch (e) {
+      widget.logger.e('❌ FinancialScreen: Error downloading document', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error downloading: $e', style: GoogleFonts.poppins()),
           ),
-          const SizedBox(width: 16),
-          Text(amount, style: const TextStyle(fontWeight: FontWeight.bold)),
-        ],
-      ),
-    );
+        );
+      }
+    }
   }
 
-  Widget _buildCostCodingTab() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _buildCostCodeItem('01-100', 'Site Preparation', '\$150,000'),
-        _buildCostCodeItem('02-200', 'Foundation Work', '\$300,000'),
-        _buildCostCodeItem('03-300', 'Concrete Work', '\$450,000'),
-        _buildCostCodeItem('04-400', 'Masonry', '\$200,000'),
-        _buildCostCodeItem('05-500', 'Steel Work', '\$350,000'),
-      ],
-    );
-  }
-
-  Widget _buildCostCodeItem(String code, String description, String amount) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        title: Text(code, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(description),
-        trailing: Text(amount, style: const TextStyle(fontWeight: FontWeight.bold)),
-      ),
-    );
-  }
-
-  Widget _buildInvoicesTab() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _buildInvoiceItem('INV-001', 'ABC Construction', '\$25,000', 'Paid', Colors.green),
-        _buildInvoiceItem('INV-002', 'Steel Supply Co.', '\$45,000', 'Pending', Colors.orange),
-        _buildInvoiceItem('INV-003', 'Electrical Services', '\$18,000', 'Overdue', Colors.red),
-      ],
-    );
-  }
-
-  Widget _buildInvoiceItem(String number, String vendor, String amount, String status, Color statusColor) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        title: Text(number, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(vendor),
-            Text(amount, style: const TextStyle(fontWeight: FontWeight.w500)),
-          ],
-        ),
-        trailing: Chip(
-          label: Text(status),
-          backgroundColor: statusColor.withValues(alpha: 0.1),
-          labelStyle: TextStyle(color: statusColor),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPaymentsTab() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _buildPaymentItem('PAY-001', 'Progress Payment #1', '\$200,000', 'Approved'),
-        _buildPaymentItem('PAY-002', 'Material Payment', '\$75,000', 'Processing'),
-        _buildPaymentItem('PAY-003', 'Subcontractor Payment', '\$120,000', 'Pending'),
-      ],
-    );
-  }
-
-  Widget _buildPaymentItem(String number, String description, String amount, String status) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        title: Text(number, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(description),
-            Text(amount, style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.green)),
-          ],
-        ),
-        trailing: Text(status),
-      ),
-    );
-  }
-
-  Widget _buildLienWaiversTab() {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        _buildLienWaiverItem('LW-001', 'ABC Construction', 'Conditional', 'Received'),
-        _buildLienWaiverItem('LW-002', 'Steel Supply Co.', 'Unconditional', 'Pending'),
-        _buildLienWaiverItem('LW-003', 'Electrical Services', 'Conditional', 'Overdue'),
-      ],
-    );
-  }
-
-  Widget _buildLienWaiverItem(String number, String vendor, String type, String status) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        title: Text(number, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(vendor),
-            Text(type),
-          ],
-        ),
-        trailing: Text(status),
-      ),
-    );
+  String _formatDate(Timestamp timestamp) {
+    final date = timestamp.toDate();
+    return '${date.day}/${date.month}/${date.year}';
   }
 }
