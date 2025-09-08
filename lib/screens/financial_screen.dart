@@ -1,5 +1,5 @@
 import 'package:almaworks/models/project_model.dart';
-import 'package:almaworks/models/financial_document_model.dart'; // Import the new model
+import 'package:almaworks/models/financial_document_model.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -119,10 +119,9 @@ class _FinancialScreenState extends State<FinancialScreen> with TickerProviderSt
   Widget _buildFinancialSection(String role) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('financials')
+          .collection('Financials')
           .where('role', isEqualTo: role)
+          .where('projectId', isEqualTo: widget.project.id)
           .orderBy('uploadedAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
@@ -255,9 +254,7 @@ class _FinancialScreenState extends State<FinancialScreen> with TickerProviderSt
 
       // Save the financial document to Firestore
       await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('financials')
+          .collection('Financials')
           .add(financialDocument.toMap());
 
       if (mounted) {

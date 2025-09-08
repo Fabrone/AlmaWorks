@@ -131,6 +131,24 @@
       ]
     },
     {
+      "collectionGroup": "Financials",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "projectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "role",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "uploadedAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "Drawings",
       "queryScope": "COLLECTION",
       "fields": [
