@@ -1,6 +1,6 @@
 import 'dart:convert';
+import 'package:almaworks/models/weather_data.dart';
 import 'package:http/http.dart' as http;
-import '../models/weather_data.dart';
 
 class WeatherService {
   static const String _apiKey = 'your_openweather_api_key'; // Replace with actual API key

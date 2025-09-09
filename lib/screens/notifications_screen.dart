@@ -1,6 +1,6 @@
+import 'package:almaworks/widgets/responsive_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
-import '../widgets/responsive_layout.dart';
 
 class NotificationsScreen extends StatefulWidget {
   final Logger? logger;

@@ -1,5 +1,5 @@
+import 'package:almaworks/models/project_model.dart';
 import 'package:flutter/foundation.dart';
-import '../models/project_model.dart';
 
 class SelectedProjectProvider extends ChangeNotifier {
   ProjectModel? _selectedProject;

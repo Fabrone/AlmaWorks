@@ -6,7 +6,7 @@ class ProjectModel {
   final String description;
   final String location;
   final double? budget;
-  final String? status; // 'active', 'completed', or null for untracked
+  final String? status; 
   final DateTime startDate;
   final DateTime? endDate;
   final String projectManager;

@@ -1,7 +1,7 @@
+import 'package:almaworks/services/attendance_service.dart';
+import 'package:almaworks/widgets/responsive_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
-import '../services/attendance_service.dart';
-import '../widgets/responsive_layout.dart';
 
 class AccountScreen extends StatefulWidget {
   final Logger? logger;

@@ -1,6 +1,6 @@
+import 'package:almaworks/models/task.dart';
+import 'package:almaworks/services/task_service.dart';
 import 'package:flutter/material.dart';
-import '../models/task.dart';
-import '../services/task_service.dart';
 
 class AddTaskScreen extends StatefulWidget {
   const AddTaskScreen({super.key});

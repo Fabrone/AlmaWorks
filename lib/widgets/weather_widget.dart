@@ -1,6 +1,6 @@
+import 'package:almaworks/models/weather_data.dart';
+import 'package:almaworks/services/weather_service.dart';
 import 'package:flutter/material.dart';
-import '../services/weather_service.dart';
-import '../models/weather_data.dart';
 
 class WeatherWidget extends StatefulWidget {
   const WeatherWidget({super.key});

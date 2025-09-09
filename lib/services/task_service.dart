@@ -1,6 +1,6 @@
 import 'dart:convert';
+import 'package:almaworks/models/task.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/task.dart';
 
 class TaskService {
   static const String _tasksKey = 'tasks';
@@ -65,6 +65,6 @@ class TaskService {
       return tasksJson.map((json) => Task.fromJson(json)).toList();
     }
     
-    return getTasks(); // Return mock data if no cached data
+    return getTasks(); 
   }
 }

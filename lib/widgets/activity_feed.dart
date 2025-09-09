@@ -1,5 +1,5 @@
+import 'package:almaworks/models/activity_item.dart';
 import 'package:flutter/material.dart';
-import '../models/activity_item.dart';
 
 class ActivityFeed extends StatefulWidget {
   const ActivityFeed({super.key});

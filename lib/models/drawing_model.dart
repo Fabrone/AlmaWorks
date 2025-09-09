@@ -6,7 +6,7 @@ class DrawingModel {
   final String title;
   final String fileName;
   final String url;
-  final String type; // file extension
+  final String type; 
   final int revisionNumber;
   final bool isFinal;
   final bool isAsBuilt;

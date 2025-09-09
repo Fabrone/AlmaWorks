@@ -1,9 +1,9 @@
+import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/services/project_service.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:logger/logger.dart';
-import '../../models/project_model.dart';
-import '../../services/project_service.dart';
 
 class EditProjectScreen extends StatefulWidget {
   final ProjectModel project;
