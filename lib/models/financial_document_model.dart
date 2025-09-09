@@ -8,7 +8,7 @@ class FinancialDocumentModel {
   final String projectName;
   final DateTime uploadedAt;
   final String role;
-  final String fileName; // Add this line
+  final String fileName; 
 
   FinancialDocumentModel({
     required this.id,
@@ -18,7 +18,7 @@ class FinancialDocumentModel {
     required this.projectName,
     required this.uploadedAt,
     required this.role,
-    required this.fileName, // Add this line
+    required this.fileName, 
   });
 
   // Factory method to create an instance from Firestore document data
@@ -31,7 +31,7 @@ class FinancialDocumentModel {
       projectName: data['projectName'] ?? '',
       uploadedAt: (data['uploadedAt'] as Timestamp).toDate(),
       role: data['role'] ?? '',
-      fileName: data['fileName'] ?? '', // Add this line
+      fileName: data['fileName'] ?? '',
     );
   }
 
@@ -44,7 +44,7 @@ class FinancialDocumentModel {
       'projectName': projectName,
       'uploadedAt': Timestamp.fromDate(uploadedAt),
       'role': role,
-      'fileName': fileName, // Add this line
+      'fileName': fileName, 
     };
   }
 }

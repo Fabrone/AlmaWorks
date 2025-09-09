@@ -14,7 +14,7 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:image/image.dart' as img; // Importing the image package with an alias
+import 'package:image/image.dart' as img; 
 
 class PhotoModel {
   final String id;
@@ -79,9 +79,6 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   bool _multiSelectMode = false;
   final Set<String> _selectedPhotoIds = {};
   final Dio _dio = Dio();
-  DocumentSnapshot? _lastDocument; // For pagination
-  final int _pageSize = 20; // Number of photos to load per page
-  bool _hasMorePhotos = true; // To track if more photos are available
 
   @override
   void initState() {
@@ -98,7 +95,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       project: widget.project,
       logger: widget.logger,
       selectedMenuItem: 'Photo Gallery',
-      onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
+      onMenuItemSelected: (_) {}, 
       floatingActionButton: FloatingActionButton(
         onPressed: _isLoading ? null : _startAddPhotoFlow,
         backgroundColor: const Color(0xFF0A2E5A),
@@ -106,27 +103,19 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         child: const Icon(Icons.add_photo_alternate),
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween, // Ensures footer is at the bottom
+        mainAxisAlignment: MainAxisAlignment.spaceBetween, 
         children: [
-          Expanded( // Expands to fill available space
+          Expanded( 
             child: SingleChildScrollView(
               child: Column(
-                mainAxisSize: MainAxisSize.min, // Fix: Use min to avoid infinite height
+                mainAxisSize: MainAxisSize.min, 
                 children: [
                   _buildPhotoGallery(),
-                  if (_hasMorePhotos)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 16.0),
-                      child: ElevatedButton(
-                        onPressed: _loadMorePhotos,
-                        child: Text('Load More', style: GoogleFonts.poppins()),
-                      ),
-                    ),
                 ],
               ),
             ),
           ),
-          _buildFooter(context), // Footer positioned at the bottom
+          _buildFooter(context), 
           if (_multiSelectMode)
             BottomAppBar(
               color: const Color(0xFF0A2E5A),
@@ -184,7 +173,6 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           .collection('photos')
           .where('isDeleted', isEqualTo: false)
           .orderBy('uploadedAt', descending: true)
-          .limit(_pageSize) // Pagination: Limit initial load
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -211,19 +199,16 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           return const Center(child: CircularProgressIndicator());
         }
         final docs = snapshot.data!.docs;
-        if (docs.length < _pageSize) {
-          _hasMorePhotos = false; // No more photos to load
-        }
-        if (docs.isNotEmpty) {
-          _lastDocument = docs.last; // For pagination
-        }
         final photos = docs.map((doc) => PhotoModel.fromMap(doc.id, doc.data() as Map<String, dynamic>)).toList();
 
         if (photos.isEmpty) {
-          return Center(
-            child: Text(
-              'No photos yet. Add some!',
-              style: GoogleFonts.poppins(color: Colors.grey[600]),
+          return Padding(
+            padding: const EdgeInsets.only(top: 84.0), // Added top padding
+            child: Center(
+              child: Text(
+                'No photos yet. Add some!',
+                style: GoogleFonts.poppins(color: Colors.grey[600]),
+              ),
             ),
           );
         }
@@ -282,52 +267,6 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         );
       },
     );
-  }
-
-  void _loadMorePhotos() async {
-    if (_lastDocument == null || !_hasMorePhotos) return;
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('photos')
-          .where('isDeleted', isEqualTo: false)
-          .orderBy('uploadedAt', descending: true)
-          .startAfterDocument(_lastDocument!)
-          .limit(_pageSize)
-          .get();
-
-      if (snapshot.docs.isNotEmpty) {
-        setState(() {
-          _lastDocument = snapshot.docs.last;
-          if (snapshot.docs.length < _pageSize) {
-            _hasMorePhotos = false;
-          }
-        });
-      } else {
-        setState(() {
-          _hasMorePhotos = false;
-        });
-      }
-    } catch (e) {
-      widget.logger.e('Error loading more photos: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading more photos: $e', style: GoogleFonts.poppins())),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
   }
 
   Widget _buildPhotoTile(PhotoModel photo) {
