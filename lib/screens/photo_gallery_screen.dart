@@ -203,7 +203,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
 
         if (photos.isEmpty) {
           return Padding(
-            padding: const EdgeInsets.only(top: 84.0), // Added top padding
+            padding: const EdgeInsets.only(top: 84.0),
             child: Center(
               child: Text(
                 'No photos yet. Add some!',
