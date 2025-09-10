@@ -1,6 +1,6 @@
 import 'package:almaworks/models/project_model.dart';
-import 'package:almaworks/models/schedule_model.dart';
 import 'package:almaworks/models/resource_model.dart';
+import 'package:almaworks/screens/schedule/gantt_chart_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -31,7 +31,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
     widget.logger.i('📅 ScheduleScreen: Initialized for project: ${widget.project.name} (ID: ${widget.project.id})');
-    // Log screen width for debugging
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final width = MediaQuery.of(context).size.width;
       widget.logger.d('📅 ScheduleScreen: Screen width: $width, isMobile: ${width < 600}');
@@ -53,7 +52,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       project: widget.project,
       logger: widget.logger,
       selectedMenuItem: 'Schedule',
-      onMenuItemSelected: (_) {}, // Navigation handled by BaseLayout
+      onMenuItemSelected: (_) {},
       child: LayoutBuilder(
         builder: (context, constraints) {
           return SingleChildScrollView(
@@ -90,11 +89,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         ),
                       ),
                       SizedBox(
-                        height: constraints.maxHeight - 48 - (isMobile ? 12 : 16) * 2, // Subtract TabBar and footer
+                        height: constraints.maxHeight - 48 - (isMobile ? 12 : 16) * 2,
                         child: TabBarView(
                           controller: _tabController,
                           children: [
-                            _buildGanttTab(),
+                            GanttChartScreen(project: widget.project, logger: widget.logger), // Use new screen
                             _buildCriticalPathTab(),
                             _buildResourcesTab(),
                             _buildUpdatesTab(),
@@ -131,122 +130,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     );
   }
 
-  Widget _buildGanttTab() {
-    widget.logger.d('📅 ScheduleScreen: Fetching tasks for Gantt Chart (projectId: ${widget.project.id})');
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('Schedule')
-          .where('projectId', isEqualTo: widget.project.id)
-          .orderBy('startDate', descending: false)
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          widget.logger.e(
-            '❌ ScheduleScreen: Error loading tasks for Gantt Chart',
-            error: snapshot.error,
-            stackTrace: snapshot.stackTrace,
-          );
-          return Center(
-            child: Text(
-              'Error loading tasks: ${snapshot.error}',
-              style: GoogleFonts.poppins(color: Colors.red[600]),
-            ),
-          );
-        }
-        if (!snapshot.hasData) {
-          widget.logger.d('📅 ScheduleScreen: Waiting for Gantt Chart data');
-          return const Center(child: CircularProgressIndicator());
-        }
-        final tasks = snapshot.data!.docs;
-        widget.logger.i('📅 ScheduleScreen: Loaded ${tasks.length} tasks for Gantt Chart');
-        widget.logger.d('📅 ScheduleScreen: Rendering Gantt Chart with Add Task button');
-        if (tasks.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text('No tasks added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: _addTask,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A2E5A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  child: Text('Add Task', style: GoogleFonts.poppins(fontSize: 16)),
-                ),
-              ],
-            ),
-          );
-        }
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey[300]!, width: 1), // Debug border
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Flexible(
-                      child: Text(
-                        'Project Timeline',
-                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    ElevatedButton(
-                      onPressed: _addTask,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0A2E5A),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        elevation: 4,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        minimumSize: const Size(100, 40),
-                      ),
-                      child: Text('Add Task', style: GoogleFonts.poppins(fontSize: 16)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              ...tasks.map((doc) {
-                try {
-                  final data = doc.data() as Map<String, dynamic>;
-                  final schedule = ScheduleModel.fromMap(doc.id, data);
-                  return _GanttItemWidget(
-                    id: schedule.id,
-                    task: schedule.title,
-                    description: schedule.description,
-                    startDate: schedule.startDate,
-                    endDate: schedule.endDate,
-                    progress: schedule.progress,
-                    dateFormat: _dateFormat,
-                    onAction: _handleTaskAction,
-                    logger: widget.logger,
-                  );
-                } catch (e, stackTrace) {
-                  widget.logger.e(
-                    '❌ ScheduleScreen: Error parsing task document ${doc.id}',
-                    error: e,
-                    stackTrace: stackTrace,
-                  );
-                  return const SizedBox.shrink();
-                }
-              }),
-            ],
-          ),
-        );
-      },
-    );
-  }
 
   Widget _buildCriticalPathTab() {
     widget.logger.d('📅 ScheduleScreen: Fetching tasks for Critical Path (projectId: ${widget.project.id})');
@@ -682,197 +565,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error adding task: $e', style: GoogleFonts.poppins())),
         );
-      }
-    }
-  }
-
-  Future<void> _handleTaskAction(String action, String id, String title, String description, DateTime startDate, DateTime endDate, double progress) async {
-    if (action == 'edit') {
-      widget.logger.d('📅 ScheduleScreen: Opening Edit Task dialog for task ID: $id');
-      final titleController = TextEditingController(text: title);
-      final descriptionController = TextEditingController(text: description);
-      DateTime? newStartDate = startDate;
-      DateTime? newEndDate = endDate;
-      double newProgress = progress;
-
-      final result = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Edit Task', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: titleController,
-                  decoration: InputDecoration(
-                    labelText: 'Task Title',
-                    border: const OutlineInputBorder(),
-                    labelStyle: GoogleFonts.poppins(),
-                  ),
-                  style: GoogleFonts.poppins(),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: descriptionController,
-                  decoration: InputDecoration(
-                    labelText: 'Description (optional)',
-                    border: const OutlineInputBorder(),
-                    labelStyle: GoogleFonts.poppins(),
-                  ),
-                  style: GoogleFonts.poppins(),
-                  maxLines: 3,
-                ),
-                const SizedBox(height: 16),
-                ListTile(
-                  title: Text(
-                    _dateFormat.format(newStartDate!),
-                    style: GoogleFonts.poppins(),
-                  ),
-                  trailing: const Icon(Icons.calendar_today),
-                  onTap: () async {
-                    final selected = await showDatePicker(
-                      context: context,
-                      initialDate: newStartDate!,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2030),
-                    );
-                    if (selected != null) {
-                      newStartDate = selected;
-                      setState(() {});
-                    }
-                  },
-                ),
-                ListTile(
-                  title: Text(
-                    _dateFormat.format(newEndDate!),
-                    style: GoogleFonts.poppins(),
-                  ),
-                  trailing: const Icon(Icons.calendar_today),
-                  onTap: () async {
-                    final selected = await showDatePicker(
-                      context: context,
-                      initialDate: newEndDate!,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime(2030),
-                    );
-                    if (selected != null) {
-                      newEndDate = selected;
-                      setState(() {});
-                    }
-                  },
-                ),
-                const SizedBox(height: 16),
-                Text('Progress: ${(newProgress * 100).toInt()}%', style: GoogleFonts.poppins()),
-                Slider(
-                  value: newProgress,
-                  onChanged: (value) => setState(() => newProgress = value),
-                  min: 0.0,
-                  max: 1.0,
-                  divisions: 100,
-                  label: '${(newProgress * 100).toInt()}%',
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (titleController.text.isNotEmpty && newStartDate != null && newEndDate != null) {
-                  Navigator.pop(context, true);
-                } else {
-                  widget.logger.w('📅 ScheduleScreen: Edit Task failed - missing required fields');
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Please fill all fields except description', style: GoogleFonts.poppins())),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0A2E5A),
-                foregroundColor: Colors.white,
-              ),
-              child: Text('Save', style: GoogleFonts.poppins()),
-            ),
-          ],
-        ),
-      );
-
-      if (result != true || newStartDate == null || newEndDate == null) {
-        widget.logger.d('📅 ScheduleScreen: Task edit cancelled for task ID: $id');
-        return;
-      }
-
-      try {
-        widget.logger.d('📅 ScheduleScreen: Updating task in Firestore: $id');
-        await FirebaseFirestore.instance.collection('Schedule').doc(id).update({
-          'title': titleController.text.trim(),
-          'description': descriptionController.text.trim(),
-          'projectId': widget.project.id,
-          'projectName': widget.project.name,
-          'startDate': Timestamp.fromDate(newStartDate!),
-          'endDate': Timestamp.fromDate(newEndDate!),
-          'progress': newProgress,
-          'updatedAt': Timestamp.now(),
-        });
-        widget.logger.i('✅ ScheduleScreen: Task updated successfully: $id');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Task updated successfully', style: GoogleFonts.poppins())),
-          );
-        }
-      } catch (e, stackTrace) {
-        widget.logger.e('❌ ScheduleScreen: Error updating task: $id', error: e, stackTrace: stackTrace);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error updating task: $e', style: GoogleFonts.poppins())),
-          );
-        }
-      }
-    } else if (action == 'delete') {
-      widget.logger.d('📅 ScheduleScreen: Opening Delete Task dialog for task ID: $id');
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Delete Task', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: Text('Are you sure you want to delete "$title"?', style: GoogleFonts.poppins()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-              child: Text('Delete', style: GoogleFonts.poppins()),
-            ),
-          ],
-        ),
-      );
-
-      if (confirmed == true) {
-        try {
-          widget.logger.d('📅 ScheduleScreen: Deleting task from Firestore: $id');
-          await FirebaseFirestore.instance.collection('Schedule').doc(id).delete();
-          widget.logger.i('✅ ScheduleScreen: Task deleted successfully: $id');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Task deleted successfully', style: GoogleFonts.poppins())),
-            );
-          }
-        } catch (e, stackTrace) {
-          widget.logger.e('❌ ScheduleScreen: Error deleting task: $id', error: e, stackTrace: stackTrace);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error deleting task: $e', style: GoogleFonts.poppins())),
-            );
-          }
-        }
-      } else {
-        widget.logger.d('📅 ScheduleScreen: Task deletion cancelled for task ID: $id');
       }
     }
   }
