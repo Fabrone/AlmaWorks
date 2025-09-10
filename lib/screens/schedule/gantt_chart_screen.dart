@@ -59,10 +59,8 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     DateTime? startDate;
     DateTime? endDate;
     int? duration;
-    String? selectedLevel;
     String? selectedParentId;
 
-    final levels = ['1', '2', '3', '4', '5'];
     final existingMainTasks = _tasks.where((task) => task.taskType == 'MainTask').toList();
 
     final result = await showDialog<bool>(
@@ -74,154 +72,159 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
           length: 2,
           child: SizedBox(
             width: double.maxFinite,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: TabBar(
-                    tabs: [
-                      Tab(text: 'MainTask'),
-                      Tab(text: 'ActualTask'),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.only(top: 16.0),
-                  child: SizedBox(
-                    height: 300,
-                    child: TabBarView(
-                      children: [
-                        // MainTask Form
-                        SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              DropdownButtonFormField<String>(
-                                initialValue: selectedLevel,
-                                hint: Text('Select Level', style: GoogleFonts.poppins()),
-                                items: levels.map((level) {
-                                  final enabled = levels.indexOf(level) == 0 ||
-                                      existingMainTasks.any((task) => task.level == int.parse(level) - 1);
-                                  return DropdownMenuItem(
-                                    value: enabled ? level : null,
-                                    enabled: enabled,
-                                    child: Text('Level $level', style: GoogleFonts.poppins()),
-                                  );
-                                }).toList(),
-                                onChanged: (value) => setState(() => selectedLevel = value),
-                                decoration: InputDecoration(labelText: 'Level', border: OutlineInputBorder()),
-                              ),
-                              SizedBox(height: 16.0),
-                              TextField(
-                                controller: titleController,
-                                decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
-                                style: GoogleFonts.poppins(),
-                              ),
-                              SizedBox(height: 16.0),
-                              TextField(
-                                keyboardType: TextInputType.number,
-                                decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
-                                onChanged: (value) => duration = int.tryParse(value),
-                              ),
-                              SizedBox(height: 16.0),
-                              ListTile(
-                                title: Text(startDate == null ? 'Select Start Date' : _dateFormat.format(startDate!)),
-                                trailing: Icon(Icons.calendar_today),
-                                onTap: () async {
-                                  final selected = await showDatePicker(
-                                    context: context,
-                                    initialDate: DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2030),
-                                  );
-                                  if (selected != null) setState(() => startDate = selected);
-                                },
-                              ),
-                              SizedBox(height: 16.0),
-                              ListTile(
-                                title: Text(endDate == null ? 'Select End Date' : _dateFormat.format(endDate!)),
-                                trailing: Icon(Icons.calendar_today),
-                                onTap: () async {
-                                  final selected = await showDatePicker(
-                                    context: context,
-                                    initialDate: DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2030),
-                                  );
-                                  if (selected != null) setState(() => endDate = selected);
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                        // ActualTask Form
-                        SingleChildScrollView(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              DropdownButtonFormField<String>(
-                                hint: Text('Select Parent MainTask', style: GoogleFonts.poppins()),
-                                items: existingMainTasks.map((task) {
-                                  return DropdownMenuItem(
-                                    value: task.id,
-                                    child: SizedBox(
-                                      width: 300.0,
-                                      child: Text(task.title, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins()),
-                                    ),
-                                  );
-                                }).toList(),
-                                onChanged: (value) => setState(() => selectedParentId = value),
-                                decoration: InputDecoration(labelText: 'Parent MainTask', border: OutlineInputBorder()),
-                              ),
-                              SizedBox(height: 16.0),
-                              TextField(
-                                controller: titleController,
-                                decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
-                                style: GoogleFonts.poppins(),
-                              ),
-                              SizedBox(height: 16.0),
-                              TextField(
-                                keyboardType: TextInputType.number,
-                                decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
-                                onChanged: (value) => duration = int.tryParse(value),
-                              ),
-                              SizedBox(height: 16.0),
-                              ListTile(
-                                title: Text(startDate == null ? 'Select Start Date' : _dateFormat.format(startDate!)),
-                                trailing: Icon(Icons.calendar_today),
-                                onTap: () async {
-                                  final selected = await showDatePicker(
-                                    context: context,
-                                    initialDate: DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2030),
-                                  );
-                                  if (selected != null) setState(() => startDate = selected);
-                                },
-                              ),
-                              SizedBox(height: 16.0),
-                              ListTile(
-                                title: Text(endDate == null ? 'Select End Date' : _dateFormat.format(endDate!)),
-                                trailing: Icon(Icons.calendar_today),
-                                onTap: () async {
-                                  final selected = await showDatePicker(
-                                    context: context,
-                                    initialDate: DateTime.now(),
-                                    firstDate: DateTime(2020),
-                                    lastDate: DateTime(2030),
-                                  );
-                                  if (selected != null) setState(() => endDate = selected);
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
+            child: NestedScrollView(
+              headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                SliverAppBar(
+                  pinned: true,
+                  floating: true,
+                  backgroundColor: Colors.white,
+                  elevation: 0,
+                  flexibleSpace: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: TabBar(
+                      tabs: [
+                        Tab(text: 'MainTask'),
+                        Tab(text: 'ActualTask'),
                       ],
                     ),
                   ),
                 ),
               ],
+              body: TabBarView(
+                children: [
+                  // MainTask Form
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(
+                          controller: titleController,
+                          decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
+                          style: GoogleFonts.poppins(),
+                        ),
+                        SizedBox(height: 16.0),
+                        TextField(
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
+                          onChanged: (value) => duration = int.tryParse(value),
+                        ),
+                        SizedBox(height: 16.0),
+                        ListTile(
+                          title: Text(startDate == null ? 'Select Start Date' : _dateFormat.format(startDate!)),
+                          trailing: Icon(Icons.calendar_today),
+                          onTap: () async {
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (selected != null) setState(() => startDate = selected);
+                          },
+                        ),
+                        if (startDate != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text('Selected: ${_dateFormat.format(startDate!)}', style: GoogleFonts.poppins()),
+                          ),
+                        SizedBox(height: 16.0),
+                        ListTile(
+                          title: Text(endDate == null ? 'Select End Date' : _dateFormat.format(endDate!)),
+                          trailing: Icon(Icons.calendar_today),
+                          onTap: () async {
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (selected != null) setState(() => endDate = selected);
+                          },
+                        ),
+                        if (endDate != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text('Selected: ${_dateFormat.format(endDate!)}', style: GoogleFonts.poppins()),
+                          ),
+                      ],
+                    ),
+                  ),
+                  // ActualTask Form
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButtonFormField<String>(
+                          hint: Text('Select Parent MainTask', style: GoogleFonts.poppins()),
+                          items: existingMainTasks.map((task) {
+                            return DropdownMenuItem(
+                              value: task.id,
+                              child: SizedBox(
+                                width: 300.0,
+                                child: Text(task.title, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins()),
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) => setState(() => selectedParentId = value),
+                          decoration: InputDecoration(labelText: 'Parent MainTask', border: OutlineInputBorder()),
+                        ),
+                        SizedBox(height: 16.0),
+                        TextField(
+                          controller: titleController,
+                          decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
+                          style: GoogleFonts.poppins(),
+                        ),
+                        SizedBox(height: 16.0),
+                        TextField(
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
+                          onChanged: (value) => duration = int.tryParse(value),
+                        ),
+                        SizedBox(height: 16.0),
+                        ListTile(
+                          title: Text(startDate == null ? 'Select Start Date' : _dateFormat.format(startDate!)),
+                          trailing: Icon(Icons.calendar_today),
+                          onTap: () async {
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (selected != null) setState(() => startDate = selected);
+                          },
+                        ),
+                        if (startDate != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text('Selected: ${_dateFormat.format(startDate!)}', style: GoogleFonts.poppins()),
+                          ),
+                        SizedBox(height: 16.0),
+                        ListTile(
+                          title: Text(endDate == null ? 'Select End Date' : _dateFormat.format(endDate!)),
+                          trailing: Icon(Icons.calendar_today),
+                          onTap: () async {
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (selected != null) setState(() => endDate = selected);
+                          },
+                        ),
+                        if (endDate != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text('Selected: ${_dateFormat.format(endDate!)}', style: GoogleFonts.poppins()),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -248,8 +251,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
 
     try {
       String taskTitle = titleController.text;
-      String taskType = selectedLevel != null ? 'MainTask' : 'ActualTask';
-      int? level = selectedLevel != null ? int.parse(selectedLevel!) : null;
+      String taskType = selectedParentId == null ? 'MainTask' : 'ActualTask';
       String? parentId = selectedParentId;
 
       final newTask = ScheduleModel(
@@ -262,8 +264,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
         duration: duration!,
         updatedAt: DateTime.now(),
         taskType: taskType,
-        level: level,
-        parentId: parentId, // No need for ?? '' since parentId is now nullable
+        parentId: parentId,
       );
       await FirebaseFirestore.instance.collection('Schedule').add(newTask.toMap());
       widget.logger.i('✅ GanttChartScreen: Task added successfully: ${titleController.text}');
@@ -284,18 +285,47 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
 
     // Build hierarchy
     List<ScheduleModel> sortedTasks = [];
-    var mainTasks = _tasks.where((t) => t.taskType == 'MainTask').toList()..sort((a, b) => (a.level ?? 0).compareTo(b.level ?? 0));
-    Map<String, int> mainLevels = {for (var main in mainTasks) main.id: main.level ?? 0};
+    var mainTasks = _tasks.where((t) => t.taskType == 'MainTask').toList();
     for (var main in mainTasks) {
       sortedTasks.add(main);
       var actuals = _tasks.where((t) => t.parentId == main.id).toList()..sort((a, b) => a.startDate.compareTo(b.startDate));
       sortedTasks.addAll(actuals);
     }
 
-    final startDate = sortedTasks.isNotEmpty ? sortedTasks.map((t) => t.startDate).reduce((a, b) => a.isBefore(b) ? a : b) : DateTime.now();
-    final endDate = sortedTasks.isNotEmpty ? sortedTasks.map((t) => t.endDate).reduce((a, b) => a.isAfter(b) ? a : b) : DateTime.now();
-    final days = endDate.difference(startDate).inDays + 1;
+    // Use first main task for project timeline if available
+    final firstMainTask = mainTasks.isNotEmpty ? mainTasks.first : null;
+    final projectStartDate = firstMainTask?.startDate ?? DateTime.now();
+    final projectEndDate = firstMainTask?.endDate ?? DateTime.now();
+    final days = projectEndDate.difference(projectStartDate).inDays + 1;
     final dayWidth = 20.0 * _scale;
+
+    // Generate month-based header
+    List<Widget> monthHeaders = [];
+    DateTime currentDate = projectStartDate;
+    while (currentDate.isBefore(projectEndDate) || currentDate.isAtSameMomentAs(projectEndDate)) {
+      final monthName = DateFormat('MMMM').format(currentDate);
+      final monthStart = DateTime(currentDate.year, currentDate.month, 1);
+      final monthEnd = DateTime(currentDate.year, currentDate.month + 1, 0);
+      final monthDays = monthEnd.difference(monthStart).inDays + 1;
+      final monthWidth = monthDays * dayWidth * _scale;
+
+      monthHeaders.add(
+        SizedBox(
+          width: monthWidth,
+          child: Column(
+            children: [
+              Text(monthName, style: GoogleFonts.poppins(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+              Text(
+                '${_dateFormat.format(monthStart)} - ${_dateFormat.format(monthEnd)}',
+                style: GoogleFonts.poppins(),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+      currentDate = DateTime(currentDate.year, currentDate.month + 1, 1);
+    }
 
     return Column(
       children: [
@@ -326,49 +356,115 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                     // Header Row
                     Row(
                       children: [
-                        SizedBox(width: 50, child: Text('Number', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
-                        SizedBox(width: 200, child: Text('Task Name', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
-                        SizedBox(width: 80, child: Text('Duration', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
-                        SizedBox(width: 100, child: Text('Start Date', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
-                        SizedBox(width: 100, child: Text('End Date', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
-                        SizedBox(width: days * dayWidth, child: Text('Gantt', style: GoogleFonts.poppins(fontWeight: FontWeight.bold))),
+                        Container(
+                          width: 70,
+                          decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text('Number', style: GoogleFonts.poppins(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                          ),
+                        ),
+                        Container(
+                          width: 200,
+                          decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text('Task Name', style: GoogleFonts.poppins(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                          ),
+                        ),
+                        Container(
+                          width: 80,
+                          decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text('Duration', style: GoogleFonts.poppins(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                          ),
+                        ),
+                        Container(
+                          width: 100,
+                          decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text('Start Date', style: GoogleFonts.poppins(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                          ),
+                        ),
+                        Container(
+                          width: 100,
+                          decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                            child: Text('End Date', style: GoogleFonts.poppins(fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                          ),
+                        ),
+                        ...monthHeaders,
                       ],
                     ),
-                    Divider(),
+                    Divider(color: Colors.black, thickness: 2.0),
                     ...List.generate(sortedTasks.length, (index) {
                       final task = sortedTasks[index];
-                      int effectiveLevel = task.level ?? (task.parentId != null && mainLevels.containsKey(task.parentId) ? mainLevels[task.parentId]! : 0) + 1;
-                      final paddingLeft = (effectiveLevel - 1) * 20.0;
+                      final paddingLeft = task.parentId != null ? 20.0 : 0.0; // Indent actual tasks
                       return Column(
                         children: [
                           Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              SizedBox(width: 50, child: Text((index + 1).toString())),
-                              SizedBox(
-                                width: 200,
+                              Container(
+                                width: 70,
+                                decoration: BoxDecoration(border: Border.all(color: Colors.black)),
                                 child: Padding(
-                                  padding: EdgeInsets.only(left: paddingLeft),
+                                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: Text((index + 1).toString(), style: GoogleFonts.poppins()),
+                                ),
+                              ),
+                              Container(
+                                width: 200,
+                                decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                                child: Padding(
+                                  padding: EdgeInsets.only(left: paddingLeft, top: 4.0, bottom: 4.0),
                                   child: Text(
                                     task.title,
                                     style: GoogleFonts.poppins(
                                       fontWeight: task.taskType == 'MainTask' ? FontWeight.bold : FontWeight.normal,
                                     ),
+                                    softWrap: true,
+                                    maxLines: 1,
                                   ),
                                 ),
                               ),
-                              SizedBox(width: 80, child: Text(task.duration.toString())),
-                              SizedBox(width: 100, child: Text(_dateFormat.format(task.startDate))),
-                              SizedBox(width: 100, child: Text(_dateFormat.format(task.endDate))),
+                              Container(
+                                width: 80,
+                                decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: Text(task.duration.toString(), style: GoogleFonts.poppins()),
+                                ),
+                              ),
+                              Container(
+                                width: 100,
+                                decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: Text(_dateFormat.format(task.startDate), style: GoogleFonts.poppins()),
+                                ),
+                              ),
+                              Container(
+                                width: 100,
+                                decoration: BoxDecoration(border: Border.all(color: Colors.black)),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                                  child: Text(_dateFormat.format(task.endDate), style: GoogleFonts.poppins()),
+                                ),
+                              ),
                               SizedBox(
                                 width: days * dayWidth,
                                 height: 20.0,
                                 child: CustomPaint(
-                                  painter: TaskGanttPainter(task, startDate, dayWidth, _scale),
+                                  painter: TaskGanttPainter(task, projectStartDate, dayWidth, _scale),
                                 ),
                               ),
                             ],
                           ),
-                          Divider(),
+                          Divider(color: Colors.black, thickness: 1.0),
                         ],
                       );
                     }),

@@ -10,7 +10,6 @@ class ScheduleModel {
   final int duration;
   final DateTime updatedAt;
   final String taskType;
-  final int? level;
   final String? parentId; // Changed to nullable
 
   ScheduleModel({
@@ -23,7 +22,6 @@ class ScheduleModel {
     required this.duration,
     required this.updatedAt,
     required this.taskType,
-    this.level,
     this.parentId, // Updated to accept null
   });
 
@@ -38,7 +36,6 @@ class ScheduleModel {
       duration: data['duration'] as int? ?? 0,
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       taskType: data['taskType'] as String? ?? 'MainTask',
-      level: data['level'] as int?,
       parentId: data['parentId'] as String?, // Updated to handle null
     );
   }
@@ -53,7 +50,6 @@ class ScheduleModel {
       'duration': duration,
       'updatedAt': Timestamp.fromDate(updatedAt),
       'taskType': taskType,
-      if (level != null) 'level': level,
       if (parentId != null) 'parentId': parentId, // Only include if not null
     };
   }
