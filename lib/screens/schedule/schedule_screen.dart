@@ -1,7 +1,8 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/resource_model.dart';
-import 'package:almaworks/screens/schedule/gantt_chart_screen.dart';
+//import 'package:almaworks/screens/schedule/gantt_chart_screen.dart';
 import 'package:almaworks/screens/schedule/critical_path_screen.dart';
+import 'package:almaworks/screens/schedule/gantt_chart_screen_refactored.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -22,17 +23,22 @@ class ScheduleScreen extends StatefulWidget {
   State<ScheduleScreen> createState() => _ScheduleScreenState();
 }
 
-class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProviderStateMixin {
+class _ScheduleScreenState extends State<ScheduleScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    widget.logger.i('📅 ScheduleScreen: Initialized for project: ${widget.project.name} (ID: ${widget.project.id})');
+    widget.logger.i(
+      '📅 ScheduleScreen: Initialized for project: ${widget.project.name} (ID: ${widget.project.id})',
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final width = MediaQuery.of(context).size.width;
-      widget.logger.d('📅 ScheduleScreen: Screen width: $width, isMobile: ${width < 600}');
+      widget.logger.d(
+        '📅 ScheduleScreen: Screen width: $width, isMobile: ${width < 600}',
+      );
     });
   }
 
@@ -78,7 +84,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                           labelColor: const Color(0xFF0A2E5A),
                           unselectedLabelColor: Colors.grey[600],
                           indicatorColor: const Color(0xFF0A2E5A),
-                          labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+                          labelStyle: GoogleFonts.poppins(
+                            fontWeight: FontWeight.w600,
+                          ),
                           tabs: const [
                             Tab(text: 'Gantt Chart'),
                             Tab(text: 'Critical Path'),
@@ -88,12 +96,21 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                         ),
                       ),
                       SizedBox(
-                        height: constraints.maxHeight - 48 - (isMobile ? 12 : 16) * 2,
+                        height:
+                            constraints.maxHeight -
+                            48 -
+                            (isMobile ? 12 : 16) * 2,
                         child: TabBarView(
                           controller: _tabController,
                           children: [
-                            GanttChartScreen(project: widget.project, logger: widget.logger),
-                            CriticalPathScreen(project: widget.project, logger: widget.logger),
+                            GanttChartScreen(
+                              project: widget.project,
+                              logger: widget.logger,
+                            ),
+                            CriticalPathScreen(
+                              project: widget.project,
+                              logger: widget.logger,
+                            ),
                             _buildResourcesTab(),
                             _buildUpdatesTab(),
                           ],
@@ -130,7 +147,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
   }
 
   Widget _buildResourcesTab() {
-    widget.logger.d('📅 ScheduleScreen: Fetching resources (projectId: ${widget.project.id})');
+    widget.logger.d(
+      '📅 ScheduleScreen: Fetching resources (projectId: ${widget.project.id})',
+    );
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('Resources')
@@ -156,28 +175,45 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           return const Center(child: CircularProgressIndicator());
         }
         final resources = snapshot.data!.docs;
-        widget.logger.i('📅 ScheduleScreen: Loaded ${resources.length} resources');
-        widget.logger.d('📅 ScheduleScreen: Rendering Resources with Add Resource button');
+        widget.logger.i(
+          '📅 ScheduleScreen: Loaded ${resources.length} resources',
+        );
+        widget.logger.d(
+          '📅 ScheduleScreen: Rendering Resources with Add Resource button',
+        );
         if (resources.isEmpty) {
-          widget.logger.d('📅 ScheduleScreen: No resources found for projectId: ${widget.project.id}');
+          widget.logger.d(
+            '📅 ScheduleScreen: No resources found for projectId: ${widget.project.id}',
+          );
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(Icons.inventory_2, size: 64, color: Colors.grey),
                 const SizedBox(height: 16),
-                Text('No resources added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
+                Text(
+                  'No resources added yet',
+                  style: GoogleFonts.poppins(color: Colors.grey[600]),
+                ),
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: _addResource,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0A2E5A),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     elevation: 4,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
-                  child: Text('Add Resource', style: GoogleFonts.poppins(fontSize: 16)),
+                  child: Text(
+                    'Add Resource',
+                    style: GoogleFonts.poppins(fontSize: 16),
+                  ),
                 ),
               ],
             ),
@@ -200,18 +236,27 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                     children: [
                       Text(
                         'Resources & Purchasing Plan',
-                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
+                        style: GoogleFonts.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       Text(
                         '${resources.length} resources configured',
-                        style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade600),
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
                     ],
                   ),
                   ElevatedButton.icon(
                     onPressed: _addResource,
                     icon: const Icon(Icons.add, size: 18),
-                    label: Text('Add Resource', style: GoogleFonts.poppins(fontSize: 14)),
+                    label: Text(
+                      'Add Resource',
+                      style: GoogleFonts.poppins(fontSize: 14),
+                    ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF0A2E5A),
                       foregroundColor: Colors.white,
@@ -246,10 +291,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     );
   }
 
-  Widget _buildResourceItem(String id, String resource, String quantity, String status) {
+  Widget _buildResourceItem(
+    String id,
+    String resource,
+    String quantity,
+    String status,
+  ) {
     Color statusColor;
     IconData statusIcon;
-    
+
     switch (status.toLowerCase()) {
       case 'available':
         statusColor = Colors.green;
@@ -281,7 +331,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
           backgroundColor: const Color(0xFF0A2E5A).withValues(alpha: 0.1),
           child: const Icon(Icons.inventory_2, color: Color(0xFF0A2E5A)),
         ),
-        title: Text(resource, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16)),
+        title: Text(
+          resource,
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+        ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -300,14 +353,19 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
                 const SizedBox(width: 4),
                 Text(
                   status,
-                  style: GoogleFonts.poppins(color: statusColor, fontSize: 14, fontWeight: FontWeight.w500),
+                  style: GoogleFonts.poppins(
+                    color: statusColor,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
           ],
         ),
         trailing: PopupMenuButton<String>(
-          onSelected: (value) => _handleResourceAction(value, id, resource, quantity, status),
+          onSelected: (value) =>
+              _handleResourceAction(value, id, resource, quantity, status),
           itemBuilder: (context) => [
             PopupMenuItem(
               value: 'edit',
@@ -403,14 +461,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     final nameController = TextEditingController();
     final quantityController = TextEditingController();
     String selectedStatus = 'Available';
-    
+
     final statusOptions = ['Available', 'In use', 'Ordered', 'Unavailable'];
 
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) => AlertDialog(
-          title: Text('Add Resource', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          title: Text(
+            'Add Resource',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -462,11 +523,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
             ),
             ElevatedButton(
               onPressed: () {
-                if (nameController.text.isNotEmpty && quantityController.text.isNotEmpty) {
+                if (nameController.text.isNotEmpty &&
+                    quantityController.text.isNotEmpty) {
                   Navigator.pop(context, true);
                 } else {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Please fill all required fields', style: GoogleFonts.poppins())),
+                    SnackBar(
+                      content: Text(
+                        'Please fill all required fields',
+                        style: GoogleFonts.poppins(),
+                      ),
+                    ),
                   );
                 }
               },
@@ -487,7 +554,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
     }
 
     try {
-      widget.logger.d('📅 ScheduleScreen: Adding resource to Firestore: ${nameController.text}');
+      widget.logger.d(
+        '📅 ScheduleScreen: Adding resource to Firestore: ${nameController.text}',
+      );
       await FirebaseFirestore.instance.collection('Resources').add({
         'name': nameController.text.trim(),
         'quantity': quantityController.text.trim(),
@@ -496,36 +565,63 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
         'projectName': widget.project.name,
         'updatedAt': Timestamp.now(),
       });
-      widget.logger.i('✅ ScheduleScreen: Resource added successfully: ${nameController.text}');
+      widget.logger.i(
+        '✅ ScheduleScreen: Resource added successfully: ${nameController.text}',
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Resource added successfully', style: GoogleFonts.poppins())),
+          SnackBar(
+            content: Text(
+              'Resource added successfully',
+              style: GoogleFonts.poppins(),
+            ),
+          ),
         );
       }
     } catch (e, stackTrace) {
-      widget.logger.e('❌ ScheduleScreen: Error adding resource', error: e, stackTrace: stackTrace);
+      widget.logger.e(
+        '❌ ScheduleScreen: Error adding resource',
+        error: e,
+        stackTrace: stackTrace,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding resource: $e', style: GoogleFonts.poppins())),
+          SnackBar(
+            content: Text(
+              'Error adding resource: $e',
+              style: GoogleFonts.poppins(),
+            ),
+          ),
         );
       }
     }
   }
 
-  Future<void> _handleResourceAction(String action, String id, String name, String quantity, String status) async {
+  Future<void> _handleResourceAction(
+    String action,
+    String id,
+    String name,
+    String quantity,
+    String status,
+  ) async {
     if (action == 'edit') {
-      widget.logger.d('📅 ScheduleScreen: Opening Edit Resource dialog for resource ID: $id');
+      widget.logger.d(
+        '📅 ScheduleScreen: Opening Edit Resource dialog for resource ID: $id',
+      );
       final nameController = TextEditingController(text: name);
       final quantityController = TextEditingController(text: quantity);
       String selectedStatus = status;
-      
+
       final statusOptions = ['Available', 'In use', 'Ordered', 'Unavailable'];
 
       final result = await showDialog<bool>(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setState) => AlertDialog(
-            title: Text('Edit Resource', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            title: Text(
+              'Edit Resource',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -575,11 +671,17 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
               ),
               ElevatedButton(
                 onPressed: () {
-                  if (nameController.text.isNotEmpty && quantityController.text.isNotEmpty) {
+                  if (nameController.text.isNotEmpty &&
+                      quantityController.text.isNotEmpty) {
                     Navigator.pop(context, true);
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Please fill all fields', style: GoogleFonts.poppins())),
+                      SnackBar(
+                        content: Text(
+                          'Please fill all fields',
+                          style: GoogleFonts.poppins(),
+                        ),
+                      ),
                     );
                   }
                 },
@@ -595,40 +697,66 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
       );
 
       if (result != true) {
-        widget.logger.d('📅 ScheduleScreen: Resource edit cancelled for resource ID: $id');
+        widget.logger.d(
+          '📅 ScheduleScreen: Resource edit cancelled for resource ID: $id',
+        );
         return;
       }
 
       try {
-        widget.logger.d('📅 ScheduleScreen: Updating resource in Firestore: $id');
-        await FirebaseFirestore.instance.collection('Resources').doc(id).update({
-          'name': nameController.text.trim(),
-          'quantity': quantityController.text.trim(),
-          'status': selectedStatus,
-          'projectId': widget.project.id,
-          'projectName': widget.project.name,
-          'updatedAt': Timestamp.now(),
-        });
+        widget.logger.d(
+          '📅 ScheduleScreen: Updating resource in Firestore: $id',
+        );
+        await FirebaseFirestore.instance
+            .collection('Resources')
+            .doc(id)
+            .update({
+              'name': nameController.text.trim(),
+              'quantity': quantityController.text.trim(),
+              'status': selectedStatus,
+              'projectId': widget.project.id,
+              'projectName': widget.project.name,
+              'updatedAt': Timestamp.now(),
+            });
         widget.logger.i('✅ ScheduleScreen: Resource updated successfully: $id');
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Resource updated successfully', style: GoogleFonts.poppins())),
+            SnackBar(
+              content: Text(
+                'Resource updated successfully',
+                style: GoogleFonts.poppins(),
+              ),
+            ),
           );
         }
       } catch (e, stackTrace) {
-        widget.logger.e('❌ ScheduleScreen: Error updating resource: $id', error: e, stackTrace: stackTrace);
+        widget.logger.e(
+          '❌ ScheduleScreen: Error updating resource: $id',
+          error: e,
+          stackTrace: stackTrace,
+        );
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error updating resource: $e', style: GoogleFonts.poppins())),
+            SnackBar(
+              content: Text(
+                'Error updating resource: $e',
+                style: GoogleFonts.poppins(),
+              ),
+            ),
           );
         }
       }
     } else if (action == 'delete') {
-      widget.logger.d('📅 ScheduleScreen: Opening Delete Resource dialog for resource ID: $id');
+      widget.logger.d(
+        '📅 ScheduleScreen: Opening Delete Resource dialog for resource ID: $id',
+      );
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: Text('Delete Resource', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          title: Text(
+            'Delete Resource',
+            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -683,24 +811,47 @@ class _ScheduleScreenState extends State<ScheduleScreen> with SingleTickerProvid
 
       if (confirmed == true) {
         try {
-          widget.logger.d('📅 ScheduleScreen: Deleting resource from Firestore: $id');
-          await FirebaseFirestore.instance.collection('Resources').doc(id).delete();
-          widget.logger.i('✅ ScheduleScreen: Resource deleted successfully: $id');
+          widget.logger.d(
+            '📅 ScheduleScreen: Deleting resource from Firestore: $id',
+          );
+          await FirebaseFirestore.instance
+              .collection('Resources')
+              .doc(id)
+              .delete();
+          widget.logger.i(
+            '✅ ScheduleScreen: Resource deleted successfully: $id',
+          );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Resource deleted successfully', style: GoogleFonts.poppins())),
+              SnackBar(
+                content: Text(
+                  'Resource deleted successfully',
+                  style: GoogleFonts.poppins(),
+                ),
+              ),
             );
           }
         } catch (e, stackTrace) {
-          widget.logger.e('❌ ScheduleScreen: Error deleting resource: $id', error: e, stackTrace: stackTrace);
+          widget.logger.e(
+            '❌ ScheduleScreen: Error deleting resource: $id',
+            error: e,
+            stackTrace: stackTrace,
+          );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Error deleting resource: $e', style: GoogleFonts.poppins())),
+              SnackBar(
+                content: Text(
+                  'Error deleting resource: $e',
+                  style: GoogleFonts.poppins(),
+                ),
+              ),
             );
           }
         }
       } else {
-        widget.logger.d('📅 ScheduleScreen: Resource deletion cancelled for resource ID: $id');
+        widget.logger.d(
+          '📅 ScheduleScreen: Resource deletion cancelled for resource ID: $id',
+        );
       }
     }
   }

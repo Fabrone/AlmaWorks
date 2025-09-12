@@ -27,6 +27,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
   double _scale = 1.0;
   List<ScheduleModel> _tasks = [];
   bool _isLoading = true;
+  bool _editModeEnabled = false;
 
   // Table column widths for consistency
   static const double numberColumnWidth = 60.0;
@@ -286,6 +287,264 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     }
   }
 
+  Future<void> _editTask(ScheduleModel taskToEdit) async {
+    final titleController = TextEditingController(text: taskToEdit.title);
+    DateTime? startDate = taskToEdit.startDate;
+    DateTime? endDate = taskToEdit.endDate;
+    int? duration = taskToEdit.duration;
+    String? selectedParentId = taskToEdit.parentId;
+
+    final existingMainTasks = _tasks.where((task) => task.taskType == 'MainTask' && task.id != taskToEdit.id).toList();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Edit Task', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        contentPadding: const EdgeInsets.all(16.0),
+        content: DefaultTabController(
+          length: taskToEdit.taskType == 'MainTask' ? 1 : 2,
+          initialIndex: taskToEdit.taskType == 'MainTask' ? 0 : 1,
+          child: SizedBox(
+            width: double.maxFinite,
+            child: NestedScrollView(
+              headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                if (taskToEdit.taskType != 'MainTask')
+                  SliverAppBar(
+                    pinned: true,
+                    floating: true,
+                    backgroundColor: Colors.white,
+                    elevation: 0,
+                    flexibleSpace: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: TabBar(
+                        tabs: [
+                          Tab(text: 'MainTask'),
+                          Tab(text: 'ActualTask'),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+              body: taskToEdit.taskType == 'MainTask' 
+                ? // MainTask Form
+                  SingleChildScrollView(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(
+                          controller: titleController,
+                          decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
+                          style: GoogleFonts.poppins(),
+                        ),
+                        SizedBox(height: 16.0),
+                        TextField(
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
+                          controller: TextEditingController(text: duration.toString()),
+                          onChanged: (value) => duration = int.tryParse(value),
+                        ),
+                        SizedBox(height: 16.0),
+                        ListTile(
+                          title: Text(startDate == null ? 'Select Start Date' : _dateFormat.format(startDate!)),
+                          trailing: Icon(Icons.calendar_today),
+                          onTap: () async {
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: startDate ?? DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (selected != null) setState(() => startDate = selected);
+                          },
+                        ),
+                        if (startDate != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text('Selected: ${_dateFormat.format(startDate!)}', style: GoogleFonts.poppins()),
+                          ),
+                        SizedBox(height: 16.0),
+                        ListTile(
+                          title: Text(endDate == null ? 'Select End Date' : _dateFormat.format(endDate!)),
+                          trailing: Icon(Icons.calendar_today),
+                          onTap: () async {
+                            final selected = await showDatePicker(
+                              context: context,
+                              initialDate: endDate ?? DateTime.now(),
+                              firstDate: DateTime(2020),
+                              lastDate: DateTime(2030),
+                            );
+                            if (selected != null) setState(() => endDate = selected);
+                          },
+                        ),
+                        if (endDate != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text('Selected: ${_dateFormat.format(endDate!)}', style: GoogleFonts.poppins()),
+                          ),
+                      ],
+                    ),
+                  )
+                : TabBarView(
+                    children: [
+                      // MainTask Form (placeholder - won't be used for ActualTask editing)
+                      Container(),
+                      // ActualTask Form
+                      SingleChildScrollView(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            DropdownButtonFormField<String>(
+                              initialValue: selectedParentId,
+                              hint: Text('Select Parent MainTask', style: GoogleFonts.poppins()),
+                              items: existingMainTasks.map((task) {
+                                return DropdownMenuItem(
+                                  value: task.id,
+                                  child: SizedBox(
+                                    width: 300.0,
+                                    child: Text(task.title, overflow: TextOverflow.ellipsis, style: GoogleFonts.poppins()),
+                                  ),
+                                );
+                              }).toList(),
+                              onChanged: (value) => setState(() => selectedParentId = value),
+                              decoration: InputDecoration(labelText: 'Parent MainTask', border: OutlineInputBorder()),
+                            ),
+                            SizedBox(height: 16.0),
+                            TextField(
+                              controller: titleController,
+                              decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
+                              style: GoogleFonts.poppins(),
+                            ),
+                            SizedBox(height: 16.0),
+                            TextField(
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
+                              controller: TextEditingController(text: duration.toString()),
+                              onChanged: (value) => duration = int.tryParse(value),
+                            ),
+                            SizedBox(height: 16.0),
+                            ListTile(
+                              title: Text(startDate == null ? 'Select Start Date' : _dateFormat.format(startDate!)),
+                              trailing: Icon(Icons.calendar_today),
+                              onTap: () async {
+                                final selected = await showDatePicker(
+                                  context: context,
+                                  initialDate: startDate ?? DateTime.now(),
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (selected != null) setState(() => startDate = selected);
+                              },
+                            ),
+                            if (startDate != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Text('Selected: ${_dateFormat.format(startDate!)}', style: GoogleFonts.poppins()),
+                              ),
+                            SizedBox(height: 16.0),
+                            ListTile(
+                              title: Text(endDate == null ? 'Select End Date' : _dateFormat.format(endDate!)),
+                              trailing: Icon(Icons.calendar_today),
+                              onTap: () async {
+                                final selected = await showDatePicker(
+                                  context: context,
+                                  initialDate: endDate ?? DateTime.now(),
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (selected != null) setState(() => endDate = selected);
+                              },
+                            ),
+                            if (endDate != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8.0),
+                                child: Text('Selected: ${_dateFormat.format(endDate!)}', style: GoogleFonts.poppins()),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel', style: GoogleFonts.poppins())),
+          ElevatedButton(
+            onPressed: () {
+              if (titleController.text.isNotEmpty && startDate != null && endDate != null && duration != null) {
+                Navigator.pop(context, true);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Please fill all fields', style: GoogleFonts.poppins())),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0A2E5A), foregroundColor: Colors.white),
+            child: Text('Update', style: GoogleFonts.poppins()),
+          ),
+        ],
+      ),
+    );
+
+    if (result != true || startDate == null || endDate == null || duration == null) {
+      setState(() => _editModeEnabled = false);
+      return;
+    }
+
+    try {
+      String taskTitle = titleController.text;
+      String taskType = taskToEdit.taskType; // Keep original task type
+      String? parentId = taskToEdit.taskType == 'MainTask' ? null : selectedParentId;
+
+      final updatedTask = ScheduleModel(
+        id: taskToEdit.id,
+        title: taskTitle,
+        projectId: widget.project.id,
+        projectName: widget.project.name,
+        startDate: startDate!,
+        endDate: endDate!,
+        duration: duration!,
+        updatedAt: DateTime.now(),
+        taskType: taskType,
+        parentId: parentId,
+      );
+      
+      await FirebaseFirestore.instance
+          .collection('Schedule')
+          .doc(taskToEdit.id)
+          .update(updatedTask.toMap());
+      
+      widget.logger.i('✅ GanttChartScreen: Task updated successfully: ${titleController.text}');
+      _fetchTasks();
+    } catch (e) {
+      widget.logger.e('❌ GanttChartScreen: Error updating task', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error updating task: $e', style: GoogleFonts.poppins())),
+        );
+      }
+    } finally {
+      setState(() => _editModeEnabled = false);
+    }
+  }
+
+  void _toggleEditMode() {
+    setState(() {
+      _editModeEnabled = !_editModeEnabled;
+    });
+    if (_editModeEnabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Edit mode enabled. Click on any task row to edit.', style: GoogleFonts.poppins()),
+          duration: Duration(seconds: 2),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+  }
+
   // Calculate project timeline boundaries
   (DateTime startDate, DateTime endDate) _calculateProjectTimeline() {
     if (_tasks.isEmpty) return (DateTime.now(), DateTime.now());
@@ -466,68 +725,73 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     final isMainTask = task.taskType == 'MainTask';
     final rowHeight = 40.0;
     
-    return Container(
-      height: rowHeight,
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300, width: 0.5),
-        color: isMainTask ? Colors.blue.shade50 : Colors.white,
-      ),
-      child: Row(
-        children: [
-          // Number
-          _buildDataCell(
-            rowNumber.toString(),
-            numberColumnWidth,
-            rowHeight,
-            alignment: Alignment.center,
-          ),
-          
-          // Task Name (with indentation for subtasks)
-          _buildDataCell(
-            task.title,
-            taskNameColumnWidth,
-            rowHeight,
-            alignment: Alignment.centerLeft,
-            padding: EdgeInsets.only(left: isMainTask ? 8 : 24),
-            fontWeight: isMainTask ? FontWeight.w600 : FontWeight.normal,
-          ),
-          
-          // Duration
-          _buildDataCell(
-            '${task.duration} days',
-            durationColumnWidth,
-            rowHeight,
-            alignment: Alignment.center,
-          ),
-          
-          // Start Date
-          _buildDataCell(
-            _dateFormat.format(task.startDate),
-            dateColumnWidth,
-            rowHeight,
-            alignment: Alignment.center,
-          ),
-          
-          // End Date
-          _buildDataCell(
-            _dateFormat.format(task.endDate),
-            dateColumnWidth,
-            rowHeight,
-            alignment: Alignment.center,
-          ),
-          
-          // Gantt Chart
-          Container(
-            width: ganttWidth,
-            height: rowHeight,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300, width: 0.5),
+    return GestureDetector(
+      onTap: _editModeEnabled ? () => _editTask(task) : null,
+      child: Container(
+        height: rowHeight,
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey.shade300, width: 0.5),
+          color: _editModeEnabled 
+            ? (isMainTask ? Colors.orange.shade50 : Colors.orange.shade50)
+            : (isMainTask ? Colors.blue.shade50 : Colors.white),
+        ),
+        child: Row(
+          children: [
+            // Number
+            _buildDataCell(
+              rowNumber.toString(),
+              numberColumnWidth,
+              rowHeight,
+              alignment: Alignment.center,
             ),
-            child: CustomPaint(
-              painter: TaskGanttPainter(task, projectStart, scaledDayWidth),
+            
+            // Task Name (with indentation for subtasks)
+            _buildDataCell(
+              task.title,
+              taskNameColumnWidth,
+              rowHeight,
+              alignment: Alignment.centerLeft,
+              padding: EdgeInsets.only(left: isMainTask ? 8 : 24),
+              fontWeight: isMainTask ? FontWeight.w600 : FontWeight.normal,
             ),
-          ),
-        ],
+            
+            // Duration
+            _buildDataCell(
+              '${task.duration} days',
+              durationColumnWidth,
+              rowHeight,
+              alignment: Alignment.center,
+            ),
+            
+            // Start Date
+            _buildDataCell(
+              _dateFormat.format(task.startDate),
+              dateColumnWidth,
+              rowHeight,
+              alignment: Alignment.center,
+            ),
+            
+            // End Date
+            _buildDataCell(
+              _dateFormat.format(task.endDate),
+              dateColumnWidth,
+              rowHeight,
+              alignment: Alignment.center,
+            ),
+            
+            // Gantt Chart
+            Container(
+              width: ganttWidth,
+              height: rowHeight,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300, width: 0.5),
+              ),
+              child: CustomPaint(
+                painter: TaskGanttPainter(task, projectStart, scaledDayWidth),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -583,6 +847,9 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0A2E5A),
                 foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               child: Text('Add First Task', style: GoogleFonts.poppins()),
             ),
@@ -617,8 +884,9 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
               ),
               Row(
                 children: [
-                  Tooltip(
-                    message: 'Add Task',
+                  // Add Task Button
+                  SizedBox(
+                    height: 40,
                     child: ElevatedButton.icon(
                       onPressed: _addTask,
                       icon: const Icon(Icons.add, size: 18),
@@ -626,33 +894,67 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF0A2E5A),
                         foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Tooltip(
-                    message: 'Zoom In',
+                  // Edit Button
+                  SizedBox(
+                    height: 40,
+                    child: ElevatedButton.icon(
+                      onPressed: _toggleEditMode,
+                      icon: Icon(_editModeEnabled ? Icons.edit_off : Icons.edit, size: 18),
+                      label: Text(_editModeEnabled ? 'Exit Edit' : 'Edit', style: GoogleFonts.poppins(fontSize: 14)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _editModeEnabled ? Colors.orange : const Color(0xFF0A2E5A),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Zoom In Button
+                  SizedBox(
+                    height: 40,
+                    width: 40,
                     child: IconButton(
-                      icon: const Icon(Icons.zoom_in),
+                      icon: const Icon(Icons.zoom_in, size: 18),
                       onPressed: () => setState(() => _scale = (_scale * 1.2).clamp(0.5, 3.0)),
                       style: IconButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: const Color(0xFF0A2E5A),
                         side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
                       ),
+                      tooltip: 'Zoom In',
                     ),
                   ),
                   const SizedBox(width: 4),
-                  Tooltip(
-                    message: 'Zoom Out',
+                  // Zoom Out Button
+                  SizedBox(
+                    height: 40,
+                    width: 40,
                     child: IconButton(
-                      icon: const Icon(Icons.zoom_out),
+                      icon: const Icon(Icons.zoom_out, size: 18),
                       onPressed: () => setState(() => _scale = (_scale / 1.2).clamp(0.5, 3.0)),
                       style: IconButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: const Color(0xFF0A2E5A),
                         side: BorderSide(color: Colors.grey.shade300),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
                       ),
+                      tooltip: 'Zoom Out',
                     ),
                   ),
                 ],
