@@ -1228,9 +1228,28 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final mainTasks = widget.tasks
-        .where((t) => t.taskType == 'Maintaskgroup' && t.id != widget.task.id)
+    // Include both Maintaskgroup AND Maintasksubgroup as potential parents
+    final potentialParents = widget.tasks
+        .where((t) => 
+            (t.taskType == 'Maintaskgroup' || t.taskType == 'Maintasksubgroup') && 
+            t.id != widget.task.id)
         .toList();
+
+    // Determine the actual initial value - only use it if it exists in our items
+    String? actualInitialValue;
+    if (_selectedParentId.isNotEmpty) {
+      // Check if the current parentId exists in our potential parents list
+      final parentExists = potentialParents.any((task) => task.id == _selectedParentId);
+      if (parentExists) {
+        actualInitialValue = _selectedParentId;
+      } else {
+        // If parent doesn't exist in our list, default to null and update state
+        actualInitialValue = null;
+        _selectedParentId = '';
+      }
+    } else {
+      actualInitialValue = null;
+    }
 
     return Container(
       padding: EdgeInsets.only(
@@ -1259,7 +1278,7 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
           const SizedBox(height: 16),
           if (widget.task.taskType != 'Maintaskgroup')
             DropdownButtonFormField<String>(
-              initialValue: _selectedParentId.isEmpty ? null : _selectedParentId,
+              initialValue: actualInitialValue, 
               decoration: InputDecoration(
                 labelText: 'Parent Task',
                 border: OutlineInputBorder(),
@@ -1269,10 +1288,10 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
                   value: null,
                   child: Text('No Parent', style: GoogleFonts.poppins()),
                 ),
-                ...mainTasks.map(
+                ...potentialParents.map(
                   (task) => DropdownMenuItem<String>(
                     value: task.id,
-                    child: Text(task.title, style: GoogleFonts.poppins()),
+                    child: Text('${task.title} (${task.taskType})', style: GoogleFonts.poppins()),
                   ),
                 ),
               ],
