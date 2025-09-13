@@ -22,10 +22,10 @@ class TaskDialogManager {
             .collection('Schedule')
             .doc(task.id)
             .update(task.toMap());
-        logger.i('✅ Task updated successfully: ${task.title} (Type: ${task.taskType}, ParentId: ${task.parentId})');
+        logger.i('✅ Task updated successfully: ${task.title} (Type: ${task.taskType}, ParentId: ${task.parentId}, Dependency: ${task.dependency})');
       } else {
         await FirebaseFirestore.instance.collection('Schedule').add(task.toMap());
-        logger.i('✅ Task added successfully: ${task.title} (Type: ${task.taskType}, ParentId: ${task.parentId})');
+        logger.i('✅ Task added successfully: ${task.title} (Type: ${task.taskType}, ParentId: ${task.parentId}, Dependency: ${task.dependency})');
       }
       onSuccess();
       return true;
@@ -52,7 +52,7 @@ class TaskDialogManager {
     DateTime? endDate;
     int? duration;
     String? selectedParentId;
-    String? taskType = 'Maintaskgroup'; // Default to Maintaskgroup
+    String? taskType = 'Maintaskgroup';
 
     final existingMainTasks = tasks.where((task) => task.taskType == 'Maintaskgroup' || task.taskType == 'Maintasksubgroup').toList();
 
@@ -92,6 +92,7 @@ class TaskDialogManager {
       updatedAt: DateTime.now(),
       taskType: taskType!,
       parentId: taskType == 'Maintaskgroup' ? null : selectedParentId,
+      dependency: null,
     );
 
     if (context.mounted) {
@@ -162,6 +163,7 @@ class TaskDialogManager {
       updatedAt: DateTime.now(),
       taskType: taskToEdit.taskType,
       parentId: taskToEdit.taskType == 'Maintaskgroup' ? null : selectedParentId,
+      dependency: taskToEdit.dependency,
     );
 
     if (context.mounted) {
@@ -173,6 +175,106 @@ class TaskDialogManager {
         isUpdate: true,
       );
     }
+  }
+
+  static Future<Map<String, dynamic>?> showLinkTaskDialog({
+    required BuildContext context,
+    required ScheduleModel sourceTask,
+    required List<ScheduleModel> tasks,
+    required String dependencyType,
+    required Logger logger,
+  }) async {
+    String? selectedTaskId;
+
+    final eligibleTasks = tasks
+        .where((task) =>
+            task.taskType == 'Task' &&
+            task.parentId == sourceTask.parentId &&
+            task.id != sourceTask.id)
+        .toList();
+
+    if (eligibleTasks.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('No eligible tasks to link with the same parent', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      logger.w('No eligible tasks for linking with source task: ${sourceTask.title}');
+      return null;
+    }
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Link Task: ${sourceTask.title}', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Dependency Type: $dependencyType', style: GoogleFonts.poppins(fontSize: 14)),
+            SizedBox(height: 16.0),
+            DropdownButtonFormField<String>(
+              hint: Text('Select Target Task', style: GoogleFonts.poppins()),
+              items: eligibleTasks.map((task) {
+                return DropdownMenuItem(
+                  value: task.id,
+                  child: SizedBox(
+                    width: 300.0,
+                    child: Text(
+                      task.title,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.poppins(),
+                    ),
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                selectedTaskId = value;
+              },
+              decoration: InputDecoration(
+                labelText: 'Target Task',
+                border: OutlineInputBorder(),
+              ),
+              validator: (value) => value == null ? 'Please select a target task' : null,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (selectedTaskId != null) {
+                Navigator.pop(context, {
+                  'type': dependencyType,
+                  'targetTaskId': selectedTaskId,
+                });
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Please select a target task', style: GoogleFonts.poppins()),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A2E5A),
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Link', style: GoogleFonts.poppins()),
+          ),
+        ],
+      ),
+    );
+
+    logger.i('LinkTaskDialog result: $result');
+    return result;
   }
 
   static Future<String?> showTaskTypeDialog(BuildContext context) async {
@@ -620,52 +722,67 @@ class _AddTaskDialogState extends State<_AddTaskDialog> with SingleTickerProvide
   }
 
   Widget _buildDateSelector(String label, DateTime? selectedDate, Function(DateTime) onDateSelected) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          title: Text(selectedDate == null ? label : widget.dateFormat.format(selectedDate)),
-          trailing: Icon(Icons.calendar_today),
-          onTap: () async {
-            final selected = await showDatePicker(
-              context: context,
-              initialDate: selectedDate ?? DateTime.now(),
-              firstDate: DateTime(2020),
-              lastDate: DateTime(2030),
-            );
-            if (selected != null) onDateSelected(selected);
-          },
+    return InkWell(
+      onTap: () async {
+        final date = await TaskDialogManager.showDatePickerDialog(context, selectedDate);
+        if (date != null) {
+          onDateSelected(date);
+        }
+      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          border: OutlineInputBorder(),
         ),
-        if (selectedDate != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Text('Selected: ${widget.dateFormat.format(selectedDate)}', style: GoogleFonts.poppins()),
-          ),
-      ],
+        child: Text(
+          selectedDate != null ? widget.dateFormat.format(selectedDate) : 'Select Date',
+          style: GoogleFonts.poppins(),
+        ),
+      ),
     );
   }
 
   void _onSave() {
-    final currentTab = _tabController.index;
-    final isSubgroupOrTask = currentTab == 1 || currentTab == 2;
-    if (widget.titleController.text.trim().isNotEmpty &&
-        _startDate != null &&
-        _endDate != null &&
-        _startDate!.isBefore(_endDate!) &&
-        (!isSubgroupOrTask || _selectedParentId != null)) {
-      Navigator.pop(context, {'result': true});
-    } else {
+    if (widget.titleController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            isSubgroupOrTask
-                ? 'Please fill all fields, ensure start date is before end date, and select a parent task'
-                : 'Please fill all fields and ensure start date is before end date',
-            style: GoogleFonts.poppins(),
-          ),
+          content: Text('Task name cannot be empty', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
         ),
       );
+      return;
     }
+    if (_startDate == null || _endDate == null || _duration == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please select start and end dates', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    if (_tabController.index != 0 && _selectedParentId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Please select a parent task for non-main tasks', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+    if (_startDate!.isAfter(_endDate!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Start date must be before end date', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    Navigator.pop(context, {
+      'result': true,
+    });
   }
 }
 
@@ -705,269 +822,177 @@ class _EditTaskDialog extends StatefulWidget {
 class _EditTaskDialogState extends State<_EditTaskDialog> {
   DateTime? _startDate;
   DateTime? _endDate;
+  String? _selectedParentId;
+  int? _duration;
 
   @override
   void initState() {
     super.initState();
     _startDate = widget.startDate;
     _endDate = widget.endDate;
+    _duration = widget.duration;
+    _selectedParentId = widget.selectedParentId;
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('Edit Task', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-      contentPadding: const EdgeInsets.all(16.0),
-      content: DefaultTabController(
-        length: widget.taskToEdit.taskType == 'Maintaskgroup' ? 1 : 2,
-        initialIndex: widget.taskToEdit.taskType == 'Maintaskgroup' ? 0 : 1,
-        child: SizedBox(
-          width: double.maxFinite,
-          child: NestedScrollView(
-            headerSliverBuilder: (context, innerBoxIsScrolled) => [
-              if (widget.taskToEdit.taskType != 'Maintaskgroup')
-                SliverAppBar(
-                  pinned: true,
-                  floating: true,
-                  backgroundColor: Colors.white,
-                  elevation: 0,
-                  flexibleSpace: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 8.0),
-                    child: TabBar(
-                      tabs: [
-                        Tab(text: 'Maintaskgroup'),
-                        Tab(text: widget.taskToEdit.taskType == 'Maintasksubgroup' ? 'Maintasksubgroup' : 'Task'),
-                      ],
-                      labelStyle: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600),
-                      unselectedLabelStyle: GoogleFonts.poppins(fontSize: 14),
-                      indicatorColor: const Color(0xFF0A2E5A),
-                      labelColor: const Color(0xFF0A2E5A),
-                      unselectedLabelColor: Colors.grey.shade600,
+      title: Text('Edit Task: ${widget.taskToEdit.title}', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: widget.titleController,
+              decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
+              style: GoogleFonts.poppins(),
+            ),
+            SizedBox(height: 16.0),
+            if (widget.taskToEdit.taskType != 'Maintaskgroup')
+              DropdownButtonFormField<String>(
+                initialValue: _selectedParentId,
+                hint: Text('Select Parent Task (Group or Subgroup)', style: GoogleFonts.poppins()),
+                items: widget.existingMainTasks.map((task) {
+                  return DropdownMenuItem(
+                    value: task.id,
+                    child: SizedBox(
+                      width: 300.0,
+                      child: Text(
+                        '${task.title} (${task.taskType})',
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.poppins(),
+                      ),
                     ),
-                  ),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() => _selectedParentId = value);
+                  widget.onParentIdChanged(value);
+                },
+                decoration: InputDecoration(
+                  labelText: 'Parent Task (Group or Subgroup)',
+                  border: OutlineInputBorder(),
                 ),
-            ],
-            body: widget.taskToEdit.taskType == 'Maintaskgroup'
-                ? _buildMainTaskForm()
-                : TabBarView(
-                    children: [
-                      Container(),
-                      widget.taskToEdit.taskType == 'Maintasksubgroup' ? _buildSubgroupTaskForm() : _buildActualTaskForm(),
-                    ],
-                  ),
-          ),
+                validator: (value) => value == null ? 'Please select a parent task' : null,
+              ),
+            SizedBox(height: 16.0),
+            TextField(
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
+              controller: TextEditingController(text: _duration?.toString()),
+              onChanged: (value) {
+                final duration = int.tryParse(value);
+                if (duration != null && duration > 0) {
+                  _duration = duration;
+                  widget.onDurationChanged(duration);
+                  if (_startDate != null) {
+                    setState(() {
+                      _endDate = _startDate!.add(Duration(days: duration - 1));
+                      widget.onEndDateChanged(_endDate!);
+                    });
+                  }
+                }
+              },
+            ),
+            SizedBox(height: 16.0),
+            _buildDateSelector('Select Start Date', _startDate, (date) {
+              setState(() {
+                _startDate = date;
+                if (_duration != null) {
+                  _endDate = date.add(Duration(days: _duration! - 1));
+                  widget.onEndDateChanged(_endDate!);
+                }
+              });
+              widget.onStartDateChanged(date);
+            }),
+            SizedBox(height: 16.0),
+            _buildDateSelector('Select End Date', _endDate, (date) {
+              setState(() {
+                _endDate = date;
+                if (_startDate != null) {
+                  _duration = TaskDialogManager.calculateDuration(_startDate!, date);
+                  widget.onDurationChanged(_duration!);
+                }
+              });
+              widget.onEndDateChanged(date);
+            }),
+          ],
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.pop(context, false),
+          onPressed: () => Navigator.pop(context),
           child: Text('Cancel', style: GoogleFonts.poppins()),
         ),
         ElevatedButton(
-          onPressed: _onUpdate,
+          onPressed: () {
+            if (widget.titleController.text.trim().isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Task name cannot be empty', style: GoogleFonts.poppins()),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+            if (_startDate == null || _endDate == null || _duration == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Please select start and end dates', style: GoogleFonts.poppins()),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+            if (widget.taskToEdit.taskType != 'Maintaskgroup' && _selectedParentId == null) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Please select a parent task for non-main tasks', style: GoogleFonts.poppins()),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+            if (_startDate!.isAfter(_endDate!)) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Start date must be before end date', style: GoogleFonts.poppins()),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+
+            Navigator.pop(context, true);
+          },
           style: ElevatedButton.styleFrom(
             backgroundColor: const Color(0xFF0A2E5A),
             foregroundColor: Colors.white,
           ),
-          child: Text('Update', style: GoogleFonts.poppins()),
+          child: Text('Save', style: GoogleFonts.poppins()),
         ),
       ],
-    );
-  }
-
-  Widget _buildMainTaskForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(top: 8.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: widget.titleController,
-            decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
-            style: GoogleFonts.poppins(),
-          ),
-          SizedBox(height: 16.0),
-          TextField(
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
-            controller: TextEditingController(text: widget.duration.toString()),
-            onChanged: (value) {
-              final duration = int.tryParse(value);
-              if (duration != null) widget.onDurationChanged(duration);
-            },
-          ),
-          SizedBox(height: 16.0),
-          _buildDateSelector('Select Start Date', _startDate, (date) {
-            setState(() => _startDate = date);
-            widget.onStartDateChanged(date);
-          }),
-          SizedBox(height: 16.0),
-          _buildDateSelector('Select End Date', _endDate, (date) {
-            setState(() => _endDate = date);
-            widget.onEndDateChanged(date);
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSubgroupTaskForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(top: 8.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<String>(
-            initialValue: widget.selectedParentId,
-            hint: Text('Select Parent Task (Group or Subgroup)', style: GoogleFonts.poppins()),
-            items: widget.existingMainTasks.map((task) {
-              return DropdownMenuItem(
-                value: task.id,
-                child: SizedBox(
-                  width: 300.0,
-                  child: Text(
-                    '${task.title} (${task.taskType})',
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.poppins(),
-                  ),
-                ),
-              );
-            }).toList(),
-            onChanged: (value) {
-              widget.onParentIdChanged(value);
-            },
-            decoration: InputDecoration(
-              labelText: 'Parent Task (Group or Subgroup)',
-              border: OutlineInputBorder(),
-            ),
-            validator: (value) => value == null ? 'Please select a parent task' : null,
-          ),
-          SizedBox(height: 16.0),
-          TextField(
-            controller: widget.titleController,
-            decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
-            style: GoogleFonts.poppins(),
-          ),
-          SizedBox(height: 16.0),
-          TextField(
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
-            controller: TextEditingController(text: widget.duration.toString()),
-            onChanged: (value) {
-              final duration = int.tryParse(value);
-              if (duration != null) widget.onDurationChanged(duration);
-            },
-          ),
-          SizedBox(height: 16.0),
-          _buildDateSelector('Select Start Date', _startDate, (date) {
-            setState(() => _startDate = date);
-            widget.onStartDateChanged(date);
-          }),
-          SizedBox(height: 16.0),
-          _buildDateSelector('Select End Date', _endDate, (date) {
-            setState(() => _endDate = date);
-            widget.onEndDateChanged(date);
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActualTaskForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.only(top: 8.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          DropdownButtonFormField<String>(
-            initialValue: widget.selectedParentId,
-            hint: Text('Select Parent Task (Group or Subgroup)', style: GoogleFonts.poppins()),
-            items: widget.existingMainTasks.map((task) {
-              return DropdownMenuItem(
-                value: task.id,
-                child: SizedBox(
-                  width: 300.0,
-                  child: Text(
-                    '${task.title} (${task.taskType})',
-                    overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.poppins(),
-                  ),
-                ),
-              );
-            }).toList(),
-            onChanged: (value) {
-              widget.onParentIdChanged(value);
-            },
-            decoration: InputDecoration(
-              labelText: 'Parent Task (Group or Subgroup)',
-              border: OutlineInputBorder(),
-            ),
-            validator: (value) => value == null ? 'Please select a parent task' : null,
-          ),
-          SizedBox(height: 16.0),
-          TextField(
-            controller: widget.titleController,
-            decoration: InputDecoration(labelText: 'Task Name', border: OutlineInputBorder()),
-            style: GoogleFonts.poppins(),
-          ),
-          SizedBox(height: 16.0),
-          TextField(
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(labelText: 'Duration (days)', border: OutlineInputBorder()),
-            controller: TextEditingController(text: widget.duration.toString()),
-            onChanged: (value) {
-              final duration = int.tryParse(value);
-              if (duration != null) widget.onDurationChanged(duration);
-            },
-          ),
-          SizedBox(height: 16.0),
-          _buildDateSelector('Select Start Date', _startDate, (date) {
-            setState(() => _startDate = date);
-            widget.onStartDateChanged(date);
-          }),
-          SizedBox(height: 16.0),
-          _buildDateSelector('Select End Date', _endDate, (date) {
-            setState(() => _endDate = date);
-            widget.onEndDateChanged(date);
-          }),
-        ],
-      ),
     );
   }
 
   Widget _buildDateSelector(String label, DateTime? selectedDate, Function(DateTime) onDateSelected) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          title: Text(selectedDate == null ? label : widget.dateFormat.format(selectedDate)),
-          trailing: Icon(Icons.calendar_today),
-          onTap: () async {
-            final selected = await showDatePicker(
-              context: context,
-              initialDate: selectedDate ?? DateTime.now(),
-              firstDate: DateTime(2020),
-              lastDate: DateTime(2030),
-            );
-            if (selected != null) onDateSelected(selected);
-          },
+    return InkWell(
+      onTap: () async {
+        final date = await TaskDialogManager.showDatePickerDialog(context, selectedDate);
+        if (date != null) {
+          onDateSelected(date);
+        }
+      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          border: OutlineInputBorder(),
         ),
-        if (selectedDate != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8.0),
-            child: Text('Selected: ${widget.dateFormat.format(selectedDate)}', style: GoogleFonts.poppins()),
-          ),
-      ],
+        child: Text(
+          selectedDate != null ? widget.dateFormat.format(selectedDate) : 'Select Date',
+          style: GoogleFonts.poppins(),
+        ),
+      ),
     );
-  }
-
-  void _onUpdate() {
-    if (widget.titleController.text.isNotEmpty && _startDate != null && _endDate != null && _startDate!.isBefore(_endDate!)) {
-      Navigator.pop(context, true);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please fill all fields and ensure start date is before end date', style: GoogleFonts.poppins())),
-      );
-    }
   }
 }

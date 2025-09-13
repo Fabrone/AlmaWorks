@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
 import 'package:intl/intl.dart';
+import 'dart:math' show atan2, cos, pi, sin;
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 class GanttChartScreen extends StatefulWidget {
   final ProjectModel project;
@@ -55,6 +57,8 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
   @override
   void dispose() {
     _newTaskTitleController.dispose();
+    _horizontalScrollController.dispose();
+    _verticalScrollController.dispose();
     super.dispose();
   }
 
@@ -73,6 +77,14 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
       widget.logger.i('📅 GanttChartScreen: Loaded ${_tasks.length} tasks');
     } catch (e) {
       widget.logger.e('❌ GanttChartScreen: Error loading tasks', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load tasks: $e', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       setState(() => _isLoading = false);
     }
@@ -96,7 +108,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
         _clearNewTaskInputs();
       }
     });
-    if (_editModeEnabled) {
+    if (_editModeEnabled && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -121,10 +133,18 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
 
   Future<void> _handleInlineTaskNameEdit(ScheduleModel task) async {
     if (task.taskType == 'Maintaskgroup') {
-      // For main tasks, just edit the title
-      await _showInlineTextEditor(task.title, 'Edit Task Name', (
-        newValue,
-      ) async {
+      await _showInlineTextEditor(task.title, 'Edit Task Name', (newValue) async {
+        if (newValue.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Task name cannot be empty', style: GoogleFonts.poppins()),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
         final updatedTask = ScheduleModel(
           id: task.id,
           title: newValue,
@@ -136,6 +156,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
           updatedAt: DateTime.now(),
           taskType: task.taskType,
           parentId: task.parentId,
+          dependency: task.dependency,
         );
 
         await TaskDialogManager.saveInlineEdit(
@@ -147,8 +168,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
         );
       });
     } else {
-      // For subtasks, allow parent selection too
-      // Remove the unused 'result' variable and add mounted check
       if (!mounted) return;
 
       await showModalBottomSheet<Map<String, dynamic>>(
@@ -158,7 +177,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
           task: task,
           tasks: _tasks,
           onSave: (updatedTask) async {
-            // Add mounted check before using context
             if (mounted) {
               await TaskDialogManager.saveInlineEdit(
                 context: context,
@@ -174,10 +192,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     }
   }
 
-  Future<void> _handleInlineDateEdit(
-    ScheduleModel task,
-    bool isStartDate,
-  ) async {
+  Future<void> _handleInlineDateEdit(ScheduleModel task, bool isStartDate) async {
     final selectedDate = await TaskDialogManager.showDatePickerDialog(
       context,
       isStartDate ? task.startDate : task.endDate,
@@ -187,11 +202,19 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
       DateTime newStartDate = isStartDate ? selectedDate : task.startDate;
       DateTime newEndDate = isStartDate ? task.endDate : selectedDate;
 
-      // Auto-calculate duration
-      int newDuration = TaskDialogManager.calculateDuration(
-        newStartDate,
-        newEndDate,
-      );
+      if (newStartDate.isAfter(newEndDate)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Start date must be before end date', style: GoogleFonts.poppins()),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      int newDuration = TaskDialogManager.calculateDuration(newStartDate, newEndDate);
 
       final updatedTask = ScheduleModel(
         id: task.id,
@@ -204,6 +227,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
         updatedAt: DateTime.now(),
         taskType: task.taskType,
         parentId: task.parentId,
+        dependency: task.dependency,
       );
 
       if (mounted) {
@@ -224,33 +248,52 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
       'Edit Duration (days)',
       (newValue) async {
         final duration = int.tryParse(newValue);
-        if (duration != null && duration > 0) {
-          // Recalculate end date based on new duration
-          DateTime newEndDate = task.startDate.add(
-            Duration(days: duration - 1),
-          );
-
-          final updatedTask = ScheduleModel(
-            id: task.id,
-            title: task.title,
-            projectId: task.projectId,
-            projectName: task.projectName,
-            startDate: task.startDate,
-            endDate: newEndDate,
-            duration: duration,
-            updatedAt: DateTime.now(),
-            taskType: task.taskType,
-            parentId: task.parentId,
-          );
-
-          await TaskDialogManager.saveInlineEdit(
-            context: context,
-            project: widget.project,
-            task: updatedTask,
-            logger: widget.logger,
-            onTaskUpdated: _fetchTasks,
-          );
+        if (duration == null || duration <= 0) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Duration must be a positive number', style: GoogleFonts.poppins()),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
         }
+
+        DateTime newEndDate = task.startDate.add(Duration(days: duration - 1));
+        if (newEndDate.isBefore(task.startDate)) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('End date cannot be before start date', style: GoogleFonts.poppins()),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+
+        final updatedTask = ScheduleModel(
+          id: task.id,
+          title: task.title,
+          projectId: task.projectId,
+          projectName: task.projectName,
+          startDate: task.startDate,
+          endDate: newEndDate,
+          duration: duration,
+          updatedAt: DateTime.now(),
+          taskType: task.taskType,
+          parentId: task.parentId,
+          dependency: task.dependency,
+        );
+
+        await TaskDialogManager.saveInlineEdit(
+          context: context,
+          project: widget.project,
+          task: updatedTask,
+          logger: widget.logger,
+          onTaskUpdated: _fetchTasks,
+        );
       },
       keyboardType: TextInputType.number,
     );
@@ -305,14 +348,29 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
   }
 
   Future<void> _addNewTaskInline() async {
-    if (_newTaskTitleController.text.trim().isEmpty || 
-        _newTaskStartDate == null || 
+    if (_newTaskTitleController.text.trim().isEmpty ||
+        _newTaskStartDate == null ||
         _newTaskEndDate == null ||
-        _newTaskDuration == null) {
+        _newTaskDuration == null ||
+        (_newTaskType != 'Maintaskgroup' && _newTaskParentId == null)) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Please fill all required fields', style: GoogleFonts.poppins()),
+          content: Text(
+            'Please fill all required fields and select a parent for non-main tasks',
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (_newTaskStartDate!.isAfter(_newTaskEndDate!)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Start date must be before end date', style: GoogleFonts.poppins()),
           backgroundColor: Colors.red,
         ),
       );
@@ -329,7 +387,8 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
       duration: _newTaskDuration!,
       updatedAt: DateTime.now(),
       taskType: _newTaskType,
-      parentId: _newTaskParentId,
+      parentId: _newTaskType == 'Maintaskgroup' ? null : _newTaskParentId,
+      dependency: null,
     );
 
     await TaskDialogManager.addInlineTask(
@@ -347,7 +406,78 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     );
   }
 
-  // Calculate project timeline boundaries
+  Future<void> _handleLinkTask(ScheduleModel sourceTask, Offset position) async {
+    // Prevent default browser context menu on web
+    if (kIsWeb) {
+      // Note: To fully suppress browser context menu,it is implemented already in web/index.hmtl
+    }
+
+    final RenderBox renderBox = context.findRenderObject() as RenderBox;
+    final localPosition = renderBox.globalToLocal(position);
+
+    final selectedDependencyType = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        localPosition.dx,
+        localPosition.dy,
+        localPosition.dx + 10,
+        localPosition.dy + 10,
+      ),
+      items: [
+        PopupMenuItem<String>(
+          value: 'FS',
+          child: Text('Finish-to-Start', style: GoogleFonts.poppins()),
+        ),
+        PopupMenuItem<String>(
+          value: 'SS',
+          child: Text('Start-to-Start', style: GoogleFonts.poppins()),
+        ),
+        PopupMenuItem<String>(
+          value: 'FF',
+          child: Text('Finish-to-Finish', style: GoogleFonts.poppins()),
+        ),
+        PopupMenuItem<String>(
+          value: 'SF',
+          child: Text('Start-to-Finish', style: GoogleFonts.poppins()),
+        ),
+      ],
+    );
+
+    if (selectedDependencyType != null && mounted) {
+      final dependency = await TaskDialogManager.showLinkTaskDialog(
+        context: context,
+        sourceTask: sourceTask,
+        tasks: _tasks,
+        dependencyType: selectedDependencyType,
+        logger: widget.logger,
+      );
+
+      if (dependency != null && mounted) {
+        final updatedTask = ScheduleModel(
+          id: sourceTask.id,
+          title: sourceTask.title,
+          projectId: sourceTask.projectId,
+          projectName: sourceTask.projectName,
+          startDate: sourceTask.startDate,
+          endDate: sourceTask.endDate,
+          duration: sourceTask.duration,
+          updatedAt: DateTime.now(),
+          taskType: sourceTask.taskType,
+          parentId: sourceTask.parentId,
+          dependency: dependency,
+        );
+
+        await TaskDialogManager.saveInlineEdit(
+          context: context,
+          project: widget.project,
+          task: updatedTask,
+          logger: widget.logger,
+          onTaskUpdated: _fetchTasks,
+        );
+      }
+    }
+  }
+
   (DateTime startDate, DateTime endDate) _calculateProjectTimeline() {
     if (_tasks.isEmpty) return (DateTime.now(), DateTime.now());
 
@@ -364,19 +494,16 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     return (earliestStart, latestEnd);
   }
 
-  // Generate date headers with proper month and day display
   Widget _buildDateHeaders(DateTime startDate, DateTime endDate) {
     final totalDays = endDate.difference(startDate).inDays + 1;
     final scaledDayWidth = dayWidth * _scale;
 
     return Column(
       children: [
-        // Month headers
         SizedBox(
           height: 40,
           child: _buildMonthHeaders(startDate, endDate, scaledDayWidth),
         ),
-        // Day headers
         SizedBox(
           height: 30,
           child: _buildDayHeaders(startDate, totalDays, scaledDayWidth),
@@ -385,26 +512,14 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     );
   }
 
-  Widget _buildMonthHeaders(
-    DateTime startDate,
-    DateTime endDate,
-    double scaledDayWidth,
-  ) {
+  Widget _buildMonthHeaders(DateTime startDate, DateTime endDate, double scaledDayWidth) {
     List<Widget> monthHeaders = [];
     DateTime currentMonth = DateTime(startDate.year, startDate.month, 1);
 
-    while (currentMonth.isBefore(endDate) ||
-        currentMonth.isAtSameMomentAs(endDate)) {
-      // Calculate days in this month that fall within project timeline
-      DateTime monthEnd = DateTime(
-        currentMonth.year,
-        currentMonth.month + 1,
-        0,
-      );
+    while (currentMonth.isBefore(endDate) || currentMonth.isAtSameMomentAs(endDate)) {
+      DateTime monthEnd = DateTime(currentMonth.year, currentMonth.month + 1, 0);
       if (monthEnd.isAfter(endDate)) monthEnd = endDate;
-      DateTime monthStart = currentMonth.isBefore(startDate)
-          ? startDate
-          : currentMonth;
+      DateTime monthStart = currentMonth.isBefore(startDate) ? startDate : currentMonth;
 
       int daysInMonth = monthEnd.difference(monthStart).inDays + 1;
       double monthWidth = daysInMonth * scaledDayWidth;
@@ -419,10 +534,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
           child: Center(
             child: Text(
               DateFormat('MMMM yyyy').format(currentMonth),
-              style: GoogleFonts.poppins(
-                fontWeight: FontWeight.w600,
-                fontSize: 12,
-              ),
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 12),
             ),
           ),
         ),
@@ -434,11 +546,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     return Row(children: monthHeaders);
   }
 
-  Widget _buildDayHeaders(
-    DateTime startDate,
-    int totalDays,
-    double scaledDayWidth,
-  ) {
+  Widget _buildDayHeaders(DateTime startDate, int totalDays, double scaledDayWidth) {
     List<Widget> dayHeaders = [];
 
     for (int i = 0; i < totalDays; i++) {
@@ -453,10 +561,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
           child: Center(
             child: Text(
               currentDate.day.toString(),
-              style: GoogleFonts.poppins(
-                fontSize: 10,
-                fontWeight: FontWeight.w500,
-              ),
+              style: GoogleFonts.poppins(fontSize: 10, fontWeight: FontWeight.w500),
             ),
           ),
         ),
@@ -466,9 +571,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     return Row(children: dayHeaders);
   }
 
-  // Build unified table structure
   Widget _buildGanttTable(DateTime projectStart, DateTime projectEnd) {
-    // Build hierarchy
     List<ScheduleModel> sortedTasks = [];
     var mainTasks = _tasks.where((t) => t.taskType == 'Maintaskgroup').toList();
     mainTasks.sort((a, b) => a.startDate.compareTo(b.startDate));
@@ -477,17 +580,23 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     for (var main in mainTasks) {
       sortedTasks.add(main);
       widget.logger.i('Added Maintaskgroup: ${main.title} (ID: ${main.id})');
-      final subgroups = _tasks.where((t) => t.taskType == 'Maintasksubgroup' && t.parentId == main.id).toList();
+      final subgroups = _tasks
+          .where((t) => t.taskType == 'Maintasksubgroup' && t.parentId == main.id)
+          .toList();
       subgroups.sort((a, b) => a.startDate.compareTo(b.startDate));
       widget.logger.i('Subgroups for ${main.title}: ${subgroups.length}');
       sortedTasks.addAll(subgroups);
       for (var subgroup in subgroups) {
-        final tasks = _tasks.where((t) => t.taskType == 'Task' && t.parentId == subgroup.id).toList();
+        final tasks = _tasks
+            .where((t) => t.taskType == 'Task' && t.parentId == subgroup.id)
+            .toList();
         tasks.sort((a, b) => a.startDate.compareTo(b.startDate));
         widget.logger.i('Tasks for subgroup ${subgroup.title}: ${tasks.length}');
         sortedTasks.addAll(tasks);
       }
-      final mainTasksDirect = _tasks.where((t) => t.taskType == 'Task' && t.parentId == main.id).toList();
+      final mainTasksDirect = _tasks
+          .where((t) => t.taskType == 'Task' && t.parentId == main.id)
+          .toList();
       mainTasksDirect.sort((a, b) => a.startDate.compareTo(b.startDate));
       widget.logger.i('Tasks for ${main.title}: ${mainTasksDirect.length}');
       sortedTasks.addAll(mainTasksDirect);
@@ -500,7 +609,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Table Header
         Container(
           decoration: BoxDecoration(
             border: Border.all(color: Colors.grey.shade600, width: 1),
@@ -508,13 +616,11 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
           ),
           child: Row(
             children: [
-              // Fixed columns
               _buildHeaderCell('No.', numberColumnWidth),
               _buildHeaderCell('Task Name', taskNameColumnWidth),
               _buildHeaderCell('Duration', durationColumnWidth),
               _buildHeaderCell('Start Date', dateColumnWidth),
               _buildHeaderCell('End Date', dateColumnWidth),
-              // Gantt header
               SizedBox(
                 width: ganttWidth,
                 child: _buildDateHeaders(projectStart, projectEnd),
@@ -522,8 +628,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             ],
           ),
         ),
-
-        // Table Body
         ...List.generate(sortedTasks.length, (index) {
           final task = sortedTasks[index];
           return _buildTaskRow(
@@ -532,14 +636,11 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             projectStart,
             ganttWidth,
             scaledDayWidth,
+            sortedTasks,
           );
         }),
-
-        // Add new task row if in edit mode
         if (_editModeEnabled && _showAddNewRow)
           _buildNewTaskRow(projectStart, ganttWidth, scaledDayWidth),
-
-        // Add New Row Button
         if (_editModeEnabled && !_showAddNewRow)
           Container(
             height: 50,
@@ -565,11 +666,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     );
   }
 
-  Widget _buildNewTaskRow(
-    DateTime projectStart,
-    double ganttWidth,
-    double scaledDayWidth,
-  ) {
+  Widget _buildNewTaskRow(DateTime projectStart, double ganttWidth, double scaledDayWidth) {
     final rowHeight = 50.0;
 
     return Container(
@@ -580,7 +677,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
       ),
       child: Row(
         children: [
-          // Number
           _buildDataCell(
             '${_tasks.length + 1}',
             numberColumnWidth,
@@ -588,8 +684,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             alignment: Alignment.center,
             isEditable: false,
           ),
-
-          // Task Name with Type Selection
           Container(
             width: taskNameColumnWidth,
             height: rowHeight,
@@ -598,7 +692,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             ),
             child: Column(
               children: [
-                // Task Type Selector
                 Container(
                   height: 25,
                   padding: EdgeInsets.symmetric(horizontal: 4),
@@ -607,29 +700,21 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                     decoration: InputDecoration.collapsed(hintText: 'Type'),
                     style: GoogleFonts.poppins(fontSize: 10),
                     items: ['Maintaskgroup', 'Task']
-                        .map(
-                          (type) =>
-                              DropdownMenuItem(value: type, child: Text(type)),
-                        )
+                        .map((type) => DropdownMenuItem(value: type, child: Text(type)))
                         .toList(),
                     onChanged: (value) => setState(() => _newTaskType = value!),
                   ),
                 ),
-                // Task Name Input
                 Expanded(
                   child: TextField(
                     controller: _newTaskTitleController,
-                    decoration: InputDecoration.collapsed(
-                      hintText: 'Task name',
-                    ),
+                    decoration: InputDecoration.collapsed(hintText: 'Task name'),
                     style: GoogleFonts.poppins(fontSize: 11),
                   ),
                 ),
               ],
             ),
           ),
-
-          // Duration
           Container(
             width: durationColumnWidth,
             height: rowHeight,
@@ -646,30 +731,21 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                   setState(() => _newTaskDuration = duration);
                   if (_newTaskStartDate != null) {
                     setState(() {
-                      _newTaskEndDate = _newTaskStartDate!.add(
-                        Duration(days: duration - 1),
-                      );
+                      _newTaskEndDate = _newTaskStartDate!.add(Duration(days: duration - 1));
                     });
                   }
                 }
               },
             ),
           ),
-
-          // Start Date
           GestureDetector(
             onTap: () async {
-              final date = await TaskDialogManager.showDatePickerDialog(
-                context,
-                _newTaskStartDate,
-              );
+              final date = await TaskDialogManager.showDatePickerDialog(context, _newTaskStartDate);
               if (date != null) {
                 setState(() {
                   _newTaskStartDate = date;
                   if (_newTaskDuration != null) {
-                    _newTaskEndDate = date.add(
-                      Duration(days: _newTaskDuration! - 1),
-                    );
+                    _newTaskEndDate = date.add(Duration(days: _newTaskDuration! - 1));
                   }
                 });
               }
@@ -690,22 +766,14 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
               ),
             ),
           ),
-
-          // End Date
           GestureDetector(
             onTap: () async {
-              final date = await TaskDialogManager.showDatePickerDialog(
-                context,
-                _newTaskEndDate,
-              );
+              final date = await TaskDialogManager.showDatePickerDialog(context, _newTaskEndDate);
               if (date != null) {
                 setState(() {
                   _newTaskEndDate = date;
                   if (_newTaskStartDate != null) {
-                    _newTaskDuration = TaskDialogManager.calculateDuration(
-                      _newTaskStartDate!,
-                      date,
-                    );
+                    _newTaskDuration = TaskDialogManager.calculateDuration(_newTaskStartDate!, date);
                   }
                 });
               }
@@ -726,8 +794,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
               ),
             ),
           ),
-
-          // Gantt area with action buttons
           Container(
             width: ganttWidth,
             height: rowHeight,
@@ -752,10 +818,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                     _showAddNewRow = false;
                     _clearNewTaskInputs();
                   }),
-                  child: Text(
-                    'Cancel',
-                    style: GoogleFonts.poppins(fontSize: 10),
-                  ),
+                  child: Text('Cancel', style: GoogleFonts.poppins(fontSize: 10)),
                 ),
               ],
             ),
@@ -768,7 +831,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
   Widget _buildHeaderCell(String title, double width) {
     return Container(
       width: width,
-      height: 70, // Match date headers height
+      height: 70,
       decoration: BoxDecoration(
         border: Border.all(color: Colors.grey.shade400, width: 0.5),
         color: Colors.blue.shade100,
@@ -789,19 +852,19 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     DateTime projectStart,
     double ganttWidth,
     double scaledDayWidth,
+    List<ScheduleModel> sortedTasks,
   ) {
     final isMainTask = task.taskType == 'Maintaskgroup';
     final isSubgroup = task.taskType == 'Maintasksubgroup';
     final rowHeight = 40.0;
 
-    // Determine indentation based on task type
     final double indent;
     if (isMainTask) {
-      indent = 8.0; // Minimal indent for top-level Maintaskgroup (title)
+      indent = 8.0;
     } else if (isSubgroup) {
-      indent = 16.0; // One tab for Maintasksubgroup (subtitle)
+      indent = 16.0;
     } else {
-      indent = 32.0; // Two tabs for Task (child/content)
+      indent = 32.0;
     }
 
     return Container(
@@ -817,7 +880,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
       ),
       child: Row(
         children: [
-          // Number
           _buildDataCell(
             rowNumber.toString(),
             numberColumnWidth,
@@ -825,8 +887,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             alignment: Alignment.center,
             isEditable: false,
           ),
-
-          // Task Name (with hierarchical indentation)
           _buildEditableDataCell(
             task.title,
             taskNameColumnWidth,
@@ -836,8 +896,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             fontWeight: (isMainTask || isSubgroup) ? FontWeight.w600 : FontWeight.normal,
             onTap: _editModeEnabled ? () => _handleInlineTaskNameEdit(task) : null,
           ),
-
-          // Duration
           _buildEditableDataCell(
             '${task.duration} days',
             durationColumnWidth,
@@ -845,8 +903,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             alignment: Alignment.center,
             onTap: _editModeEnabled ? () => _handleInlineDurationEdit(task) : null,
           ),
-
-          // Start Date
           _buildEditableDataCell(
             _dateFormat.format(task.startDate),
             dateColumnWidth,
@@ -854,8 +910,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             alignment: Alignment.center,
             onTap: _editModeEnabled ? () => _handleInlineDateEdit(task, true) : null,
           ),
-
-          // End Date
           _buildEditableDataCell(
             _dateFormat.format(task.endDate),
             dateColumnWidth,
@@ -863,22 +917,28 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             alignment: Alignment.center,
             onTap: _editModeEnabled ? () => _handleInlineDateEdit(task, false) : null,
           ),
-
-          // Gantt Chart
-          Container(
-            width: ganttWidth,
-            height: rowHeight,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300, width: 0.5),
-            ),
-            child: CustomPaint(
-              painter: TaskGanttPainter(task, projectStart, scaledDayWidth),
+          GestureDetector(
+            onSecondaryTapDown: task.taskType == 'Task'
+                ? (details) => _handleLinkTask(task, details.globalPosition)
+                : null,
+            onLongPress: task.taskType == 'Task'
+                ? () => _handleLinkTask(task, Offset(0, 0)) // Use (0,0) for long press, position adjusted in dialog
+                : null,
+            child: Container(
+              width: ganttWidth,
+              height: rowHeight,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300, width: 0.5),
+              ),
+              child: CustomPaint(
+                painter: TaskGanttPainter(task, projectStart, scaledDayWidth, sortedTasks, _tasks),
+              ),
             ),
           ),
         ],
-        )
-      );
-    }
+      ),
+    );
+  }
 
   Widget _buildDataCell(
     String text,
@@ -922,16 +982,13 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
         height: height,
         decoration: BoxDecoration(
           border: Border.all(color: Colors.grey.shade300, width: 0.5),
-          color: _editModeEnabled && onTap != null
-              ? Colors.orange.shade100
-              : null,
+          color: _editModeEnabled && onTap != null ? Colors.orange.shade100 : null,
         ),
         alignment: alignment,
         padding: padding ?? const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
-          mainAxisAlignment: alignment == Alignment.centerLeft
-              ? MainAxisAlignment.start
-              : MainAxisAlignment.center,
+          mainAxisAlignment:
+              alignment == Alignment.centerLeft ? MainAxisAlignment.start : MainAxisAlignment.center,
           children: [
             Expanded(
               child: Text(
@@ -939,9 +996,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                 style: GoogleFonts.poppins(
                   fontSize: 11,
                   fontWeight: fontWeight,
-                  color: _editModeEnabled && onTap != null
-                      ? Colors.orange.shade800
-                      : null,
+                  color: _editModeEnabled && onTap != null ? Colors.orange.shade800 : null,
                 ),
                 overflow: TextOverflow.ellipsis,
                 maxLines: 1,
@@ -970,10 +1025,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             const SizedBox(height: 16),
             Text(
               'No tasks found',
-              style: GoogleFonts.poppins(
-                fontSize: 18,
-                color: Colors.grey.shade600,
-              ),
+              style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey.shade600),
             ),
             const SizedBox(height: 24),
             ElevatedButton(
@@ -981,9 +1033,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF0A2E5A),
                 foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               child: Text('Add First Task', style: GoogleFonts.poppins()),
             ),
@@ -996,7 +1046,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
 
     return Column(
       children: [
-        // Header with project info and controls
         Container(
           padding: const EdgeInsets.all(16),
           color: Colors.grey.shade100,
@@ -1008,106 +1057,76 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                 children: [
                   Text(
                     widget.project.name,
-                    style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   Text(
                     '${_tasks.length} tasks • ${_dateFormat.format(projectStart)} to ${_dateFormat.format(projectEnd)}',
-                    style: GoogleFonts.poppins(
-                      fontSize: 14,
-                      color: Colors.grey.shade600,
-                    ),
+                    style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade600),
                   ),
                 ],
               ),
               Row(
                 children: [
-                  // Add Task Button
                   SizedBox(
                     height: 40,
                     child: ElevatedButton.icon(
                       onPressed: _addTask,
                       icon: const Icon(Icons.add, size: 18),
-                      label: Text(
-                        'Add Task',
-                        style: GoogleFonts.poppins(fontSize: 14),
-                      ),
+                      label: Text('Add Task', style: GoogleFonts.poppins(fontSize: 14)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF0A2E5A),
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Edit Button
                   SizedBox(
                     height: 40,
                     child: ElevatedButton.icon(
                       onPressed: _toggleEditMode,
-                      icon: Icon(
-                        _editModeEnabled ? Icons.edit_off : Icons.edit,
-                        size: 18,
-                      ),
+                      icon: Icon(_editModeEnabled ? Icons.edit_off : Icons.edit, size: 18),
                       label: Text(
                         _editModeEnabled ? 'Exit Edit' : 'Edit',
                         style: GoogleFonts.poppins(fontSize: 14),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _editModeEnabled
-                            ? Colors.orange
-                            : const Color(0xFF0A2E5A),
+                        backgroundColor: _editModeEnabled ? Colors.orange : const Color(0xFF0A2E5A),
                         foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                       ),
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Zoom In Button
                   SizedBox(
                     height: 40,
                     width: 40,
                     child: IconButton(
                       icon: const Icon(Icons.zoom_in, size: 18),
-                      onPressed: () => setState(
-                        () => _scale = (_scale * 1.2).clamp(0.5, 3.0),
-                      ),
+                      onPressed: () => setState(() => _scale = (_scale * 1.2).clamp(0.5, 3.0)),
                       style: IconButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: const Color(0xFF0A2E5A),
                         side: BorderSide(color: Colors.grey.shade300),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
                       tooltip: 'Zoom In',
                     ),
                   ),
                   const SizedBox(width: 4),
-                  // Zoom Out Button
                   SizedBox(
                     height: 40,
                     width: 40,
                     child: IconButton(
                       icon: const Icon(Icons.zoom_out, size: 18),
-                      onPressed: () => setState(
-                        () => _scale = (_scale / 1.2).clamp(0.5, 3.0),
-                      ),
+                      onPressed: () => setState(() => _scale = (_scale / 1.2).clamp(0.5, 3.0)),
                       style: IconButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: const Color(0xFF0A2E5A),
                         side: BorderSide(color: Colors.grey.shade300),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(20),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
                       ),
                       tooltip: 'Zoom Out',
                     ),
@@ -1117,8 +1136,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             ],
           ),
         ),
-
-        // Gantt Table
         Expanded(
           child: SingleChildScrollView(
             controller: _horizontalScrollController,
@@ -1134,7 +1151,6 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
   }
 }
 
-// Bottom sheet for advanced task editing
 class _TaskEditBottomSheet extends StatefulWidget {
   final ScheduleModel task;
   final List<ScheduleModel> tasks;
@@ -1186,14 +1202,9 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
         children: [
           Text(
             'Edit Task Details',
-            style: GoogleFonts.poppins(
-              fontSize: 18,
-              fontWeight: FontWeight.w600,
-            ),
+            style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 16),
-
-          // Task Name
           TextField(
             controller: _titleController,
             decoration: InputDecoration(
@@ -1203,13 +1214,9 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
             style: GoogleFonts.poppins(),
           ),
           const SizedBox(height: 16),
-
-          // Parent Task Selection (only for subtasks)
           if (widget.task.taskType != 'Maintaskgroup')
             DropdownButtonFormField<String>(
-              initialValue: _selectedParentId.isEmpty
-                  ? null
-                  : _selectedParentId,
+              initialValue: _selectedParentId.isEmpty ? null : _selectedParentId,
               decoration: InputDecoration(
                 labelText: 'Parent Task',
                 border: OutlineInputBorder(),
@@ -1230,10 +1237,7 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
                 setState(() => _selectedParentId = value ?? '');
               },
             ),
-
           const SizedBox(height: 24),
-
-          // Action buttons
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
@@ -1254,9 +1258,8 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
                     duration: widget.task.duration,
                     updatedAt: DateTime.now(),
                     taskType: widget.task.taskType,
-                    parentId: _selectedParentId.isEmpty
-                        ? null
-                        : _selectedParentId,
+                    parentId: _selectedParentId.isEmpty ? null : _selectedParentId,
+                    dependency: widget.task.dependency,
                   );
                   widget.onSave(updatedTask);
                   Navigator.pop(context);
@@ -1280,20 +1283,20 @@ class TaskGanttPainter extends CustomPainter {
   final ScheduleModel task;
   final DateTime projectStartDate;
   final double dayWidth;
+  final List<ScheduleModel> sortedTasks;
+  final List<ScheduleModel> allTasks;
 
-  TaskGanttPainter(this.task, this.projectStartDate, this.dayWidth);
+  TaskGanttPainter(this.task, this.projectStartDate, this.dayWidth, this.sortedTasks, this.allTasks);
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..strokeWidth = 1.0;
 
-    // Calculate position and width
-    final startOffset =
-        task.startDate.difference(projectStartDate).inDays * dayWidth;
+    // Draw task bar
+    final startOffset = task.startDate.difference(projectStartDate).inDays * dayWidth;
     final duration = task.endDate.difference(task.startDate).inDays + 1;
     final width = duration * dayWidth;
 
-    // Task bar
     final isMainTask = task.taskType == 'Maintaskgroup';
     final barHeight = isMainTask ? 16.0 : 12.0;
     final barTop = (size.height - barHeight) / 2;
@@ -1305,14 +1308,12 @@ class TaskGanttPainter extends CustomPainter {
     final radius = Radius.circular(isMainTask ? 4.0 : 3.0);
     canvas.drawRRect(RRect.fromRectAndRadius(rect, radius), paint);
 
-    // Task bar border
     paint.color = isMainTask ? Colors.blue.shade800 : Colors.green.shade800;
     paint.style = PaintingStyle.stroke;
     paint.strokeWidth = 1.0;
     canvas.drawRRect(RRect.fromRectAndRadius(rect, radius), paint);
 
-    // Progress indicator (optional - you can add progress field to your model)
-    final progressWidth = width * 0.6; // Example: 60% progress
+    final progressWidth = width * 0.6;
     if (progressWidth > 0) {
       paint.color = isMainTask ? Colors.blue.shade300 : Colors.green.shade300;
       paint.style = PaintingStyle.fill;
@@ -1326,6 +1327,77 @@ class TaskGanttPainter extends CustomPainter {
         RRect.fromRectAndRadius(progressRect, Radius.circular(2.0)),
         paint,
       );
+    }
+
+    // Draw dependency arrows
+    if (task.dependency != null) {
+      final dependencyType = task.dependency!['type'] as String;
+      final targetTaskId = task.dependency!['targetTaskId'] as String;
+      final targetTask = allTasks.firstWhere((t) => t.id == targetTaskId, orElse: () => task);
+
+      if (targetTask.id != task.id) {
+        final sourceIndex = sortedTasks.indexWhere((t) => t.id == task.id);
+        final targetIndex = sortedTasks.indexWhere((t) => t.id == targetTaskId);
+
+        if (sourceIndex != -1 && targetIndex != -1) {
+          final sourceStartOffset = task.startDate.difference(projectStartDate).inDays * dayWidth;
+          final sourceEndOffset = sourceStartOffset + (task.endDate.difference(task.startDate).inDays + 1) * dayWidth;
+          final targetStartOffset = targetTask.startDate.difference(projectStartDate).inDays * dayWidth;
+          final targetEndOffset = targetStartOffset + (targetTask.endDate.difference(targetTask.startDate).inDays + 1) * dayWidth;
+
+          final sourceY = sourceIndex * 40.0 + 20.0;
+          final targetY = targetIndex * 40.0 + 20.0;
+
+          paint.color = Colors.black;
+          paint.style = PaintingStyle.stroke;
+          paint.strokeWidth = 1.5;
+
+          Offset startPoint, endPoint;
+          switch (dependencyType) {
+            case 'FS':
+              startPoint = Offset(sourceEndOffset, sourceY);
+              endPoint = Offset(targetStartOffset, targetY);
+              break;
+            case 'SS':
+              startPoint = Offset(sourceStartOffset, sourceY);
+              endPoint = Offset(targetStartOffset, targetY);
+              break;
+            case 'FF':
+              startPoint = Offset(sourceEndOffset, sourceY);
+              endPoint = Offset(targetEndOffset, targetY);
+              break;
+            case 'SF':
+              startPoint = Offset(sourceStartOffset, sourceY);
+              endPoint = Offset(targetEndOffset, targetY);
+              break;
+            default:
+              return;
+          }
+
+          canvas.drawLine(startPoint, endPoint, paint);
+
+          const arrowSize = 6.0;
+          final dx = endPoint.dx - startPoint.dx;
+          final dy = endPoint.dy - startPoint.dy;
+          final angle = atan2(dy, dx);
+          final arrowPoint1 = endPoint.translate(
+            -arrowSize * cos(angle - pi / 6),
+            -arrowSize * sin(angle - pi / 6),
+          );
+          final arrowPoint2 = endPoint.translate(
+            -arrowSize * cos(angle + pi / 6),
+            -arrowSize * sin(angle + pi / 6),
+          );
+
+          paint.style = PaintingStyle.fill;
+          final path = Path()
+            ..moveTo(endPoint.dx, endPoint.dy)
+            ..lineTo(arrowPoint1.dx, arrowPoint1.dy)
+            ..lineTo(arrowPoint2.dx, arrowPoint2.dy)
+            ..close();
+          canvas.drawPath(path, paint);
+        }
+      }
     }
   }
 

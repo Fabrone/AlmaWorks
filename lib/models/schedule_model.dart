@@ -1,3 +1,4 @@
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class ScheduleModel {
@@ -10,7 +11,8 @@ class ScheduleModel {
   final int duration;
   final DateTime updatedAt;
   final String taskType;
-  final String? parentId; // Changed to nullable
+  final String? parentId;
+  final Map<String, dynamic>? dependency; // New field for dependency
 
   ScheduleModel({
     required this.id,
@@ -22,7 +24,8 @@ class ScheduleModel {
     required this.duration,
     required this.updatedAt,
     required this.taskType,
-    this.parentId, // Updated to accept null
+    this.parentId,
+    this.dependency, // Added to constructor
   });
 
   factory ScheduleModel.fromMap(String id, Map<String, dynamic> data) {
@@ -36,7 +39,8 @@ class ScheduleModel {
       duration: data['duration'] as int? ?? 0,
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       taskType: data['taskType'] as String? ?? 'MainTask',
-      parentId: data['parentId'] as String?, // Updated to handle null
+      parentId: data['parentId'] as String?,
+      dependency: data['dependency'] as Map<String, dynamic>?, // Handle dependency field
     );
   }
 
@@ -50,7 +54,8 @@ class ScheduleModel {
       'duration': duration,
       'updatedAt': Timestamp.fromDate(updatedAt),
       'taskType': taskType,
-      if (parentId != null) 'parentId': parentId, // Only include if not null
+      if (parentId != null) 'parentId': parentId,
+      if (dependency != null) 'dependency': dependency, // Include dependency if not null
     };
   }
 }
