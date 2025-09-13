@@ -605,10 +605,14 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     final totalDays = projectEnd.difference(projectStart).inDays + 1;
     final scaledDayWidth = dayWidth * _scale;
     final ganttWidth = totalDays * scaledDayWidth;
+    final totalTableHeight = (sortedTasks.length * 40.0) + 
+                            (_editModeEnabled && _showAddNewRow ? 50.0 : 0.0) +
+                            (_editModeEnabled && !_showAddNewRow ? 50.0 : 0.0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // Header row
         Container(
           decoration: BoxDecoration(
             border: Border.all(color: Colors.grey.shade600, width: 1),
@@ -628,40 +632,71 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
             ],
           ),
         ),
-        ...List.generate(sortedTasks.length, (index) {
-          final task = sortedTasks[index];
-          return _buildTaskRow(
-            task,
-            index + 1,
-            projectStart,
-            ganttWidth,
-            scaledDayWidth,
-            sortedTasks,
-          );
-        }),
-        if (_editModeEnabled && _showAddNewRow)
-          _buildNewTaskRow(projectStart, ganttWidth, scaledDayWidth),
-        if (_editModeEnabled && !_showAddNewRow)
-          Container(
-            height: 50,
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300, width: 0.5),
-              color: Colors.green.shade50,
+        // Main content area with dependency overlay
+        Stack(
+          children: [
+            // Task rows
+            Column(
+              children: [
+                ...List.generate(sortedTasks.length, (index) {
+                  final task = sortedTasks[index];
+                  return _buildTaskRow(
+                    task,
+                    index + 1,
+                    projectStart,
+                    ganttWidth,
+                    scaledDayWidth,
+                    sortedTasks,
+                    showDependencies: false, // Don't draw dependencies in individual rows
+                  );
+                }),
+                if (_editModeEnabled && _showAddNewRow)
+                  _buildNewTaskRow(projectStart, ganttWidth, scaledDayWidth),
+                if (_editModeEnabled && !_showAddNewRow)
+                  Container(
+                    height: 50,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300, width: 0.5),
+                      color: Colors.green.shade50,
+                    ),
+                    child: Center(
+                      child: TextButton.icon(
+                        onPressed: () => setState(() => _showAddNewRow = true),
+                        icon: Icon(Icons.add, color: Colors.green.shade700),
+                        label: Text(
+                          'Add New Task',
+                          style: GoogleFonts.poppins(
+                            color: Colors.green.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
-            child: Center(
-              child: TextButton.icon(
-                onPressed: () => setState(() => _showAddNewRow = true),
-                icon: Icon(Icons.add, color: Colors.green.shade700),
-                label: Text(
-                  'Add New Task',
-                  style: GoogleFonts.poppins(
-                    color: Colors.green.shade700,
-                    fontWeight: FontWeight.w600,
+            // Dependency arrows overlay - with IgnorePointer to allow gestures to pass through
+            Positioned(
+              left: numberColumnWidth + taskNameColumnWidth + durationColumnWidth + (dateColumnWidth * 2),
+              top: 0,
+              child: IgnorePointer( // This is the key fix!
+                child: SizedBox(
+                  width: ganttWidth,
+                  height: totalTableHeight,
+                  child: CustomPaint(
+                    painter: DependencyArrowsPainter(
+                      tasks: sortedTasks,
+                      allTasks: _tasks,
+                      projectStartDate: projectStart,
+                      dayWidth: scaledDayWidth,
+                      rowHeight: 40.0,
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+          ],
+        ),
       ],
     );
   }
@@ -852,8 +887,9 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
     DateTime projectStart,
     double ganttWidth,
     double scaledDayWidth,
-    List<ScheduleModel> sortedTasks,
-  ) {
+    List<ScheduleModel> sortedTasks, {
+    bool showDependencies = true, 
+  }) {
     final isMainTask = task.taskType == 'Maintaskgroup';
     final isSubgroup = task.taskType == 'Maintasksubgroup';
     final rowHeight = 40.0;
@@ -922,7 +958,7 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                 ? (details) => _handleLinkTask(task, details.globalPosition)
                 : null,
             onLongPress: task.taskType == 'Task'
-                ? () => _handleLinkTask(task, Offset(0, 0)) // Use (0,0) for long press, position adjusted in dialog
+                ? () => _handleLinkTask(task, Offset(0, 0))
                 : null,
             child: Container(
               width: ganttWidth,
@@ -931,7 +967,14 @@ class _GanttChartScreenState extends State<GanttChartScreen> {
                 border: Border.all(color: Colors.grey.shade300, width: 0.5),
               ),
               child: CustomPaint(
-                painter: TaskGanttPainter(task, projectStart, scaledDayWidth, sortedTasks, _tasks),
+                painter: TaskGanttPainter(
+                  task, 
+                  projectStart, 
+                  scaledDayWidth, 
+                  sortedTasks, 
+                  _tasks, 
+                  showDependencies: showDependencies
+                ),
               ),
             ),
           ),
@@ -1279,20 +1322,158 @@ class _TaskEditBottomSheetState extends State<_TaskEditBottomSheet> {
   }
 }
 
+// Create a new dedicated painter for dependency arrows:
+class DependencyArrowsPainter extends CustomPainter {
+  final List<ScheduleModel> tasks;
+  final List<ScheduleModel> allTasks;
+  final DateTime projectStartDate;
+  final double dayWidth;
+  final double rowHeight;
+
+  DependencyArrowsPainter({
+    required this.tasks,
+    required this.allTasks,
+    required this.projectStartDate,
+    required this.dayWidth,
+    required this.rowHeight,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = const Color.fromRGBO(18, 16, 16, 1)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+
+    final arrowPaint = Paint()
+      ..color = const Color.fromRGBO(18, 16, 16, 1)
+      ..style = PaintingStyle.fill;
+
+    for (int sourceIndex = 0; sourceIndex < tasks.length; sourceIndex++) {
+      final sourceTask = tasks[sourceIndex];
+      
+      if (sourceTask.dependency != null) {
+        final dependencyType = sourceTask.dependency!['type'] as String;
+        final targetTaskId = sourceTask.dependency!['targetTaskId'] as String;
+        
+        final targetIndex = tasks.indexWhere((t) => t.id == targetTaskId);
+        if (targetIndex == -1) continue;
+        
+        final targetTask = tasks[targetIndex];
+
+        // Calculate positions
+        final sourceStartOffset = sourceTask.startDate.difference(projectStartDate).inDays * dayWidth;
+        final sourceEndOffset = sourceStartOffset + 
+            (sourceTask.endDate.difference(sourceTask.startDate).inDays + 1) * dayWidth;
+        final targetStartOffset = targetTask.startDate.difference(projectStartDate).inDays * dayWidth;
+        final targetEndOffset = targetStartOffset + 
+            (targetTask.endDate.difference(targetTask.startDate).inDays + 1) * dayWidth;
+
+        final sourceY = sourceIndex * rowHeight + rowHeight / 2;
+        final targetY = targetIndex * rowHeight + rowHeight / 2;
+
+        // Determine start and end points based on dependency type
+        Offset startPoint, endPoint;
+        switch (dependencyType) {
+          case 'FS': // Finish to Start
+            startPoint = Offset(sourceEndOffset, sourceY);
+            endPoint = Offset(targetStartOffset, targetY);
+            break;
+          case 'SS': // Start to Start
+            startPoint = Offset(sourceStartOffset, sourceY);
+            endPoint = Offset(targetStartOffset, targetY);
+            break;
+          case 'FF': // Finish to Finish
+            startPoint = Offset(sourceEndOffset, sourceY);
+            endPoint = Offset(targetEndOffset, targetY);
+            break;
+          case 'SF': // Start to Finish
+            startPoint = Offset(sourceStartOffset, sourceY);
+            endPoint = Offset(targetEndOffset, targetY);
+            break;
+          default:
+            continue;
+        }
+
+        // Draw the connection line with bend for better visibility
+        _drawConnectionLine(canvas, paint, startPoint, endPoint);
+        
+        // Draw arrowhead at the end point
+        _drawArrowHead(canvas, arrowPaint, startPoint, endPoint);
+      }
+    }
+  }
+
+  void _drawConnectionLine(Canvas canvas, Paint paint, Offset start, Offset end) {
+    final path = Path();
+    path.moveTo(start.dx, start.dy);
+    
+    // Create a curved connection for better visibility
+    if ((end.dy - start.dy).abs() > rowHeight / 2) {
+      // Multi-row connection - use stepped line
+      final midX = start.dx + (end.dx - start.dx) / 2;
+      path.lineTo(midX, start.dy);
+      path.lineTo(midX, end.dy);
+      path.lineTo(end.dx, end.dy);
+    } else {
+      // Same row or adjacent - direct line
+      path.lineTo(end.dx, end.dy);
+    }
+    
+    canvas.drawPath(path, paint);
+  }
+
+  void _drawArrowHead(Canvas canvas, Paint paint, Offset start, Offset end) {
+    const arrowSize = 8.0;
+    final dx = end.dx - start.dx;
+    final dy = end.dy - start.dy;
+    final angle = atan2(dy, dx);
+    
+    final arrowPoint1 = end.translate(
+      -arrowSize * cos(angle - pi / 6),
+      -arrowSize * sin(angle - pi / 6),
+    );
+    final arrowPoint2 = end.translate(
+      -arrowSize * cos(angle + pi / 6),
+      -arrowSize * sin(angle + pi / 6),
+    );
+
+    final path = Path()
+      ..moveTo(end.dx, end.dy)
+      ..lineTo(arrowPoint1.dx, arrowPoint1.dy)
+      ..lineTo(arrowPoint2.dx, arrowPoint2.dy)
+      ..close();
+    
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// Update the TaskGanttPainter to optionally skip dependency drawing:
 class TaskGanttPainter extends CustomPainter {
   final ScheduleModel task;
   final DateTime projectStartDate;
   final double dayWidth;
   final List<ScheduleModel> sortedTasks;
   final List<ScheduleModel> allTasks;
+  final bool showDependencies;
 
-  TaskGanttPainter(this.task, this.projectStartDate, this.dayWidth, this.sortedTasks, this.allTasks);
+  TaskGanttPainter(
+    this.task, 
+    this.projectStartDate, 
+    this.dayWidth, 
+    this.sortedTasks, 
+    this.allTasks, {
+    this.showDependencies = true,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..strokeWidth = 1.0;
 
-    // Draw task bar
+    // Draw task bar (keep existing task bar drawing logic)
     final startOffset = task.startDate.difference(projectStartDate).inDays * dayWidth;
     final duration = task.endDate.difference(task.startDate).inDays + 1;
     final width = duration * dayWidth;
@@ -1327,77 +1508,6 @@ class TaskGanttPainter extends CustomPainter {
         RRect.fromRectAndRadius(progressRect, Radius.circular(2.0)),
         paint,
       );
-    }
-
-    // Draw dependency arrows
-    if (task.dependency != null) {
-      final dependencyType = task.dependency!['type'] as String;
-      final targetTaskId = task.dependency!['targetTaskId'] as String;
-      final targetTask = allTasks.firstWhere((t) => t.id == targetTaskId, orElse: () => task);
-
-      if (targetTask.id != task.id) {
-        final sourceIndex = sortedTasks.indexWhere((t) => t.id == task.id);
-        final targetIndex = sortedTasks.indexWhere((t) => t.id == targetTaskId);
-
-        if (sourceIndex != -1 && targetIndex != -1) {
-          final sourceStartOffset = task.startDate.difference(projectStartDate).inDays * dayWidth;
-          final sourceEndOffset = sourceStartOffset + (task.endDate.difference(task.startDate).inDays + 1) * dayWidth;
-          final targetStartOffset = targetTask.startDate.difference(projectStartDate).inDays * dayWidth;
-          final targetEndOffset = targetStartOffset + (targetTask.endDate.difference(targetTask.startDate).inDays + 1) * dayWidth;
-
-          final sourceY = sourceIndex * 40.0 + 20.0;
-          final targetY = targetIndex * 40.0 + 20.0;
-
-          paint.color = Colors.black;
-          paint.style = PaintingStyle.stroke;
-          paint.strokeWidth = 1.5;
-
-          Offset startPoint, endPoint;
-          switch (dependencyType) {
-            case 'FS':
-              startPoint = Offset(sourceEndOffset, sourceY);
-              endPoint = Offset(targetStartOffset, targetY);
-              break;
-            case 'SS':
-              startPoint = Offset(sourceStartOffset, sourceY);
-              endPoint = Offset(targetStartOffset, targetY);
-              break;
-            case 'FF':
-              startPoint = Offset(sourceEndOffset, sourceY);
-              endPoint = Offset(targetEndOffset, targetY);
-              break;
-            case 'SF':
-              startPoint = Offset(sourceStartOffset, sourceY);
-              endPoint = Offset(targetEndOffset, targetY);
-              break;
-            default:
-              return;
-          }
-
-          canvas.drawLine(startPoint, endPoint, paint);
-
-          const arrowSize = 6.0;
-          final dx = endPoint.dx - startPoint.dx;
-          final dy = endPoint.dy - startPoint.dy;
-          final angle = atan2(dy, dx);
-          final arrowPoint1 = endPoint.translate(
-            -arrowSize * cos(angle - pi / 6),
-            -arrowSize * sin(angle - pi / 6),
-          );
-          final arrowPoint2 = endPoint.translate(
-            -arrowSize * cos(angle + pi / 6),
-            -arrowSize * sin(angle + pi / 6),
-          );
-
-          paint.style = PaintingStyle.fill;
-          final path = Path()
-            ..moveTo(endPoint.dx, endPoint.dy)
-            ..lineTo(arrowPoint1.dx, arrowPoint1.dy)
-            ..lineTo(arrowPoint2.dx, arrowPoint2.dy)
-            ..close();
-          canvas.drawPath(path, paint);
-        }
-      }
     }
   }
 
