@@ -14,7 +14,7 @@ import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:image/image.dart' as img; 
+import 'package:image/image.dart' as img;
 
 class PhotoModel {
   final String id;
@@ -176,7 +176,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          widget.logger.e('Firestore error: ${snapshot.error}');
+          widget.logger.e('Firestore error loading photos: ${snapshot.error}');
           return Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -196,10 +196,12 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           );
         }
         if (!snapshot.hasData) {
+          widget.logger.d('📸 PhotoGalleryScreen: No snapshot data yet, showing loader');
           return const Center(child: CircularProgressIndicator());
         }
         final docs = snapshot.data!.docs;
         final photos = docs.map((doc) => PhotoModel.fromMap(doc.id, doc.data() as Map<String, dynamic>)).toList();
+        widget.logger.d('📸 PhotoGalleryScreen: Loaded ${photos.length} photos');
 
         if (photos.isEmpty) {
           return Padding(
@@ -271,6 +273,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
 
   Widget _buildPhotoTile(PhotoModel photo) {
     final isSelected = _selectedPhotoIds.contains(photo.id);
+    widget.logger.d('🖼️ Building photo tile for ID: ${photo.id}, URL: ${photo.url}');
     return GestureDetector(
       onTap: _multiSelectMode ? () => _toggleSelection(photo.id) : () => _viewPhotoFullScreen(photo),
       onLongPress: () => _startMultiSelect(photo.id),
@@ -280,19 +283,9 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
             decoration: BoxDecoration(
               border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
             ),
-            child: Image.network(
-              photo.url,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return Center(child: CircularProgressIndicator());
-              },
-              errorBuilder: (context, error, stackTrace) {
-                widget.logger.e('Image load error: $error');
-                return Icon(Icons.error, color: Colors.red);
-              },
+            child: ClipRRect(  // Added for rounded corners if needed
+              borderRadius: BorderRadius.circular(4),
+              child: _buildUnifiedImage(photo.url, photo.id),
             ),
           ),
           if (_multiSelectMode)
@@ -309,8 +302,40 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     );
   }
 
+  // Unified image widget for web + non-web with logging
+  Widget _buildUnifiedImage(String imageUrl, String photoId) {
+    return Image.network(
+      imageUrl,
+      fit: BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      headers: const {'Cache-Control': 'no-cache'},  // Helps with web caching issues
+      loadingBuilder: (context, child, loadingProgress) {
+        if (loadingProgress == null) return child;
+        widget.logger.d('🖼️ Image loading progress for $photoId: ${loadingProgress.expectedTotalBytes} bytes');
+        return const Center(child: CircularProgressIndicator());
+      },
+      errorBuilder: (context, error, stackTrace) {
+        widget.logger.e('🖼️ Image load FAILED for $photoId (URL: $imageUrl): Error: $error\nStack: $stackTrace');
+        return Container(
+          color: Colors.grey[300],
+          child: const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error, color: Colors.red),
+                Text('Load Error', style: TextStyle(fontSize: 12)),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   void _startMultiSelect(String photoId) {
     if (!_multiSelectMode) {
+      widget.logger.i('🔄 Starting multi-select mode with initial photo: $photoId');
       setState(() {
         _multiSelectMode = true;
         _selectedPhotoIds.add(photoId);
@@ -329,11 +354,13 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         _selectedPhotoIds.add(photoId);
       }
     });
+    widget.logger.d('✅ Selection toggled for photo: $photoId. Selected count: ${_selectedPhotoIds.length}');
   }
 
   Future<void> _handleMultiDelete() async {
     if (_selectedPhotoIds.isEmpty) return;
 
+    widget.logger.i('🗑️ Multi-delete requested for ${_selectedPhotoIds.length} photos');
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -364,6 +391,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       batch.update(ref, {'isDeleted': true});
     }
     await batch.commit();
+    widget.logger.i('🗑️ Multi-delete committed for ${_selectedPhotoIds.length} photos');
 
     if (mounted) {
       setState(() {
@@ -379,6 +407,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   Future<void> _handleMultiShare() async {
     if (_selectedPhotoIds.isEmpty) return;
 
+    widget.logger.i('📤 Multi-share requested for ${_selectedPhotoIds.length} photos');
     // Fetch selected photos
     final snapshot = await FirebaseFirestore.instance
         .collection('projects')
@@ -390,23 +419,30 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     if (!mounted) return;
 
     final photos = snapshot.docs.map((doc) => PhotoModel.fromMap(doc.id, doc.data())).toList();
+    widget.logger.d('📤 Fetched ${photos.length} photos for sharing');
 
     List<XFile> xFiles = [];
     final dir = await getTemporaryDirectory();
 
     for (final photo in photos) {
-      final path = '${dir.path}/${photo.name}';
-      final response = await _dio.get(photo.url, options: Options(responseType: ResponseType.bytes));
-      if (!mounted) return;
-      final bytes = response.data as List<int>;
-      final file = await File(path).writeAsBytes(bytes);
-      xFiles.add(XFile(file.path));
+      try {
+        final path = '${dir.path}/${photo.name}';
+        final response = await _dio.get(photo.url, options: Options(responseType: ResponseType.bytes));
+        if (!mounted) return;
+        final bytes = response.data as List<int>;
+        final file = await File(path).writeAsBytes(bytes);
+        xFiles.add(XFile(file.path));
+        widget.logger.d('📤 Downloaded photo ${photo.name} for sharing');
+      } catch (e) {
+        widget.logger.e('📤 Error downloading photo ${photo.name} for share: $e');
+      }
     }
 
     if (!mounted) return;
 
     final params = ShareParams(files: xFiles);
     await SharePlus.instance.share(params);
+    widget.logger.i('📤 Multi-share completed');
 
     setState(() {
       _multiSelectMode = false;
@@ -415,20 +451,26 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   }
 
   void _viewPhotoFullScreen(PhotoModel photo) {
+    widget.logger.i('🔍 Opening fullscreen view for photo: ${photo.id}');
     showDialog(
       context: context,
       builder: (context) => Dialog.fullscreen(
         child: Stack(
           children: [
-            PhotoView(
-              imageProvider: NetworkImage(photo.url),
-              minScale: PhotoViewComputedScale.contained,
-              maxScale: PhotoViewComputedScale.covered * 3,
-              loadingBuilder: (context, event) => Center(child: CircularProgressIndicator()),
-              errorBuilder: (context, error, stackTrace) {
-                widget.logger.e('Full-screen image load error: $error');
-                return Center(child: Icon(Icons.error, color: Colors.red));
-              },
+            Center(
+              child: PhotoView(
+                imageProvider: NetworkImage(photo.url),
+                minScale: PhotoViewComputedScale.contained,
+                maxScale: PhotoViewComputedScale.covered * 3,
+                loadingBuilder: (context, event) {
+                  widget.logger.d('🔍 Fullscreen image loading for ${photo.id}: ${event?.cumulativeBytesLoaded ?? 0}/${event?.expectedTotalBytes ?? 0}');
+                  return const Center(child: CircularProgressIndicator());
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  widget.logger.e('🔍 Fullscreen image load FAILED for ${photo.id}: Error: $error\nStack: $stackTrace');
+                  return const Center(child: Icon(Icons.error, color: Colors.red));
+                },
+              ),
             ),
             Positioned(
               bottom: 0,
@@ -482,6 +524,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   }
 
   void _showPhotoDetails(PhotoModel photo) {
+    widget.logger.d('ℹ️ Showing details for photo: ${photo.id}');
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -507,6 +550,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   }
 
   Future<void> _rotatePhoto(PhotoModel photo) async {
+    widget.logger.i('🔄 Rotating photo: ${photo.id}');
     try {
       final response = await _dio.get(photo.url, options: Options(responseType: ResponseType.bytes));
       if (!mounted) return;
@@ -517,6 +561,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
 
       // Delete old
       await FirebaseStorage.instance.refFromURL(photo.url).delete();
+      widget.logger.d('🗑️ Deleted old image for rotation: ${photo.url}');
       if (!mounted) return;
 
       // Upload new
@@ -527,6 +572,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       await newRef.putData(newBytes, SettableMetadata(contentType: 'image/jpeg'));
       if (!mounted) return;
       final newUrl = await newRef.getDownloadURL();
+      widget.logger.d('📤 Uploaded rotated image: $newUrl');
       if (!mounted) return;
 
       // Update Firestore
@@ -536,6 +582,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           .collection('photos')
           .doc(photo.id)
           .update({'url': newUrl});
+      widget.logger.i('✅ Updated Firestore with rotated photo URL');
       if (!mounted) return;
 
       Navigator.pop(context); // Close full screen to refresh
@@ -543,7 +590,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         SnackBar(content: Text('Photo rotated successfully', style: GoogleFonts.poppins())),
       );
     } catch (e) {
-      widget.logger.e('Error rotating photo: $e');
+      widget.logger.e('🔄 Error rotating photo ${photo.id}: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error rotating photo: $e', style: GoogleFonts.poppins())),
@@ -553,6 +600,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   }
 
   Future<void> _deletePhoto(PhotoModel photo) async {
+    widget.logger.i('🗑️ Deleting photo: ${photo.id}');
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -579,6 +627,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         .collection('photos')
         .doc(photo.id)
         .update({'isDeleted': true});
+    widget.logger.i('✅ Photo ${photo.id} marked as deleted in Firestore');
     if (!mounted) return;
 
     Navigator.pop(context);
@@ -588,6 +637,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   }
 
   Future<void> _sharePhoto(PhotoModel photo) async {
+    widget.logger.i('📤 Sharing single photo: ${photo.id}');
     try {
       final dir = await getTemporaryDirectory();
       final path = '${dir.path}/${photo.name}';
@@ -595,12 +645,14 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       if (!mounted) return;
       final bytes = response.data as List<int>;
       final file = await File(path).writeAsBytes(bytes);
+      widget.logger.d('📤 Downloaded photo ${photo.name} for single share');
       if (!mounted) return;
 
       final params = ShareParams(files: [XFile(file.path)]);
       await SharePlus.instance.share(params);
+      widget.logger.i('✅ Single photo share completed');
     } catch (e) {
-      widget.logger.e('Error sharing photo: $e');
+      widget.logger.e('📤 Error sharing photo ${photo.id}: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error sharing: $e', style: GoogleFonts.poppins())),
@@ -610,6 +662,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
   }
 
   Future<void> _startAddPhotoFlow() async {
+    widget.logger.i('📸 Starting add photo flow');
     // Show bottom sheet for source selection
     final source = await showModalBottomSheet<String>(
       context: context,
@@ -638,39 +691,45 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     final detailsConfirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: Text('Photo Details', style: GoogleFonts.poppins()),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                decoration: InputDecoration(labelText: 'Category', labelStyle: GoogleFonts.poppins()),
-                onChanged: (val) => category = val.trim(),
+        final TextEditingController categoryController = TextEditingController();
+        final TextEditingController phaseController = TextEditingController();
+        return StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: Text('Photo Details', style: GoogleFonts.poppins()),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: categoryController,
+                  decoration: InputDecoration(labelText: 'Category', labelStyle: GoogleFonts.poppins()),
+                ),
+                TextField(
+                  controller: phaseController,
+                  decoration: InputDecoration(labelText: 'Phase', labelStyle: GoogleFonts.poppins()),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: Text('Cancel', style: GoogleFonts.poppins()),
               ),
-              TextField(
-                decoration: InputDecoration(labelText: 'Phase', labelStyle: GoogleFonts.poppins()),
-                onChanged: (val) => phase = val.trim(),
+              TextButton(
+                onPressed: () {
+                  category = categoryController.text.trim();
+                  phase = phaseController.text.trim();
+                  if (category != null && category!.isNotEmpty && phase != null && phase!.isNotEmpty) {
+                    Navigator.pop(ctx, true);
+                  } else {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      SnackBar(content: Text('Please fill all fields', style: GoogleFonts.poppins())),
+                    );
+                  }
+                },
+                child: Text('OK', style: GoogleFonts.poppins()),
               ),
             ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            TextButton(
-              onPressed: () {
-                if (category != null && category!.isNotEmpty && phase != null && phase!.isNotEmpty) {
-                  Navigator.pop(ctx, true);
-                } else {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    SnackBar(content: Text('Please fill all fields', style: GoogleFonts.poppins())),
-                  );
-                }
-              },
-              child: Text('OK', style: GoogleFonts.poppins()),
-            ),
-          ],
         );
       },
     );
@@ -678,6 +737,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     if (detailsConfirmed != true || !mounted) return;
 
     // Pick image
+    widget.logger.d('📸 Picking image from source: $source');
     final picker = ImagePicker();
     final XFile? imageFile = await picker.pickImage(
       source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
@@ -691,6 +751,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     } else {
       bytes = await imageFile.readAsBytes();
     }
+    widget.logger.d('📸 Image picked: ${bytes.length} bytes');
 
     if (!mounted) return;
 
@@ -740,6 +801,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       final storageRef = FirebaseStorage.instance
           .ref()
           .child('projects/${widget.project.id}/photos/$fileName');
+      widget.logger.i('📤 Starting upload to: $fileName');
 
       final uploadTask = storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
 
@@ -748,12 +810,14 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           setState(() {
             _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
           });
+          widget.logger.d('📤 Upload progress: ${(snapshot.bytesTransferred / snapshot.totalBytes * 100).toStringAsFixed(1)}%');
         }
       });
 
       await uploadTask;
       if (!mounted) return;
       final url = await storageRef.getDownloadURL();
+      widget.logger.i('📤 Upload complete, URL: $url');
       if (!mounted) return;
 
       await FirebaseFirestore.instance
@@ -768,6 +832,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
             phase: phase!,
             uploadedAt: DateTime.now(),
           ).toMap());
+      widget.logger.i('✅ Photo saved to Firestore');
 
       if (mounted) {
         Navigator.pop(context); // Close progress
@@ -776,7 +841,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         );
       }
     } catch (e) {
-      widget.logger.e('Error uploading photo: $e');
+      widget.logger.e('📤 Error uploading photo: $e');
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
