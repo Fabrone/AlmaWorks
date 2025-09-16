@@ -47,6 +47,7 @@ dependencies:
   photo_view: ^0.15.0
   image: ^4.3.0
   flutter_zoom_drawer: ^3.2.0
+  cached_network_image: ^3.4.1
 
 dev_dependencies:
   flutter_test:
