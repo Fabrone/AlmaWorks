@@ -7,6 +7,9 @@ import 'dart:math' as math;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
 import 'dart:ui' as ui;
+import 'package:flutter/services.dart';
+
+//enum TaskType { mainTask, subTask, task }
 
 class MSProjectGanttScreen extends StatefulWidget {
   final String projectId;
@@ -49,6 +52,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   // Temporary storage for edited row data
   final Map<int, GanttRowData> _editedRows = {};
 
+  // New field for overlay management
+  OverlayEntry? _overlayEntry;
+
   @override
   void initState() {
     super.initState();
@@ -57,6 +63,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   @override
   void dispose() {
+    _removeOverlay(); 
     _horizontalScrollController.dispose();
     _verticalScrollController.dispose();
     super.dispose();
@@ -208,11 +215,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
   }
 
+  // UPDATE this method to handle taskType
   void _updateRowData(int index, {
     String? taskName,
     int? duration,
     DateTime? startDate,
     DateTime? endDate,
+    TaskType? taskType, // This parameter IS used now
   }) {
     if (!mounted) return;
 
@@ -224,6 +233,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (duration != null) row.duration = duration;
       if (startDate != null) row.startDate = startDate;
       if (endDate != null) row.endDate = endDate;
+      if (taskType != null) row.taskType = taskType; 
 
       if (row.startDate != null && row.endDate != null && row.duration == null) {
         row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
@@ -447,6 +457,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     // Use edited row data if available, otherwise use original row data
     final row = _editedRows[index] ?? _rows[index];
     final canDelete = _rows.length > defaultRowCount;
+    final TaskType currentTaskType = row.taskType;
 
     return Container(
       height: rowHeight,
@@ -494,24 +505,38 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             decoration: BoxDecoration(
               border: Border(right: BorderSide(color: Colors.grey.shade300, width: 0.5)),
             ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: _taskColumnWidth - 16),
-              child: TextFormField(
-                // No key needed - Flutter will handle widget identity properly
-                initialValue: row.taskName ?? '',
-                onChanged: (value) => _updateRowData(index, taskName: value),
-                style: GoogleFonts.poppins(fontSize: 11),
-                decoration: InputDecoration(
-                  hintText: 'Enter task name',
-                  hintStyle: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade400),
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  isDense: true,
+            child: GestureDetector(
+              onSecondaryTapDown: (details) {
+                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final position = renderBox.localToGlobal(details.localPosition);
+                _showContextMenu(context, position, index);
+              },
+              onLongPress: () {
+                // For mobile devices - long press to show context menu
+                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final position = renderBox.localToGlobal(Offset(_taskColumnWidth / 2, rowHeight / 2));
+                _showContextMenu(context, position, index);
+                // Provide haptic feedback
+                HapticFeedback.mediumImpact();
+              },
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: _taskColumnWidth - 16),
+                child: TextFormField(
+                  initialValue: row.taskName ?? '',
+                  onChanged: (value) => _updateRowData(index, taskName: value),
+                  style: _getTaskNameStyle(currentTaskType),
+                  decoration: InputDecoration(
+                    hintText: 'Enter task name',
+                    hintStyle: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade400),
+                    border: InputBorder.none,
+                    contentPadding: _getTaskNamePadding(currentTaskType),
+                    isDense: true,
+                  ),
+                  maxLines: 1,
+                  textAlign: TextAlign.left,
+                  textInputAction: TextInputAction.next,
+                  enableInteractiveSelection: true,
                 ),
-                maxLines: 1,
-                textAlign: TextAlign.left,
-                textInputAction: TextInputAction.next,
-                enableInteractiveSelection: true,
               ),
             ),
           ),
@@ -761,84 +786,182 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       ),
     );
   }
-}
 
-class GanttRowPainter extends CustomPainter {
-  final GanttRowData row;
-  final DateTime projectStartDate;
-  final double dayWidth;
-  final double rowHeight;
+  // New methods for context menu functionality
+  void _showContextMenu(BuildContext context, Offset position, int rowIndex) {
+    _removeOverlay();
+    
+    _overlayEntry = OverlayEntry(
+      builder: (context) => GestureDetector(
+        onTap: _removeOverlay, // Dismiss when tapping outside
+        behavior: HitTestBehavior.translucent,
+        child: Stack(
+          children: [
+            // Full screen overlay to capture taps
+            Positioned.fill(
+              child: Container(color: Colors.transparent),
+            ),
+            // Context menu
+            Positioned(
+              left: position.dx,
+              top: position.dy,
+              child: TaskContextMenu(
+                onMakeMainTask: () => _setTaskType(rowIndex, TaskType.mainTask),
+                onMakeSubtask: () => _setTaskType(rowIndex, TaskType.subTask),
+                onAddNewRow: _addNewRow,
+                onDeleteRow: () => _deleteRow(rowIndex),
+                onDismiss: _removeOverlay,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    
+    Overlay.of(context).insert(_overlayEntry!);
+  }
 
-  GanttRowPainter({
-    required this.row,
-    required this.projectStartDate,
-    required this.dayWidth,
-    required this.rowHeight,
-  });
+  void _removeOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+  }
 
-  @override
-  void paint(Canvas canvas, Size size) {
-    _drawGrid(canvas, size);
+  void _setTaskType(int index, TaskType taskType) {
+    if (!mounted) return;
+    
+    setState(() {
+      final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
+      _editedRows[index] = row;
+      row.taskType = taskType; 
+      _computeColumnWidths();
+    });
+  }
 
-    if (row.hasData && row.startDate != null && row.endDate != null) {
-      _drawGanttBar(canvas, size);
+  TextStyle _getTaskNameStyle(TaskType taskType) {
+    switch (taskType) {
+      case TaskType.mainTask:
+        return GoogleFonts.poppins(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: Colors.blue.shade800,
+        );
+      case TaskType.subTask:
+        return GoogleFonts.poppins(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: Colors.green.shade700,
+        );
+      case TaskType.task:
+        return GoogleFonts.poppins(fontSize: 11);
     }
   }
 
-  void _drawGrid(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = Colors.grey.shade300
-      ..strokeWidth = 0.5;
-
-    final totalDays = (size.width / dayWidth).ceil();
-    for (int i = 0; i <= totalDays; i++) {
-      final x = i * dayWidth;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+  EdgeInsets _getTaskNamePadding(TaskType taskType) {
+    switch (taskType) {
+      case TaskType.mainTask:
+        return EdgeInsets.symmetric(horizontal: 8, vertical: 4);
+      case TaskType.subTask:
+        return EdgeInsets.only(left: 24, right: 8, top: 4, bottom: 4);
+      case TaskType.task:
+        return EdgeInsets.symmetric(horizontal: 8, vertical: 4);
     }
   }
-
-  void _drawGanttBar(Canvas canvas, Size size) {
-    final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
-    final duration = row.endDate!.difference(row.startDate!).inDays + 1;
-    final barWidth = duration * dayWidth;
-
-    final barHeight = rowHeight * 0.6;
-    final barTop = (rowHeight - barHeight) / 2;
-
-    final barPaint = Paint()
-      ..color = Colors.blue.shade600
-      ..style = PaintingStyle.fill;
-
-    final barRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(startOffset + 2, barTop, barWidth - 4, barHeight),
-      Radius.circular(2),
-    );
-
-    canvas.drawRRect(barRect, barPaint);
-
-    final borderPaint = Paint()
-      ..color = Colors.blue.shade800
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-
-    canvas.drawRRect(barRect, borderPaint);
-
-    final progressPaint = Paint()
-      ..color = Colors.blue.shade300
-      ..style = PaintingStyle.fill;
-
-    final progressWidth = (barWidth - 4) * 0.6;
-    final progressRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(startOffset + 2, barTop + 2, progressWidth, barHeight - 4),
-      Radius.circular(1),
-    );
-
-    canvas.drawRRect(progressRect, progressPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
+
+  class GanttRowPainter extends CustomPainter {
+    final GanttRowData row;
+    final DateTime projectStartDate;
+    final double dayWidth;
+    final double rowHeight;
+
+    GanttRowPainter({
+      required this.row,
+      required this.projectStartDate,
+      required this.dayWidth,
+      required this.rowHeight,
+    });
+
+    @override
+    void paint(Canvas canvas, Size size) {
+      _drawGrid(canvas, size);
+
+      if (row.hasData && row.startDate != null && row.endDate != null) {
+        _drawGanttBar(canvas, size);
+      }
+    }
+
+    void _drawGrid(Canvas canvas, Size size) {
+      final gridPaint = Paint()
+        ..color = Colors.grey.shade300
+        ..strokeWidth = 0.5;
+
+      final totalDays = (size.width / dayWidth).ceil();
+      for (int i = 0; i <= totalDays; i++) {
+        final x = i * dayWidth;
+        canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+      }
+    }
+
+    void _drawGanttBar(Canvas canvas, Size size) {
+      final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
+      final duration = row.endDate!.difference(row.startDate!).inDays + 1;
+      final barWidth = duration * dayWidth;
+
+      final barHeight = rowHeight * 0.6;
+      final barTop = (rowHeight - barHeight) / 2;
+
+      // Different colors based on task type
+      Color barColor;
+      Color borderColor;
+      switch (row.taskType) {
+        case TaskType.mainTask:
+          barColor = Colors.blue.shade800;
+          borderColor = Colors.blue.shade900;
+          break;
+        case TaskType.subTask:
+          barColor = Colors.green.shade600;
+          borderColor = Colors.green.shade800;
+          break;
+        case TaskType.task:
+          barColor = Colors.blue.shade600;
+          borderColor = Colors.blue.shade800;
+          break;
+      }
+
+      final barPaint = Paint()
+        ..color = barColor
+        ..style = PaintingStyle.fill;
+
+      final barRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(startOffset + 2, barTop, barWidth - 4, barHeight),
+        Radius.circular(2),
+      );
+
+      canvas.drawRRect(barRect, barPaint);
+
+      final borderPaint = Paint()
+        ..color = borderColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1;
+
+      canvas.drawRRect(barRect, borderPaint);
+
+      final progressPaint = Paint()
+        ..color = barColor.withValues(alpha: 0.5) 
+        ..style = PaintingStyle.fill;
+
+      final progressWidth = (barWidth - 4) * 0.6;
+      final progressRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(startOffset + 2, barTop + 2, progressWidth, barHeight - 4),
+        Radius.circular(1),
+      );
+
+      canvas.drawRRect(progressRect, progressPaint);
+    }
+
+    @override
+    bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  }
 
 class GanttChartPainter extends CustomPainter {
   final List<GanttRowData> rows;
@@ -925,4 +1048,110 @@ class GanttChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class TaskContextMenu extends StatelessWidget {
+  final VoidCallback onMakeMainTask;
+  final VoidCallback onMakeSubtask;
+  final VoidCallback onAddNewRow;
+  final VoidCallback onDeleteRow;
+  final VoidCallback onDismiss;
+
+  const TaskContextMenu({
+    super.key,
+    required this.onMakeMainTask,
+    required this.onMakeSubtask,
+    required this.onAddNewRow,
+    required this.onDeleteRow,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 8,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 180,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildMenuItem(
+              icon: Icons.star_outline,
+              text: 'Make Main Task',
+              onTap: () {
+                onDismiss();
+                onMakeMainTask();
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.subdirectory_arrow_right,
+              text: 'Make Subtask',
+              onTap: () {
+                onDismiss();
+                onMakeSubtask();
+              },
+            ),
+            const Divider(height: 1),
+            _buildMenuItem(
+              icon: Icons.add,
+              text: 'Add New Row',
+              onTap: () {
+                onDismiss();
+                onAddNewRow();
+              },
+            ),
+            _buildMenuItem(
+              icon: Icons.delete_outline,
+              text: 'Delete Row',
+              onTap: () {
+                onDismiss();
+                onDeleteRow();
+              },
+              textColor: Colors.red.shade600,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuItem({
+    required IconData icon,
+    required String text,
+    required VoidCallback onTap,
+    Color? textColor,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: textColor ?? Colors.grey.shade700,
+            ),
+            const SizedBox(width: 12),
+            Text(
+              text,
+              style: GoogleFonts.poppins(
+                fontSize: 13,
+                color: textColor ?? Colors.grey.shade800,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
