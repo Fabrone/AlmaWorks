@@ -46,6 +46,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   DateTime _projectStartDate = DateTime.now();
   DateTime _projectEndDate = DateTime.now().add(Duration(days: 30));
 
+  // Temporary storage for edited row data
+  final Map<int, GanttRowData> _editedRows = {};
+
   @override
   void initState() {
     super.initState();
@@ -103,7 +106,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   void _calculateProjectDates() {
-    final activeTasks = _rows.where((row) => row.hasData).toList();
+    // Combine original rows with edited rows for date calculation
+    List<GanttRowData> allRows = [];
+    for (int i = 0; i < _rows.length; i++) {
+      allRows.add(_editedRows[i] ?? _rows[i]);
+    }
+    
+    final activeTasks = allRows.where((row) => row.hasData).toList();
     if (activeTasks.isNotEmpty) {
       _projectStartDate = activeTasks
           .map((row) => row.startDate!)
@@ -135,6 +144,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       final rowToDelete = _rows[index];
       setState(() {
         _rows.removeAt(index);
+        _editedRows.remove(index);
         _computeColumnWidths();
       });
 
@@ -203,11 +213,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     int? duration,
     DateTime? startDate,
     DateTime? endDate,
-  }) async {
+  }) {
     if (!mounted) return;
 
     setState(() {
-      final row = _rows[index];
+      final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
+      _editedRows[index] = row;
 
       if (taskName != null) row.taskName = taskName;
       if (duration != null) row.duration = duration;
@@ -225,10 +236,30 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       _calculateProjectDates();
       _computeColumnWidths();
     });
+  }
 
-    final row = _rows[index];
-    if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
-      await _saveRowToFirebase(row, index);
+  Future<void> _saveAllRows() async {
+    if (!mounted) return;
+    for (var entry in _editedRows.entries) {
+      final index = entry.key;
+      final row = entry.value;
+      if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
+        await _saveRowToFirebase(row, index);
+        setState(() {
+          _rows[index] = GanttRowData.from(row);
+        });
+      }
+    }
+    setState(() {
+      _editedRows.clear();
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Changes saved successfully', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.green,
+        ),
+      );
     }
   }
 
@@ -265,10 +296,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _numberColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Task Name column
+    // Task Name column - use edited data when available
     headerWidth = _measureText('Task Name', headerStyle) + 24;
     maxCellWidth = 0;
-    for (var row in _rows) {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
       String text = row.taskName ?? 'Enter task name';
       double w = _measureText(text, cellStyle);
       if (w > maxCellWidth) maxCellWidth = w;
@@ -276,10 +308,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 48;
     _taskColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Duration column
+    // Duration column - use edited data when available
     headerWidth = _measureText('Duration', headerStyle) + 24;
     maxCellWidth = 0;
-    for (var row in _rows) {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
       String text = row.duration?.toString() ?? 'days';
       double w = _measureText(text, cellStyle);
       if (w > maxCellWidth) maxCellWidth = w;
@@ -287,10 +320,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _durationColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Start column
+    // Start column - use edited data when available
     headerWidth = _measureText('Start', headerStyle) + 24;
     maxCellWidth = 0;
-    for (var row in _rows) {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
       String text = row.startDate != null
           ? DateFormat('MM/dd/yyyy').format(row.startDate!)
           : 'MM/dd/yyyy';
@@ -300,10 +334,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _startColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Finish column
+    // Finish column - use edited data when available
     headerWidth = _measureText('Finish', headerStyle) + 24;
     maxCellWidth = 0;
-    for (var row in _rows) {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
       String text = row.endDate != null
           ? DateFormat('MM/dd/yyyy').format(row.endDate!)
           : 'MM/dd/yyyy';
@@ -409,7 +444,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   Widget _buildRow(int index, double ganttWidth) {
-    final row = _rows[index];
+    // Use edited row data if available, otherwise use original row data
+    final row = _editedRows[index] ?? _rows[index];
     final canDelete = _rows.length > defaultRowCount;
 
     return Container(
@@ -461,7 +497,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: _taskColumnWidth - 16),
               child: TextFormField(
-                key: Key('task_${index}_${row.taskName}'),
+                // No key needed - Flutter will handle widget identity properly
                 initialValue: row.taskName ?? '',
                 onChanged: (value) => _updateRowData(index, taskName: value),
                 style: GoogleFonts.poppins(fontSize: 11),
@@ -474,6 +510,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                 ),
                 maxLines: 1,
                 textAlign: TextAlign.left,
+                textInputAction: TextInputAction.next,
+                enableInteractiveSelection: true,
               ),
             ),
           ),
@@ -598,6 +636,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             onPressed: _addNewRow,
             icon: Icon(Icons.add_circle_outline, color: Colors.green.shade700),
             tooltip: 'Add Row',
+          ),
+          IconButton(
+            onPressed: _saveAllRows,
+            icon: Icon(Icons.save, color: Colors.blue.shade700),
+            tooltip: 'Save Changes',
           ),
         ],
       ),

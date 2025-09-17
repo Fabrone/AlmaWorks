@@ -18,6 +18,18 @@ class GanttRowData {
     this.endDate,
   });
 
+  // Factory constructor to create a copy of an existing GanttRowData instance
+  factory GanttRowData.from(GanttRowData other) {
+    return GanttRowData(
+      id: other.id,
+      firestoreId: other.firestoreId,
+      taskName: other.taskName,
+      duration: other.duration,
+      startDate: other.startDate,
+      endDate: other.endDate,
+    );
+  }
+
   /// Returns true if the row has meaningful data
   bool get hasData => taskName?.isNotEmpty == true && startDate != null && endDate != null;
 
