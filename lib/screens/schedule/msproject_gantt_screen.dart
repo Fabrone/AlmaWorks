@@ -9,8 +9,6 @@ import 'package:logger/logger.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 
-//enum TaskType { mainTask, subTask, task }
-
 class MSProjectGanttScreen extends StatefulWidget {
   final String projectId;
   final String projectName;
