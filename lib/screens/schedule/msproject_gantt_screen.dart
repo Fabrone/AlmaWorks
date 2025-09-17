@@ -27,6 +27,9 @@ class MSProjectGanttScreen extends StatefulWidget {
 }
 
 class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
+
+  final Map<String, List<GanttRowData>> _cachedProjects = {};
+  bool _isOfflineMode = false;
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
 
@@ -72,6 +75,23 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // Try to load from cache first
+      if (_cachedProjects.containsKey(widget.projectId)) {
+        _rows = List.from(_cachedProjects[widget.projectId]!);
+        while (_rows.length < defaultRowCount) {
+          _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
+        }
+        _calculateProjectDates();
+        _computeColumnWidths();
+        setState(() => _isLoading = false);
+        widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from cache');
+        
+        // Try to refresh from Firebase in background
+        _refreshFromFirebaseInBackground();
+        return;
+      }
+
+      // Load from Firebase
       final snapshot = await FirebaseFirestore.instance
           .collection('Schedule')
           .where('projectId', isEqualTo: widget.projectId)
@@ -85,6 +105,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
       }
 
+      // Cache the loaded data
+      _cachedProjects[widget.projectId] = List.from(loadedRows);
+
       while (loadedRows.length < defaultRowCount) {
         loadedRows.add(GanttRowData(id: 'row_${loadedRows.length + 1}'));
       }
@@ -92,16 +115,72 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       _rows = loadedRows;
       _calculateProjectDates();
       _computeColumnWidths();
-      widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows');
+      _isOfflineMode = false;
+      widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from Firebase');
     } catch (e) {
       widget.logger.e('❌ MSProjectGantt: Error loading tasks', error: e);
+      _isOfflineMode = true;
       if (mounted) {
         _initializeDefaultRows();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Working offline - changes will sync when connection is restored', 
+                        style: GoogleFonts.poppins()),
+            backgroundColor: Colors.orange,
+          ),
+        );
       }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  Future<void> _refreshFromFirebaseInBackground() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('Schedule')
+          .where('projectId', isEqualTo: widget.projectId)
+          .get();
+
+      List<GanttRowData> loadedRows = [];
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
+      }
+
+      // Update cache and UI if data changed
+      if (mounted && loadedRows.isNotEmpty) {
+        _cachedProjects[widget.projectId] = List.from(loadedRows);
+        
+        // Check if we need to update the UI
+        bool hasChanges = false;
+        if (loadedRows.length != _rows.where((r) => r.hasData).length) {
+          hasChanges = true;
+        } else {
+          for (int i = 0; i < loadedRows.length; i++) {
+            if (i < _rows.length && _rows[i] != loadedRows[i]) {
+              hasChanges = true;
+              break;
+            }
+          }
+        }
+
+        if (hasChanges) {
+          while (loadedRows.length < defaultRowCount) {
+            loadedRows.add(GanttRowData(id: 'row_${loadedRows.length + 1}'));
+          }
+          setState(() {
+            _rows = loadedRows;
+            _calculateProjectDates();
+            _computeColumnWidths();
+          });
+          widget.logger.i('📅 MSProjectGantt: Updated from Firebase background refresh');
+        }
+      }
+    } catch (e) {
+      widget.logger.w('⚠️ Background refresh failed', error: e);
     }
   }
 
@@ -188,6 +267,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         row.firestoreId = docRef.id;
         widget.logger.i('✅ Created new row: ${row.taskName}');
       }
+
+      // Update cache with successful save
+      if (_cachedProjects.containsKey(widget.projectId)) {
+        final cachedRows = _cachedProjects[widget.projectId]!;
+        final existingIndex = cachedRows.indexWhere((r) => r.id == row.id);
+        if (existingIndex != -1) {
+          cachedRows[existingIndex] = GanttRowData.from(row);
+        } else {
+          cachedRows.add(GanttRowData.from(row));
+        }
+      }
     } catch (e) {
       widget.logger.e('❌ Error saving row to Firebase', error: e);
       if (mounted) {
@@ -219,7 +309,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     int? duration,
     DateTime? startDate,
     DateTime? endDate,
-    TaskType? taskType, // This parameter IS used now
+    TaskType? taskType, 
   }) {
     if (!mounted) return;
 
@@ -248,6 +338,34 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Future<void> _saveAllRows() async {
     if (!mounted) return;
+    
+    if (_isOfflineMode) {
+      // In offline mode, update local cache and show message
+      for (var entry in _editedRows.entries) {
+        final index = entry.key;
+        final row = entry.value;
+        if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
+          setState(() {
+            _rows[index] = GanttRowData.from(row);
+          });
+        }
+      }
+      setState(() {
+        _editedRows.clear();
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Changes saved locally - will sync when online', 
+                        style: GoogleFonts.poppins()),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Online mode - save to Firebase
     for (var entry in _editedRows.entries) {
       final index = entry.key;
       final row = entry.value;
@@ -451,6 +569,36 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
   }
 
+  // New method to calculate hierarchical indentation
+  EdgeInsets _getHierarchicalPadding(int index, TaskType taskType) {
+    if (taskType != TaskType.task) {
+      // MainTask and SubTask use default padding
+      return _getTaskNamePadding(taskType);
+    }
+
+    // For regular tasks, find the nearest parent
+    TaskType? parentType;
+    for (int i = index - 1; i >= 0; i--) {
+      final parentRow = _editedRows[i] ?? _rows[i];
+      if (parentRow.taskType == TaskType.mainTask || parentRow.taskType == TaskType.subTask) {
+        parentType = parentRow.taskType;
+        break;
+      }
+    }
+
+    // Calculate indentation based on parent
+    double leftPadding;
+    if (parentType == TaskType.mainTask) {
+      leftPadding = 32.0; // Indent from main task
+    } else if (parentType == TaskType.subTask) {
+      leftPadding = 48.0; // Indent from subtask (which is already indented)
+    } else {
+      leftPadding = 8.0; // Orphaned task - top level
+    }
+
+    return EdgeInsets.only(left: leftPadding, right: 8, top: 4, bottom: 4);
+  }
+
   Widget _buildRow(int index, double ganttWidth) {
     // Use edited row data if available, otherwise use original row data
     final row = _editedRows[index] ?? _rows[index];
@@ -510,11 +658,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                 _showContextMenu(context, position, index);
               },
               onLongPress: () {
-                // For mobile devices - long press to show context menu
                 final RenderBox renderBox = context.findRenderObject() as RenderBox;
                 final position = renderBox.localToGlobal(Offset(_taskColumnWidth / 2, rowHeight / 2));
                 _showContextMenu(context, position, index);
-                // Provide haptic feedback
                 HapticFeedback.mediumImpact();
               },
               child: ConstrainedBox(
@@ -527,7 +673,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                     hintText: 'Enter task name',
                     hintStyle: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade400),
                     border: InputBorder.none,
-                    contentPadding: _getTaskNamePadding(currentTaskType),
+                    contentPadding: _getHierarchicalPadding(index, currentTaskType), // CHANGED: Use hierarchical padding
                     isDense: true,
                   ),
                   maxLines: 1,
@@ -649,12 +795,38 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              widget.projectName,
-              style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  widget.projectName,
+                  style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                // ADDED: Show offline status
+                if (_isOfflineMode)
+                  Text(
+                    'Offline Mode',
+                    style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: Colors.orange.shade700,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+              ],
             ),
           ),
+          // Offline indicator icon
+          if (_isOfflineMode)
+            Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: Icon(
+                Icons.wifi_off,
+                size: 16,
+                color: Colors.orange.shade700,
+              ),
+            ),
           IconButton(
             onPressed: _addNewRow,
             icon: Icon(Icons.add_circle_outline, color: Colors.green.shade700),
