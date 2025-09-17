@@ -2,7 +2,8 @@ import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/resource_model.dart';
 //import 'package:almaworks/screens/schedule/gantt_chart_screen.dart';
 import 'package:almaworks/screens/schedule/critical_path_screen.dart';
-import 'package:almaworks/screens/schedule/gantt_chart_screen_refactored.dart';
+import 'package:almaworks/screens/schedule/msproject_gantt_screen.dart';
+//import 'package:almaworks/screens/schedule/gantt_chart_screen_refactored.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -103,9 +104,9 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                         child: TabBarView(
                           controller: _tabController,
                           children: [
-                            GanttChartScreen(
+                            MSProjectGanttScreen(
                               project: widget.project,
-                              logger: widget.logger,
+                              logger: widget.logger, projectId: '', projectName: '',
                             ),
                             CriticalPathScreen(
                               project: widget.project,
