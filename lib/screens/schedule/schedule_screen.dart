@@ -109,8 +109,8 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                               logger: widget.logger, projectId: '', projectName: '',
                             ),
                             CriticalPathScreen(
-                              project: widget.project,
-                              logger: widget.logger,
+                              //project: widget.project,
+                              logger: widget.logger, projectId: '', projectName: '',
                             ),
                             _buildResourcesTab(),
                             _buildUpdatesTab(),

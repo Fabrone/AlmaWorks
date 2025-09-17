@@ -1,18 +1,19 @@
-import 'package:almaworks/models/project_model.dart';
-import 'package:almaworks/models/schedule_model.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:almaworks/models/gantt_row_model.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:logger/logger.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:logger/logger.dart';
 
 class CriticalPathScreen extends StatefulWidget {
-  final ProjectModel project;
+  final String projectId;
+  final String projectName;
   final Logger logger;
 
   const CriticalPathScreen({
     super.key,
-    required this.project,
+    required this.projectId,
+    required this.projectName,
     required this.logger,
   });
 
@@ -20,19 +21,40 @@ class CriticalPathScreen extends StatefulWidget {
   State<CriticalPathScreen> createState() => _CriticalPathScreenState();
 }
 
-class _CriticalPathScreenState extends State<CriticalPathScreen> {
-  final DateFormat _dateFormat = DateFormat('yyyy-MM-dd');
-  List<ScheduleModel> _tasks = [];
+class _CriticalPathScreenState extends State<CriticalPathScreen>
+    with SingleTickerProviderStateMixin {
+  final DateFormat _dateFormat = DateFormat('MMM dd, yyyy');
+  List<GanttRowData> _tasks = [];
   List<CriticalPathNode> _criticalPath = [];
-  List<ScheduleModel> _nonCriticalTasks = [];
+  List<CriticalPathNode> _nonCriticalTasks = [];
   bool _isLoading = true;
   double _totalProjectDuration = 0;
-  double _criticalPathDuration = 0;
+  DateTime? _projectStartDate;
+  DateTime? _projectEndDate;
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+
+  // Analysis metrics
+  int _totalSlackDays = 0;
+  double _criticalityRatio = 0.0;
 
   @override
   void initState() {
     super.initState();
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
     _fetchAndAnalyzeTasks();
+  }
+
+  @override
+  void dispose() {
+    _animationController.dispose();
+    super.dispose();
   }
 
   Future<void> _fetchAndAnalyzeTasks() async {
@@ -40,149 +62,246 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
     try {
       final snapshot = await FirebaseFirestore.instance
           .collection('Schedule')
-          .where('projectId', isEqualTo: widget.project.id)
+          .where('projectId', isEqualTo: widget.projectId)
           .orderBy('startDate', descending: false)
           .get();
-      
-      _tasks = snapshot.docs.map((doc) {
+
+      List<GanttRowData> loadedTasks = [];
+      for (var doc in snapshot.docs) {
         final data = doc.data();
-        return ScheduleModel.fromMap(doc.id, data);
-      }).toList();
-      
+        final task = GanttRowData.fromFirebaseMap(doc.id, data);
+        if (task.hasData) {
+          loadedTasks.add(task);
+        }
+      }
+
+      _tasks = loadedTasks;
       _calculateCriticalPath();
+      _animationController.forward();
+      
       widget.logger.i('📊 CriticalPath: Loaded ${_tasks.length} tasks, ${_criticalPath.length} on critical path');
     } catch (e) {
       widget.logger.e('❌ CriticalPath: Error loading tasks', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading tasks: $e', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   void _calculateCriticalPath() {
     if (_tasks.isEmpty) return;
 
-    // Calculate project timeline
-    final projectStart = _tasks.map((t) => t.startDate).reduce((a, b) => a.isBefore(b) ? a : b);
-    final projectEnd = _tasks.map((t) => t.endDate).reduce((a, b) => a.isAfter(b) ? a : b);
-    _totalProjectDuration = projectEnd.difference(projectStart).inDays.toDouble() + 1;
+    // Calculate project bounds
+    _projectStartDate = _tasks.map((t) => t.startDate!).reduce((a, b) => a.isBefore(b) ? a : b);
+    _projectEndDate = _tasks.map((t) => t.endDate!).reduce((a, b) => a.isAfter(b) ? a : b);
+    _totalProjectDuration = _projectEndDate!.difference(_projectStartDate!).inDays.toDouble() + 1;
 
-    // Build task dependencies and calculate critical path
+    // Build task network and dependencies
     List<CriticalPathNode> nodes = [];
-    List<ScheduleModel> criticalTasks = [];
-    List<ScheduleModel> nonCritical = [];
+    Map<String, CriticalPathNode> nodeMap = {};
 
     // Create nodes for each task
     for (var task in _tasks) {
       final node = CriticalPathNode(
         task: task,
-        earliestStart: task.startDate,
-        latestStart: task.startDate,
-        earliestFinish: task.endDate,
-        latestFinish: task.endDate,
+        earliestStart: task.startDate!,
+        latestStart: task.startDate!,
+        earliestFinish: task.endDate!,
+        latestFinish: task.endDate!,
         totalFloat: 0,
         freeFloat: 0,
+        predecessors: [],
+        successors: [],
       );
       nodes.add(node);
+      nodeMap[task.id] = node;
     }
 
-    // Calculate critical path using task hierarchy and dates
-    _criticalPath = [];
+    // Build dependencies based on task hierarchy and scheduling logic
+    _buildTaskDependencies(nodes, nodeMap);
 
-    // Find main tasks first
-    var mainTasks = _tasks.where((t) => t.taskType == 'MainTask').toList();
-    mainTasks.sort((a, b) => a.startDate.compareTo(b.startDate));
+    // Forward pass - calculate earliest start and finish times
+    _forwardPass(nodes);
 
-    for (var mainTask in mainTasks) {
-      // Check if this main task is on critical path
-      final hasSubtasks = _tasks.any((t) => t.parentId == mainTask.id);
+    // Backward pass - calculate latest start and finish times
+    _backwardPass(nodes);
+
+    // Calculate float values
+    for (var node in nodes) {
+      node.totalFloat = node.latestStart.difference(node.earliestStart).inDays.toDouble();
+      node.freeFloat = _calculateFreeFloat(node, nodes);
+    }
+
+    // Identify critical path
+    _criticalPath = nodes.where((node) => node.isCritical).toList();
+    _nonCriticalTasks = nodes.where((node) => !node.isCritical).toList();
+
+    // Calculate metrics
+    
+    _totalSlackDays = _nonCriticalTasks.map((n) => n.totalFloat.toInt()).fold(0, (a, b) => a + b);
+    _criticalityRatio = _tasks.isNotEmpty ? _criticalPath.length / _tasks.length : 0;
+
+    // Sort critical path by earliest start date
+    _criticalPath.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
+  }
+
+  void _buildTaskDependencies(List<CriticalPathNode> nodes, Map<String, CriticalPathNode> nodeMap) {
+    // Group tasks by type and establish logical dependencies
+    var mainTasks = nodes.where((n) => n.task.taskType == TaskType.mainTask).toList();
+    var subTasks = nodes.where((n) => n.task.taskType == TaskType.subTask).toList();
+    var regularTasks = nodes.where((n) => n.task.taskType == TaskType.task).toList();
+
+    // Sort by start date for dependency logic
+    mainTasks.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
+    subTasks.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
+    regularTasks.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
+
+    // Link main tasks in sequence if they overlap or are sequential
+    for (int i = 0; i < mainTasks.length - 1; i++) {
+      final current = mainTasks[i];
+      final next = mainTasks[i + 1];
       
-      if (hasSubtasks) {
-        // Find subtasks and determine if any are critical
-        var subtasks = _tasks.where((t) => t.parentId == mainTask.id).toList();
-        subtasks.sort((a, b) => a.startDate.compareTo(b.startDate));
-        
-        // Check for tasks with no slack/float
-        for (var subtask in subtasks) {
-          final subtaskNode = nodes.firstWhere((n) => n.task.id == subtask.id);
-          final isOnCriticalPath = _isTaskCritical(subtask, mainTask, subtasks);
-          
-          if (isOnCriticalPath) {
-            subtaskNode.totalFloat = 0;
-            subtaskNode.freeFloat = 0;
-            _criticalPath.add(subtaskNode);
-            criticalTasks.add(subtask);
-          } else {
-            // Calculate float for non-critical tasks
-            final float = _calculateTaskFloat(subtask, mainTask);
-            subtaskNode.totalFloat = float;
-            subtaskNode.freeFloat = float;
-            nonCritical.add(subtask);
-          }
-        }
-      } else {
-        // Standalone main task
-        final mainNode = nodes.firstWhere((n) => n.task.id == mainTask.id);
-        final isMainCritical = _isMainTaskCritical(mainTask, mainTasks);
-        
-        if (isMainCritical) {
-          mainNode.totalFloat = 0;
-          mainNode.freeFloat = 0;
-          _criticalPath.add(mainNode);
-          criticalTasks.add(mainTask);
-        } else {
-          final float = _calculateMainTaskFloat(mainTask, mainTasks);
-          mainNode.totalFloat = float;
-          mainNode.freeFloat = float;
-          nonCritical.add(mainTask);
-        }
+      // If next task starts before current ends, create dependency
+      if (next.earliestStart.isBefore(current.earliestFinish) || 
+          next.earliestStart.difference(current.earliestFinish).inDays <= 1) {
+        current.successors.add(next);
+        next.predecessors.add(current);
       }
     }
 
-    _criticalPathDuration = _criticalPath.isNotEmpty 
-        ? _criticalPath.map((n) => n.task.duration).reduce((a, b) => a + b).toDouble()
-        : 0;
-    
-    _nonCriticalTasks = nonCritical;
-  }
-
-  bool _isTaskCritical(ScheduleModel task, ScheduleModel mainTask, List<ScheduleModel> siblings) {
-    // A task is critical if delaying it would delay the entire project
-    // Check if task has the longest duration path or no scheduling flexibility
-    
-    final taskEnd = task.endDate;
-    final mainTaskEnd = mainTask.endDate;
-    
-    // If task ends at the same time as main task, it's likely critical
-    if (taskEnd.isAtSameMomentAs(mainTaskEnd) || 
-        taskEnd.difference(mainTaskEnd).inDays.abs() <= 1) {
-      return true;
+    // Link subtasks to their logical main task predecessors
+    for (var subTask in subTasks) {
+      var closestMainTask = _findClosestPredecessorMainTask(subTask, mainTasks);
+      if (closestMainTask != null) {
+        closestMainTask.successors.add(subTask);
+        subTask.predecessors.add(closestMainTask);
+      }
     }
 
-    // Check if this is the longest path among siblings
-    final maxSiblingEnd = siblings.map((s) => s.endDate).reduce((a, b) => a.isAfter(b) ? a : b);
-    return taskEnd.isAtSameMomentAs(maxSiblingEnd);
+    // Link regular tasks to their logical predecessors (subtasks or main tasks)
+    for (var task in regularTasks) {
+      var closestPredecessor = _findClosestPredecessor(task, [...subTasks, ...mainTasks]);
+      if (closestPredecessor != null) {
+        closestPredecessor.successors.add(task);
+        task.predecessors.add(closestPredecessor);
+      }
+    }
   }
 
-  bool _isMainTaskCritical(ScheduleModel mainTask, List<ScheduleModel> allMainTasks) {
-    // A main task is critical if it's on the longest path
-    final taskEnd = mainTask.endDate;
-    final projectEnd = allMainTasks.map((t) => t.endDate).reduce((a, b) => a.isAfter(b) ? a : b);
+  CriticalPathNode? _findClosestPredecessorMainTask(CriticalPathNode subTask, List<CriticalPathNode> mainTasks) {
+    CriticalPathNode? closest;
+    for (var mainTask in mainTasks) {
+      if (mainTask.earliestFinish.isBefore(subTask.earliestStart) ||
+          mainTask.earliestFinish.isAtSameMomentAs(subTask.earliestStart)) {
+        if (closest == null || mainTask.earliestFinish.isAfter(closest.earliestFinish)) {
+          closest = mainTask;
+        }
+      }
+    }
+    return closest;
+  }
+
+  CriticalPathNode? _findClosestPredecessor(CriticalPathNode task, List<CriticalPathNode> candidates) {
+    CriticalPathNode? closest;
+    for (var candidate in candidates) {
+      if (candidate.earliestFinish.isBefore(task.earliestStart) ||
+          candidate.earliestFinish.isAtSameMomentAs(task.earliestStart)) {
+        if (closest == null || candidate.earliestFinish.isAfter(closest.earliestFinish)) {
+          closest = candidate;
+        }
+      }
+    }
+    return closest;
+  }
+
+  void _forwardPass(List<CriticalPathNode> nodes) {
+    // Topological sort for forward pass
+    var visited = <String>{};
+    var sorted = <CriticalPathNode>[];
     
-    return taskEnd.isAtSameMomentAs(projectEnd) || 
-           taskEnd.difference(projectEnd).inDays.abs() <= 1;
+    void visit(CriticalPathNode node) {
+      if (visited.contains(node.task.id)) return;
+      visited.add(node.task.id);
+      
+      for (var predecessor in node.predecessors) {
+        visit(predecessor);
+      }
+      sorted.add(node);
+    }
+
+    for (var node in nodes) {
+      visit(node);
+    }
+
+    // Calculate earliest start and finish
+    for (var node in sorted) {
+      if (node.predecessors.isEmpty) {
+        node.earliestStart = node.task.startDate!;
+      } else {
+        var latestPredecessorFinish = node.predecessors
+            .map((p) => p.earliestFinish)
+            .reduce((a, b) => a.isAfter(b) ? a : b);
+        node.earliestStart = latestPredecessorFinish.add(const Duration(days: 1));
+      }
+      
+      node.earliestFinish = node.earliestStart.add(Duration(days: (node.task.duration ?? 1) - 1));
+    }
   }
 
-  double _calculateTaskFloat(ScheduleModel task, ScheduleModel mainTask) {
-    // Calculate total float (slack) for non-critical tasks
-    final latestFinish = mainTask.endDate;
-    final earliestFinish = task.endDate;
-    return latestFinish.difference(earliestFinish).inDays.toDouble();
+  void _backwardPass(List<CriticalPathNode> nodes) {
+    // Start from project end date
+    var projectEnd = nodes.map((n) => n.earliestFinish).reduce((a, b) => a.isAfter(b) ? a : b);
+    
+    // Reverse topological sort for backward pass
+    var visited = <String>{};
+    var sorted = <CriticalPathNode>[];
+    
+    void visit(CriticalPathNode node) {
+      if (visited.contains(node.task.id)) return;
+      visited.add(node.task.id);
+      
+      for (var successor in node.successors) {
+        visit(successor);
+      }
+      sorted.add(node);
+    }
+
+    for (var node in nodes) {
+      visit(node);
+    }
+
+    // Calculate latest finish and start
+    for (var node in sorted) {
+      if (node.successors.isEmpty) {
+        node.latestFinish = projectEnd;
+      } else {
+        var earliestSuccessorStart = node.successors
+            .map((s) => s.latestStart)
+            .reduce((a, b) => a.isBefore(b) ? a : b);
+        node.latestFinish = earliestSuccessorStart.subtract(const Duration(days: 1));
+      }
+      
+      node.latestStart = node.latestFinish.subtract(Duration(days: (node.task.duration ?? 1) - 1));
+    }
   }
 
-  double _calculateMainTaskFloat(ScheduleModel mainTask, List<ScheduleModel> allMainTasks) {
-    final projectEnd = allMainTasks.map((t) => t.endDate).reduce((a, b) => a.isAfter(b) ? a : b);
-    final taskEnd = mainTask.endDate;
-    return projectEnd.difference(taskEnd).inDays.toDouble();
+  double _calculateFreeFloat(CriticalPathNode node, List<CriticalPathNode> allNodes) {
+    if (node.successors.isEmpty) return node.totalFloat;
+    
+    var minSuccessorEarliestStart = node.successors
+        .map((s) => s.earliestStart)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    
+    return minSuccessorEarliestStart.difference(node.earliestFinish).inDays.toDouble() - 1;
   }
 
   @override
@@ -192,39 +311,68 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
     }
 
     if (_tasks.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.timeline, size: 64, color: Colors.grey),
-            const SizedBox(height: 16),
-            Text(
-              'No schedule data available',
-              style: GoogleFonts.poppins(fontSize: 18, color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Add tasks in the Gantt Chart tab to see the critical path analysis',
-              style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade500),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
+      return _buildEmptyState();
     }
 
-    return RefreshIndicator(
-      onRefresh: _fetchAndAnalyzeTasks,
-      child: ListView(
-        padding: const EdgeInsets.all(16),
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: RefreshIndicator(
+        onRefresh: _fetchAndAnalyzeTasks,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _buildProjectSummaryCard(),
+            const SizedBox(height: 16),
+            _buildAnalyticsCard(),
+            const SizedBox(height: 16),
+            _buildCriticalPathSection(),
+            const SizedBox(height: 16),
+            _buildNonCriticalTasksSection(),
+            const SizedBox(height: 16),
+            _buildCriticalPathVisualization(),
+            const SizedBox(height: 16),
+            _buildRecommendationsCard(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _buildProjectSummaryCard(),
-          const SizedBox(height: 16),
-          _buildCriticalPathSection(),
-          const SizedBox(height: 16),
-          _buildNonCriticalTasksSection(),
-          const SizedBox(height: 16),
-          _buildCriticalPathVisualization(),
+          Icon(Icons.timeline, size: 80, color: Colors.grey.shade400),
+          const SizedBox(height: 24),
+          Text(
+            'No Schedule Data Available',
+            style: GoogleFonts.poppins(
+              fontSize: 24,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'Add tasks in the Gantt Chart to see\ncritical path analysis',
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              color: Colors.grey.shade500,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 32),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+            label: Text('Go to Gantt Chart', style: GoogleFonts.poppins()),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade600,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+          ),
         ],
       ),
     );
@@ -232,31 +380,158 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
 
   Widget _buildProjectSummaryCard() {
     return Card(
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 8,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           gradient: LinearGradient(
-            colors: [Colors.blue.shade50, Colors.white],
+            colors: [Colors.blue.shade600, Colors.blue.shade400],
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
         ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.analytics, color: Colors.white, size: 28),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Critical Path Analysis',
+                        style: GoogleFonts.poppins(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(
+                        widget.projectName,
+                        style: GoogleFonts.poppins(
+                          fontSize: 16,
+                          color: Colors.white.withValues(alpha: 0.9),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildSummaryMetric(
+                    'Project Duration',
+                    '${_totalProjectDuration.toInt()} days',
+                    Icons.schedule,
+                    Colors.white,
+                  ),
+                ),
+                Expanded(
+                  child: _buildSummaryMetric(
+                    'Critical Path',
+                    '${_criticalPath.length} tasks',
+                    Icons.priority_high,
+                    Colors.white,
+                  ),
+                ),
+              ],
+            ),
+            if (_projectStartDate != null && _projectEndDate != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Start Date',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        ),
+                        Text(
+                          _dateFormat.format(_projectStartDate!),
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                    Icon(Icons.arrow_forward, color: Colors.white.withValues(alpha: 0.7)),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'End Date',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.8),
+                          ),
+                        ),
+                        Text(
+                          _dateFormat.format(_projectEndDate!),
+                          style: GoogleFonts.poppins(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnalyticsCard() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.analytics, color: Colors.blue.shade600, size: 28),
+                Icon(Icons.insights, color: Colors.orange.shade600, size: 24),
                 const SizedBox(width: 12),
                 Text(
-                  'Critical Path Analysis',
+                  'Schedule Analytics',
                   style: GoogleFonts.poppins(
-                    fontSize: 20,
+                    fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade800,
+                    color: Colors.grey.shade800,
                   ),
                 ),
               ],
@@ -265,57 +540,142 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _buildSummaryItem(
-                    'Total Duration',
-                    '${_totalProjectDuration.toInt()} days',
-                    Icons.schedule,
-                    Colors.grey.shade700,
-                  ),
-                ),
-                Expanded(
-                  child: _buildSummaryItem(
-                    'Critical Path',
-                    '${_criticalPathDuration.toInt()} days',
-                    Icons.priority_high,
-                    Colors.red.shade600,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSummaryItem(
-                    'Critical Tasks',
-                    '${_criticalPath.length}',
+                  child: _buildAnalyticsMetric(
+                    'Criticality Ratio',
+                    '${(_criticalityRatio * 100).toInt()}%',
+                    'Percentage of critical tasks',
                     Icons.warning_amber,
-                    Colors.orange.shade600,
+                    _criticalityRatio > 0.5 ? Colors.red : Colors.orange,
                   ),
                 ),
                 Expanded(
-                  child: _buildSummaryItem(
-                    'Non-Critical',
-                    '${_nonCriticalTasks.length}',
-                    Icons.check_circle,
+                  child: _buildAnalyticsMetric(
+                    'Total Slack',
+                    '$_totalSlackDays days',
+                    'Available scheduling buffer',
+                    Icons.schedule_outlined,
                     Colors.green.shade600,
                   ),
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            _buildScheduleHealthIndicator(),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSummaryItem(String label, String value, IconData icon, Color color) {
+  Widget _buildAnalyticsMetric(String title, String value, String subtitle, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 20),
+              const SizedBox(width: 8),
+              Text(
+                title,
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: GoogleFonts.poppins(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: GoogleFonts.poppins(
+              fontSize: 11,
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScheduleHealthIndicator() {
+    Color healthColor;
+    String healthText;
+    IconData healthIcon;
+
+    if (_criticalityRatio > 0.7) {
+      healthColor = Colors.red;
+      healthText = 'High Risk';
+      healthIcon = Icons.dangerous;
+    } else if (_criticalityRatio > 0.4) {
+      healthColor = Colors.orange;
+      healthText = 'Medium Risk';
+      healthIcon = Icons.warning;
+    } else {
+      healthColor = Colors.green;
+      healthText = 'Low Risk';
+      healthIcon = Icons.check_circle;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: healthColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: healthColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(healthIcon, color: healthColor, size: 24),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Schedule Health',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+              Text(
+                healthText,
+                style: GoogleFonts.poppins(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: healthColor,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryMetric(String title, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -323,22 +683,22 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
           Row(
             children: [
               Icon(icon, color: color, size: 18),
-              const SizedBox(width: 6),
+              const SizedBox(width: 8),
               Text(
-                label,
+                title,
                 style: GoogleFonts.poppins(
                   fontSize: 12,
-                  color: Colors.grey.shade600,
+                  color: color.withValues(alpha: 0.9),
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Text(
             value,
             style: GoogleFonts.poppins(
-              fontSize: 18,
+              fontSize: 20,
               fontWeight: FontWeight.bold,
               color: color,
             ),
@@ -350,57 +710,51 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
 
   Widget _buildCriticalPathSection() {
     return Card(
-      elevation: 2,
+      elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: Colors.red.shade100,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(Icons.priority_high, color: Colors.red.shade600, size: 20),
+                  child: Icon(Icons.priority_high, color: Colors.red.shade600, size: 24),
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  'Critical Path Tasks',
-                  style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.red.shade700,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Critical Path Tasks',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                      Text(
+                        'Zero float - delays will impact project completion',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              'These tasks have zero float and must be completed on time to avoid project delays.',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.grey.shade600,
-              ),
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             if (_criticalPath.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Center(
-                  child: Text(
-                    'No critical path identified',
-                    style: GoogleFonts.poppins(color: Colors.grey.shade600),
-                  ),
-                ),
-              )
+              _buildEmptySection('No critical path identified', Icons.timeline)
             else
               ..._criticalPath.asMap().entries.map((entry) {
                 final index = entry.key;
@@ -415,8 +769,9 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
 
   Widget _buildCriticalTaskItem(CriticalPathNode node, int index) {
     final task = node.task;
-    final isMainTask = task.taskType == 'MainTask';
-    
+    final isMainTask = task.taskType == TaskType.mainTask;
+    final isSubTask = task.taskType == TaskType.subTask;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
@@ -425,16 +780,21 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
         ),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.red.shade200, width: 1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red.shade200, width: 1.5),
       ),
       child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: Container(
-          width: 40,
-          height: 40,
+          width: 48,
+          height: 48,
           decoration: BoxDecoration(
-            color: Colors.red.shade600,
-            borderRadius: BorderRadius.circular(20),
+            gradient: LinearGradient(
+              colors: [Colors.red.shade600, Colors.red.shade400],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(24),
           ),
           child: Center(
             child: Text(
@@ -442,84 +802,105 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
               style: GoogleFonts.poppins(
                 color: Colors.white,
                 fontWeight: FontWeight.bold,
-                fontSize: 16,
+                fontSize: 18,
               ),
             ),
           ),
         ),
         title: Text(
-          task.title,
+          task.taskName ?? 'Untitled Task',
           style: GoogleFonts.poppins(
             fontWeight: isMainTask ? FontWeight.bold : FontWeight.w600,
-            fontSize: 16,
+            fontSize: isMainTask ? 18 : 16,
             color: Colors.red.shade800,
           ),
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
+            const SizedBox(height: 8),
             Row(
               children: [
                 Icon(Icons.calendar_today, size: 14, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Text(
-                  '${_dateFormat.format(task.startDate)} → ${_dateFormat.format(task.endDate)}',
+                  '${_dateFormat.format(task.startDate!)} → ${_dateFormat.format(task.endDate!)}',
                   style: GoogleFonts.poppins(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
+                    fontSize: 13,
+                    color: Colors.grey.shade700,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 4),
             Row(
               children: [
                 Icon(Icons.timer, size: 14, color: Colors.grey.shade600),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Text(
                   '${task.duration} days',
                   style: GoogleFonts.poppins(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
+                    fontSize: 13,
+                    color: Colors.grey.shade700,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                if (!isMainTask) ...[
-                  const SizedBox(width: 16),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade100,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      'Subtask',
-                      style: GoogleFonts.poppins(
-                        fontSize: 10,
-                        color: Colors.blue.shade700,
-                        fontWeight: FontWeight.w500,
-                      ),
+                const SizedBox(width: 16),
+                                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isMainTask
+                        ? Colors.purple.shade100
+                        : isSubTask
+                            ? Colors.blue.shade100
+                            : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    isMainTask ? 'Main Task' : isSubTask ? 'Subtask' : 'Task',
+                    style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: isMainTask
+                          ? Colors.purple.shade700
+                          : isSubTask
+                              ? Colors.blue.shade700
+                              : Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
+                ),
               ],
             ),
           ],
         ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.red.shade600,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            'CRITICAL',
-            style: GoogleFonts.poppins(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.red.shade600,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'CRITICAL',
+                style: GoogleFonts.poppins(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 4),
+            Text(
+              'Float: ${node.totalFloat.toInt()}d',
+              style: GoogleFonts.poppins(
+                fontSize: 10,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -529,107 +910,195 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
     if (_nonCriticalTasks.isEmpty) return const SizedBox.shrink();
 
     return Card(
-      elevation: 2,
+      elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: Colors.green.shade100,
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(10),
                   ),
-                  child: Icon(Icons.check_circle, color: Colors.green.shade600, size: 20),
+                  child: Icon(Icons.check_circle, color: Colors.green.shade600, size: 24),
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  'Non-Critical Tasks',
-                  style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green.shade700,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Non-Critical Tasks',
+                        style: GoogleFonts.poppins(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                      Text(
+                        'Have scheduling flexibility (float) without affecting completion',
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              'These tasks have scheduling flexibility and can be delayed without affecting the project completion date.',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.grey.shade600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            ..._nonCriticalTasks.map((task) => _buildNonCriticalTaskItem(task)),
+            const SizedBox(height: 20),
+            // Sort by total float (ascending) to show tasks with least flexibility first
+            ...(_nonCriticalTasks..sort((a, b) => a.totalFloat.compareTo(b.totalFloat)))
+                .map((node) => _buildNonCriticalTaskItem(node)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildNonCriticalTaskItem(ScheduleModel task) {
-    final isMainTask = task.taskType == 'MainTask';
+  Widget _buildNonCriticalTaskItem(CriticalPathNode node) {
+    final task = node.task;
+    final isMainTask = task.taskType == TaskType.mainTask;
+    final isSubTask = task.taskType == TaskType.subTask;
+    final floatDays = node.totalFloat.toInt();
     
+    // Color coding based on float amount
+    Color floatColor;
+    if (floatDays <= 2) {
+      floatColor = Colors.orange.shade600;
+    } else if (floatDays <= 5) {
+      floatColor = Colors.blue.shade600;
+    } else {
+      floatColor = Colors.green.shade600;
+    }
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: Colors.green.shade50,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.green.shade200, width: 1),
       ),
       child: ListTile(
-        leading: Icon(
-          isMainTask ? Icons.folder : Icons.assignment,
-          color: Colors.green.shade600,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            color: floatColor,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Center(
+            child: Text(
+              '${floatDays}d',
+              style: GoogleFonts.poppins(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 14,
+              ),
+            ),
+          ),
         ),
         title: Text(
-          task.title,
+          task.taskName ?? 'Untitled Task',
           style: GoogleFonts.poppins(
             fontWeight: isMainTask ? FontWeight.bold : FontWeight.w600,
             fontSize: 16,
+            color: Colors.grey.shade800,
           ),
         ),
-        subtitle: Row(
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(Icons.calendar_today, size: 12, color: Colors.grey.shade600),
-            const SizedBox(width: 4),
-            Text(
-              '${_dateFormat.format(task.startDate)} → ${_dateFormat.format(task.endDate)}',
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-              ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(Icons.calendar_today, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 6),
+                Text(
+                  '${_dateFormat.format(task.startDate!)} → ${_dateFormat.format(task.endDate!)}',
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(
-              '(${task.duration} days)',
-              style: GoogleFonts.poppins(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-              ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.timer, size: 14, color: Colors.grey.shade600),
+                const SizedBox(width: 6),
+                Text(
+                  '${task.duration} days',
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: isMainTask
+                        ? Colors.purple.shade100
+                        : isSubTask
+                            ? Colors.blue.shade100
+                            : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    isMainTask ? 'Main Task' : isSubTask ? 'Subtask' : 'Task',
+                    style: GoogleFonts.poppins(
+                      fontSize: 10,
+                      color: isMainTask
+                          ? Colors.purple.shade700
+                          : isSubTask
+                              ? Colors.blue.shade700
+                              : Colors.grey.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: Colors.green.shade600,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            'FLEXIBLE',
-            style: GoogleFonts.poppins(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+        trailing: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: floatColor,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${floatDays}D FLOAT',
+                style: GoogleFonts.poppins(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(height: 4),
+            Text(
+              floatDays <= 2 ? 'Low Buffer' : floatDays <= 5 ? 'Med Buffer' : 'High Buffer',
+              style: GoogleFonts.poppins(
+                fontSize: 9,
+                color: floatColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -639,78 +1108,136 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
     if (_criticalPath.isEmpty) return const SizedBox.shrink();
 
     return Card(
-      elevation: 2,
+      elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.timeline, color: Colors.blue.shade600, size: 20),
-                const SizedBox(width: 8),
+                Icon(Icons.timeline, color: Colors.purple.shade600, size: 24),
+                const SizedBox(width: 12),
                 Text(
                   'Critical Path Flow',
                   style: GoogleFonts.poppins(
-                    fontSize: 16,
+                    fontSize: 18,
                     fontWeight: FontWeight.bold,
+                    color: Colors.purple.shade700,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            Text(
+              'Sequential flow of critical tasks that determine project duration',
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+              ),
+            ),
+            const SizedBox(height: 20),
             SizedBox(
-              height: 80,
+              height: 120,
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: _criticalPath.length,
                 itemBuilder: (context, index) {
                   final node = _criticalPath[index];
                   final isLast = index == _criticalPath.length - 1;
+                  final isMainTask = node.task.taskType == TaskType.mainTask;
                   
                   return Row(
                     children: [
                       Container(
-                        width: 120,
-                        padding: const EdgeInsets.all(8),
+                        width: 140,
+                        height: 100,
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.red.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red.shade300),
+                          gradient: LinearGradient(
+                            colors: isMainTask
+                                ? [Colors.red.shade600, Colors.red.shade400]
+                                : [Colors.red.shade500, Colors.red.shade300],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.red.withValues(alpha: 0.3),
+                              blurRadius: 8,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.3),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Center(
+                                    child: Text(
+                                      '${index + 1}',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const Spacer(),
+                                if (isMainTask)
+                                  Icon(Icons.star, color: Colors.white, size: 16),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
                             Text(
-                              node.task.title,
+                              node.task.taskName ?? 'Untitled',
                               style: GoogleFonts.poppins(
-                                fontSize: 11,
+                                fontSize: 13,
                                 fontWeight: FontWeight.w600,
+                                color: Colors.white,
                               ),
-                              textAlign: TextAlign.center,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${node.task.duration} days',
-                              style: GoogleFonts.poppins(
-                                fontSize: 10,
-                                color: Colors.grey.shade600,
-                              ),
+                            const Spacer(),
+                            Row(
+                              children: [
+                                Icon(Icons.timer, color: Colors.white.withValues(alpha: 0.8), size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${node.task.duration}d',
+                                  style: GoogleFonts.poppins(
+                                    fontSize: 12,
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ),
                       if (!isLast)
                         SizedBox(
-                          width: 30,
-                          child: Icon(
-                            Icons.arrow_forward,
-                            color: Colors.red.shade600,
-                            size: 20,
+                          width: 40,
+                          height: 100,
+                          child: Center(
+                            child: Icon(
+                              Icons.arrow_forward,
+                              color: Colors.red.shade600,
+                              size: 24,
+                            ),
                           ),
                         ),
                     ],
@@ -723,16 +1250,139 @@ class _CriticalPathScreenState extends State<CriticalPathScreen> {
       ),
     );
   }
+
+  Widget _buildRecommendationsCard() {
+    List<String> recommendations = [];
+
+    if (_criticalityRatio > 0.7) {
+      recommendations.add('Consider adding parallel tasks to reduce critical path dependencies');
+      recommendations.add('Review task durations for optimization opportunities');
+    }
+    
+    if (_totalSlackDays < 5) {
+      recommendations.add('Low schedule buffer - consider adding contingency time');
+    }
+
+    if (_criticalPath.length > _tasks.length * 0.8) {
+      recommendations.add('Most tasks are critical - review project structure for efficiency');
+    }
+
+    if (recommendations.isEmpty) {
+      recommendations.add('Schedule appears well-balanced with good flexibility');
+      recommendations.add('Monitor critical path tasks closely for any delays');
+    }
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.lightbulb, color: Colors.amber.shade600, size: 24),
+                const SizedBox(width: 12),
+                Text(
+                  'Recommendations',
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber.shade700,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            ...recommendations.asMap().entries.map((entry) {
+              final index = entry.key;
+              final recommendation = entry.value;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.amber.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.amber.shade200),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade600,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${index + 1}',
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        recommendation,
+                        style: GoogleFonts.poppins(
+                          fontSize: 14,
+                          color: Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptySection(String message, IconData icon) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(icon, size: 48, color: Colors.grey.shade400),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class CriticalPathNode {
-  final ScheduleModel task;
-  final DateTime earliestStart;
-  final DateTime latestStart;
-  final DateTime earliestFinish;
-  final DateTime latestFinish;
+  final GanttRowData task;
+  DateTime earliestStart;
+  DateTime latestStart;
+  DateTime earliestFinish;
+  DateTime latestFinish;
   double totalFloat;
   double freeFloat;
+  List<CriticalPathNode> predecessors;
+  List<CriticalPathNode> successors;
 
   CriticalPathNode({
     required this.task,
@@ -742,7 +1392,14 @@ class CriticalPathNode {
     required this.latestFinish,
     required this.totalFloat,
     required this.freeFloat,
+    required this.predecessors,
+    required this.successors,
   });
 
-  bool get isCritical => totalFloat == 0;
+  bool get isCritical => totalFloat <= 0.5; // Allow for small rounding differences
+
+  @override
+  String toString() {
+    return 'CriticalPathNode(${task.taskName}, float: $totalFloat)';
+  }
 }
