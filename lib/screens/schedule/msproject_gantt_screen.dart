@@ -8,7 +8,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
-import 'dart:async'; 
+import 'dart:async';
 
 class MSProjectGanttScreen extends StatefulWidget {
   final ProjectModel project;
@@ -30,6 +30,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
   StreamSubscription<QuerySnapshot>? _firebaseListener;
+  DateTime? _projectStartDate;
+  DateTime? _projectEndDate;
 
   static const double rowHeight = 24.0;
   static const double headerHeight = 40.0;
@@ -45,9 +47,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   static const int defaultRowCount = 6;
   bool _isLoading = true;
 
-  DateTime _projectStartDate = DateTime.now();
-  DateTime _projectEndDate = DateTime.now().add(Duration(days: 30));
-
   // Temporary storage for edited row data
   final Map<int, GanttRowData> _editedRows = {};
 
@@ -59,6 +58,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     super.initState();
     _initializeRealtimeClock();
     _setupFirebaseListener();
+    _loadProjectDates();
     _loadTasksFromFirebase();
   }
 
@@ -71,13 +71,78 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     super.dispose();
   }
 
+  // Fetch project start and end dates from Firestore with detailed logging
+  Future<void> _loadProjectDates() async {
+    widget.logger.i('📅 Attempting to load project dates for project ID: ${widget.project.id}');
+    try {
+      final docRef = FirebaseFirestore.instance.collection('Projects').doc(widget.project.id);
+      widget.logger.d('Querying Firestore at path: Projects/${widget.project.id}');
+      final doc = await docRef.get();
+      
+      if (doc.exists) {
+        final data = doc.data();
+        widget.logger.d('Document data: $data');
+        
+        if (data != null && data.containsKey('startDate') && data.containsKey('endDate')) {
+          final startDate = (data['startDate'] as Timestamp?)?.toDate();
+          final endDate = (data['endDate'] as Timestamp?)?.toDate();
+          
+          if (startDate != null && endDate != null) {
+            if (mounted) {
+              setState(() {
+                _projectStartDate = startDate;
+                _projectEndDate = endDate;
+                _isLoading = false; // Only set to false if dates are valid
+              });
+              widget.logger.i('✅ Successfully loaded project dates: $startDate to $endDate');
+            }
+          } else {
+            widget.logger.w('⚠️ startDate or endDate is null in Firestore document');
+            _setDefaultDates();
+          }
+        } else {
+          widget.logger.w('⚠️ Document missing startDate or endDate fields');
+          _setDefaultDates();
+        }
+      } else {
+        widget.logger.w('⚠️ Project document does not exist for ID: ${widget.project.id}');
+        _setDefaultDates();
+      }
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error loading project dates for project ID: ${widget.project.id}', error: e, stackTrace: stackTrace);
+      _setDefaultDates();
+    }
+  }
+
+  void _setDefaultDates() {
+    if (mounted) {
+      setState(() {
+        final now = DateTime.now();
+        _projectStartDate = DateTime(now.year, now.month, now.day);
+        _projectEndDate = DateTime(now.year, now.month + 1, now.day);
+        _isOfflineMode = true;
+        _isLoading = false;
+      });
+      widget.logger.i('📅 Set default dates: $_projectStartDate to $_projectEndDate');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Failed to load project dates, using default timeline',
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+  }
+
   // Initialize real-time clock for dynamic date updates
   void _initializeRealtimeClock() {
-    // Update project dates every minute to ensure current date is accurate
     Timer.periodic(Duration(minutes: 1), (timer) {
       if (mounted) {
         setState(() {
-          _calculateProjectDates();
+          // Refresh UI to ensure date display is current
+          widget.logger.d('🔄 Realtime clock tick, refreshing UI');
         });
       }
     });
@@ -93,16 +158,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         .listen((snapshot) {
       if (!mounted) return;
 
+      widget.logger.d('📅 Received Firebase snapshot with ${snapshot.docs.length} documents');
       List<GanttRowData> loadedRows = [];
       for (var doc in snapshot.docs) {
         final data = doc.data();
         loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
       }
 
-      // Sort by displayOrder in-memory
       loadedRows.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
-
-      // Update cache and UI
       _cachedProjects[widget.project.id] = List.from(loadedRows);
 
       if (loadedRows.isNotEmpty) {
@@ -117,15 +180,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       setState(() {
         _isLoading = false;
         _isOfflineMode = false;
-        _calculateProjectDates();
         _computeColumnWidths();
       });
 
-      widget.logger.i(
-        '📅 MSProjectGantt: Real-time update with ${_rows.length} rows',
-      );
-    }, onError: (e) {
-      widget.logger.e('❌ Firebase listener error', error: e);
+      widget.logger.i('📅 MSProjectGantt: Real-time update with ${_rows.length} rows');
+    }, onError: (e, stackTrace) {
+      widget.logger.e('❌ Firebase listener error', error: e, stackTrace: stackTrace);
       setState(() {
         _isOfflineMode = true;
       });
@@ -148,26 +208,19 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     setState(() => _isLoading = true);
 
     try {
-      // Try to load from cache first
       if (_cachedProjects.containsKey(widget.project.id)) {
         _rows = List.from(_cachedProjects[widget.project.id]!);
         _sortRowsByHierarchy();
         while (_rows.length < defaultRowCount) {
           _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
         }
-        _calculateProjectDates();
         _computeColumnWidths();
         setState(() => _isLoading = false);
-        widget.logger.i(
-          '📅 MSProjectGantt: Loaded ${_rows.length} rows from cache',
-        );
+        widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from cache');
         return;
       }
-
-      // Initial load handled by real-time listener
-      // Just wait for the listener to update the UI
-    } catch (e) {
-      widget.logger.e('❌ MSProjectGantt: Error loading tasks', error: e);
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ MSProjectGantt: Error loading tasks', error: e, stackTrace: stackTrace);
       _isOfflineMode = true;
       if (mounted) {
         _initializeDefaultRows();
@@ -181,33 +234,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       defaultRowCount,
       (index) => GanttRowData(id: 'row_${index + 1}'),
     );
-    _calculateProjectDates();
     _computeColumnWidths();
-  }
-
-  void _calculateProjectDates() {
-    // Combine original rows with edited rows for date calculation
-    List<GanttRowData> allRows = [];
-    for (int i = 0; i < _rows.length; i++) {
-      allRows.add(_editedRows[i] ?? _rows[i]);
-    }
-
-    final activeTasks = allRows.where((row) => row.hasData).toList();
-    if (activeTasks.isNotEmpty) {
-      _projectStartDate = activeTasks
-          .map((row) => row.startDate!)
-          .reduce((a, b) => a.isBefore(b) ? a : b);
-      _projectEndDate = activeTasks
-          .map((row) => row.endDate!)
-          .reduce((a, b) => a.isAfter(b) ? a : b);
-
-      _projectStartDate = _projectStartDate.subtract(Duration(days: 7));
-      _projectEndDate = _projectEndDate.add(Duration(days: 7));
-    } else {
-      final now = DateTime.now();
-      _projectStartDate = DateTime(now.year, now.month, now.day);
-      _projectEndDate = DateTime(now.year, now.month + 1, now.day);
-    }
   }
 
   void _addNewRow({int? insertAfterIndex}) {
@@ -222,6 +249,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       _calculateHierarchy();
       _computeColumnWidths();
     });
+    widget.logger.i('📅 Added new row at index: ${insertAfterIndex ?? _rows.length - 1}');
   }
 
   void _deleteRow(int index) {
@@ -231,7 +259,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       setState(() {
         _rows.removeAt(index);
         _editedRows.remove(index);
-        // Update indices in _editedRows
         final updatedEditedRows = <int, GanttRowData>{};
         _editedRows.forEach((key, value) {
           if (key > index) {
@@ -249,6 +276,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (rowToDelete.firestoreId != null) {
         _deleteRowFromFirebase(rowToDelete.firestoreId!);
       }
+      widget.logger.i('📅 Deleted row at index: $index, firestoreId: ${rowToDelete.firestoreId}');
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -261,6 +289,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           ),
         );
       }
+      widget.logger.w('⚠️ Attempted to delete protected row at index: $index');
     }
   }
 
@@ -271,6 +300,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         widget.project.name,
         index,
       );
+      widget.logger.d('Saving row data to Firebase: $rowData');
 
       if (row.firestoreId != null) {
         await FirebaseFirestore.instance
@@ -290,7 +320,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         );
       }
 
-      // Update cache with successful save
       if (_cachedProjects.containsKey(widget.project.id)) {
         final cachedRows = _cachedProjects[widget.project.id]!;
         final existingIndex = cachedRows.indexWhere((r) => r.id == row.id);
@@ -300,10 +329,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           cachedRows.add(GanttRowData.from(row));
         }
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       widget.logger.e(
         '❌ Error saving row to Firebase for project ${widget.project.name} (${widget.project.id})',
         error: e,
+        stackTrace: stackTrace,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -325,9 +355,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           .collection('Schedule')
           .doc(firestoreId)
           .delete();
-      widget.logger.i('✅ Deleted row from Firebase');
-    } catch (e) {
-      widget.logger.e('❌ Error deleting row from Firebase', error: e);
+      widget.logger.i('✅ Deleted row from Firebase: $firestoreId');
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error deleting row from Firebase', error: e, stackTrace: stackTrace);
     }
   }
 
@@ -345,29 +375,96 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       _editedRows[index] = row;
 
-      if (taskName != null) row.taskName = taskName;
-      if (duration != null) row.duration = duration;
-      if (startDate != null) row.startDate = startDate;
-      if (endDate != null) row.endDate = endDate;
-      if (taskType != null) row.taskType = taskType;
-
-      if (row.startDate != null &&
-          row.endDate != null &&
-          row.duration == null) {
-        row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
-      } else if (row.startDate != null &&
-          row.duration != null &&
-          row.endDate == null) {
-        row.endDate = row.startDate!.add(Duration(days: row.duration! - 1));
-      } else if (row.endDate != null &&
-          row.duration != null &&
-          row.startDate == null) {
-        row.startDate = row.endDate!.subtract(
-          Duration(days: row.duration! - 1),
-        );
+      if (taskName != null) {
+        row.taskName = taskName;
+        widget.logger.d('Updated task name for row $index: $taskName');
+      }
+      if (duration != null) {
+        row.duration = duration;
+        widget.logger.d('Updated duration for row $index: $duration');
+      }
+      if (startDate != null && _projectStartDate != null && _projectEndDate != null) {
+        if (startDate.isAfter(_projectStartDate!.subtract(Duration(days: 1))) &&
+            startDate.isBefore(_projectEndDate!.add(Duration(days: 1)))) {
+          row.startDate = startDate;
+          widget.logger.d('Updated start date for row $index: $startDate');
+        } else {
+          widget.logger.w('⚠️ Start date $startDate outside project timeline ($_projectStartDate to $_projectEndDate)');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Start date must be within project timeline',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+      if (endDate != null && _projectStartDate != null && _projectEndDate != null) {
+        if (endDate.isAfter(_projectStartDate!.subtract(Duration(days: 1))) &&
+            endDate.isBefore(_projectEndDate!.add(Duration(days: 1)))) {
+          row.endDate = endDate;
+          widget.logger.d('Updated end date for row $index: $endDate');
+        } else {
+          widget.logger.w('⚠️ End date $endDate outside project timeline ($_projectStartDate to $_projectEndDate)');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'End date must be within project timeline',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+      if (taskType != null) {
+        row.taskType = taskType;
+        widget.logger.d('Updated task type for row $index: $taskType');
       }
 
-      _calculateProjectDates();
+      if (row.startDate != null && row.endDate != null && row.duration == null) {
+        row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
+        widget.logger.d('Calculated duration for row $index: ${row.duration}');
+      } else if (row.startDate != null && row.duration != null && row.endDate == null) {
+        final potentialEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
+        if (_projectEndDate != null && potentialEndDate.isBefore(_projectEndDate!.add(Duration(days: 1)))) {
+          row.endDate = potentialEndDate;
+          widget.logger.d('Calculated end date for row $index: ${row.endDate}');
+        } else {
+          row.duration = null;
+          widget.logger.w('⚠️ Duration results in end date $potentialEndDate outside project timeline');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Duration results in end date outside project timeline',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      } else if (row.endDate != null && row.duration != null && row.startDate == null) {
+        final potentialStartDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
+        if (_projectStartDate != null && potentialStartDate.isAfter(_projectStartDate!.subtract(Duration(days: 1)))) {
+          row.startDate = potentialStartDate;
+          widget.logger.d('Calculated start date for row $index: ${row.startDate}');
+        } else {
+          row.duration = null;
+          widget.logger.w('⚠️ Duration results in start date $potentialStartDate outside project timeline');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Duration results in start date outside project timeline',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+
       _computeColumnWidths();
     });
   }
@@ -381,12 +478,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       for (var entry in _editedRows.entries) {
         final index = entry.key;
         final row = entry.value;
-        if (row.taskName?.isNotEmpty == true ||
-            row.startDate != null ||
-            row.endDate != null) {
+        if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
           setState(() {
             _rows[index] = GanttRowData.from(row);
           });
+          widget.logger.i('📅 Saved row $index locally in offline mode');
         }
       }
       setState(() {
@@ -408,9 +504,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
-      if (row.taskName?.isNotEmpty == true ||
-          row.startDate != null ||
-          row.endDate != null) {
+      if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
         await _saveRowToFirebase(row, i);
         setState(() {
           _rows[i] = GanttRowData.from(row);
@@ -431,6 +525,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         ),
       );
     }
+    widget.logger.i('📅 Saved all rows to Firebase');
   }
 
   double _measureText(String text, TextStyle style) {
@@ -450,7 +545,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
     final cellStyle = GoogleFonts.poppins(fontSize: 11);
 
-    // Number column
     double headerWidth = _measureText('No.', headerStyle) + 16;
     double maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -465,7 +559,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _numberColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Task Name column
     headerWidth = _measureText('Task Name', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -477,7 +570,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 48;
     _taskColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Duration column
     headerWidth = _measureText('Duration', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -489,7 +581,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _durationColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Start column
     headerWidth = _measureText('Start', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -503,7 +594,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _startColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Finish column
     headerWidth = _measureText('Finish', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -516,6 +606,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
     maxCellWidth += 48;
     _finishColumnWidth = math.max(headerWidth, maxCellWidth);
+    widget.logger.d('📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth');
   }
 
   void _calculateHierarchy() {
@@ -527,9 +618,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
       try {
         row.childIds.clear();
-      } catch (e) {
+      } catch (e, stackTrace) {
         row.childIds = <String>[];
-        widget.logger.w('Had to recreate childIds list for row ${row.id}');
+        widget.logger.w('⚠️ Had to recreate childIds list for row ${row.id}', error: e, stackTrace: stackTrace);
       }
     }
 
@@ -545,8 +636,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
           if (childRow.taskType == TaskType.mainTask) break;
 
-          if (childRow.taskType == TaskType.subTask &&
-              childRow.parentId == null) {
+          if (childRow.taskType == TaskType.subTask && childRow.parentId == null) {
             childRow.parentId = row.id;
             childRow.hierarchyLevel = 1;
             _safeAddChildId(row, childRow.id);
@@ -554,20 +644,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             for (int k = j + 1; k < _rows.length; k++) {
               final subChildRow = _editedRows[k] ?? _rows[k];
 
-              if (subChildRow.taskType == TaskType.mainTask ||
-                  subChildRow.taskType == TaskType.subTask) {
+              if (subChildRow.taskType == TaskType.mainTask || subChildRow.taskType == TaskType.subTask) {
                 break;
               }
 
-              if (subChildRow.taskType == TaskType.task &&
-                  subChildRow.parentId == null) {
+              if (subChildRow.taskType == TaskType.task && subChildRow.parentId == null) {
                 subChildRow.parentId = childRow.id;
                 subChildRow.hierarchyLevel = 2;
                 _safeAddChildId(childRow, subChildRow.id);
               }
             }
-          } else if (childRow.taskType == TaskType.task &&
-              childRow.parentId == null) {
+          } else if (childRow.taskType == TaskType.task && childRow.parentId == null) {
             childRow.parentId = row.id;
             childRow.hierarchyLevel = 1;
             _safeAddChildId(row, childRow.id);
@@ -575,18 +662,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         }
       }
     }
+    widget.logger.d('📅 Calculated hierarchy for ${_rows.length} rows');
   }
 
   void _safeAddChildId(GanttRowData parentRow, String childId) {
     try {
       parentRow.childIds.add(childId);
-    } catch (e) {
+    } catch (e, stackTrace) {
       List<String> newList = List<String>.from(parentRow.childIds);
       newList.add(childId);
       parentRow.childIds = newList;
-      widget.logger.w(
-        'Had to recreate childIds list for parent ${parentRow.id}',
-      );
+      widget.logger.w('⚠️ Had to recreate childIds list for parent ${parentRow.id}', error: e, stackTrace: stackTrace);
     }
   }
 
@@ -630,15 +716,16 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     setState(() {
       _rows = sortedRows;
     });
+    widget.logger.d('📅 Sorted rows by hierarchy, total rows: ${_rows.length}');
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    if (_isLoading || _projectStartDate == null || _projectEndDate == null) {
       return Center(child: CircularProgressIndicator());
     }
 
-    final totalDays = _projectEndDate.difference(_projectStartDate).inDays + 1;
+    final totalDays = _projectEndDate!.difference(_projectStartDate!).inDays + 1;
     final ganttWidth = totalDays * dayWidth;
 
     return Column(
@@ -800,14 +887,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             ),
             child: GestureDetector(
               onSecondaryTapDown: (details) {
-                final RenderBox renderBox =
-                    context.findRenderObject() as RenderBox;
+                final RenderBox renderBox = context.findRenderObject() as RenderBox;
                 final position = renderBox.localToGlobal(details.localPosition);
                 _showContextMenu(context, position, index);
               },
               onLongPress: () {
-                final RenderBox renderBox =
-                    context.findRenderObject() as RenderBox;
+                final RenderBox renderBox = context.findRenderObject() as RenderBox;
                 final position = renderBox.localToGlobal(
                   Offset(_taskColumnWidth / 2, rowHeight / 2),
                 );
@@ -827,10 +912,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                       color: Colors.grey.shade400,
                     ),
                     border: InputBorder.none,
-                    contentPadding: _getHierarchicalPadding(
-                      index,
-                      currentTaskType,
-                    ),
+                    contentPadding: _getHierarchicalPadding(index, currentTaskType),
                     isDense: true,
                   ),
                   maxLines: 1,
@@ -868,10 +950,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                     color: Colors.grey.shade400,
                   ),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   isDense: true,
                 ),
                 maxLines: 1,
@@ -915,7 +994,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             child: CustomPaint(
               painter: GanttRowPainter(
                 row: row,
-                projectStartDate: _projectStartDate,
+                projectStartDate: _projectStartDate!,
                 dayWidth: dayWidth,
                 rowHeight: rowHeight,
               ),
@@ -934,12 +1013,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       onTap: () async {
         final selectedDate = await showDatePicker(
           context: context,
-          initialDate: date ?? DateTime.now(),
-          firstDate: DateTime(2020),
-          lastDate: DateTime(2030),
+          initialDate: date ?? _projectStartDate ?? DateTime.now(),
+          firstDate: _projectStartDate ?? DateTime(2020),
+          lastDate: _projectEndDate ?? DateTime(2030),
         );
         if (selectedDate != null) {
           onDateSelected(selectedDate);
+          widget.logger.d('Selected date: $selectedDate');
         }
       },
       child: Container(
@@ -979,6 +1059,20 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                       style: GoogleFonts.poppins(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Flexible(
+                    child: Text(
+                      _projectStartDate != null && _projectEndDate != null
+                          ? '${DateFormat('MMM d, yyyy').format(_projectStartDate!)} - ${DateFormat('MMM d, yyyy').format(_projectEndDate!)}'
+                          : 'Failed to load project dates',
+                      style: GoogleFonts.poppins(
+                        fontSize: 10,
+                        color: Colors.grey.shade700,
+                        fontWeight: FontWeight.w400,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1045,28 +1139,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Widget _buildMonthHeaders() {
     List<Widget> monthHeaders = [];
-    DateTime currentMonth = DateTime(
-      _projectStartDate.year,
-      _projectStartDate.month,
-      1,
-    );
-    final totalDays = _projectEndDate.difference(_projectStartDate).inDays + 1;
+    DateTime currentMonth = DateTime(_projectStartDate!.year, _projectStartDate!.month, 1);
+    final totalDays = _projectEndDate!.difference(_projectStartDate!).inDays + 1;
     final ganttWidth = totalDays * dayWidth;
 
-    final availableWidth = ganttWidth - 2.0;
-
-    while (currentMonth.isBefore(_projectEndDate) ||
-        currentMonth.isAtSameMomentAs(_projectEndDate)) {
-      DateTime monthEnd = DateTime(
-        currentMonth.year,
-        currentMonth.month + 1,
-        0,
-      );
-      if (monthEnd.isAfter(_projectEndDate)) monthEnd = _projectEndDate;
-
-      DateTime monthStart = currentMonth.isBefore(_projectStartDate)
-          ? _projectStartDate
-          : currentMonth;
+    while (currentMonth.isBefore(_projectEndDate!) || currentMonth.isAtSameMomentAs(_projectEndDate!)) {
+      DateTime monthEnd = DateTime(currentMonth.year, currentMonth.month + 1, 0);
+      if (monthEnd.isAfter(_projectEndDate!)) monthEnd = _projectEndDate!;
+      DateTime monthStart = currentMonth.isBefore(_projectStartDate!) ? _projectStartDate! : currentMonth;
       int daysInMonth = monthEnd.difference(monthStart).inDays + 1;
       double monthWidth = daysInMonth * dayWidth;
 
@@ -1097,7 +1177,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
     return ClipRect(
       child: SizedBox(
-        width: availableWidth,
+        width: ganttWidth,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           physics: NeverScrollableScrollPhysics(),
@@ -1109,17 +1189,15 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Widget _buildDayHeaders() {
     List<Widget> dayHeaders = [];
-    final totalDays = _projectEndDate.difference(_projectStartDate).inDays + 1;
+    final totalDays = _projectEndDate!.difference(_projectStartDate!).inDays + 1;
     final dayHeaderStyle = GoogleFonts.poppins(
       fontSize: 8,
       fontWeight: FontWeight.w400,
     );
     final ganttWidth = totalDays * dayWidth;
 
-    final availableWidth = ganttWidth - 2.0;
-
     for (int i = 0; i < totalDays; i++) {
-      DateTime currentDate = _projectStartDate.add(Duration(days: i));
+      DateTime currentDate = _projectStartDate!.add(Duration(days: i));
       dayHeaders.add(
         Container(
           width: dayWidth,
@@ -1142,7 +1220,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
     return ClipRect(
       child: SizedBox(
-        width: availableWidth,
+        width: ganttWidth,
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           physics: NeverScrollableScrollPhysics(),
@@ -1179,11 +1257,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
 
     Overlay.of(context).insert(_overlayEntry!);
+    widget.logger.d('📅 Showing context menu for row $rowIndex at position $position');
   }
 
   void _removeOverlay() {
     _overlayEntry?.remove();
     _overlayEntry = null;
+    widget.logger.d('📅 Removed context menu overlay');
   }
 
   void _setTaskType(int index, TaskType taskType) {
@@ -1193,10 +1273,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       _editedRows[index] = row;
       row.taskType = taskType;
-
       _calculateHierarchy();
       _computeColumnWidths();
     });
+    widget.logger.i('📅 Set task type for row $index to $taskType');
   }
 
   TextStyle _getTaskNameStyle(TaskType taskType) {
@@ -1254,8 +1334,7 @@ class GanttRowPainter extends CustomPainter {
   }
 
   void _drawGanttBar(Canvas canvas, Size size) {
-    final startOffset =
-        row.startDate!.difference(projectStartDate).inDays * dayWidth;
+    final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
     final duration = row.endDate!.difference(row.startDate!).inDays + 1;
     final barWidth = duration * dayWidth;
 
@@ -1359,8 +1438,7 @@ class GanttChartPainter extends CustomPainter {
   void _drawGanttBar(Canvas canvas, GanttRowData row, int rowIndex) {
     if (row.startDate == null || row.endDate == null) return;
 
-    final startOffset =
-        row.startDate!.difference(projectStartDate).inDays * dayWidth;
+    final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
     final duration = row.endDate!.difference(row.startDate!).inDays + 1;
     final barWidth = duration * dayWidth;
 
