@@ -8,18 +8,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
+import 'dart:async'; 
 
 class MSProjectGanttScreen extends StatefulWidget {
-  final String projectId;
-  final String projectName;
+  final ProjectModel project;
   final Logger logger;
 
   const MSProjectGanttScreen({
     super.key,
-    required this.projectId,
-    required this.projectName,
+    required this.project,
     required this.logger,
-    required ProjectModel project,
   });
 
   @override
@@ -27,11 +25,11 @@ class MSProjectGanttScreen extends StatefulWidget {
 }
 
 class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
-
   final Map<String, List<GanttRowData>> _cachedProjects = {};
   bool _isOfflineMode = false;
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
+  StreamSubscription<QuerySnapshot>? _firebaseListener;
 
   static const double rowHeight = 24.0;
   static const double headerHeight = 40.0;
@@ -53,50 +51,46 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   // Temporary storage for edited row data
   final Map<int, GanttRowData> _editedRows = {};
 
-  // New field for overlay management
+  // Overlay management
   OverlayEntry? _overlayEntry;
 
   @override
   void initState() {
     super.initState();
+    _initializeRealtimeClock();
+    _setupFirebaseListener();
     _loadTasksFromFirebase();
   }
 
   @override
   void dispose() {
-    _removeOverlay(); 
+    _firebaseListener?.cancel();
+    _removeOverlay();
     _horizontalScrollController.dispose();
     _verticalScrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadTasksFromFirebase() async {
-    if (!mounted) return;
-    setState(() => _isLoading = true);
-
-    try {
-      // Try to load from cache first
-      if (_cachedProjects.containsKey(widget.projectId)) {
-        _rows = List.from(_cachedProjects[widget.projectId]!);
-        while (_rows.length < defaultRowCount) {
-          _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
-        }
-        _calculateProjectDates();
-        _computeColumnWidths();
-        setState(() => _isLoading = false);
-        widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from cache');
-        
-        // Try to refresh from Firebase in background
-        _refreshFromFirebaseInBackground();
-        return;
+  // Initialize real-time clock for dynamic date updates
+  void _initializeRealtimeClock() {
+    // Update project dates every minute to ensure current date is accurate
+    Timer.periodic(Duration(minutes: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _calculateProjectDates();
+        });
       }
+    });
+  }
 
-      // Load from Firebase
-      final snapshot = await FirebaseFirestore.instance
-          .collection('Schedule')
-          .where('projectId', isEqualTo: widget.projectId)
-          .get();
-
+  // Setup Firebase real-time listener
+  void _setupFirebaseListener() {
+    _firebaseListener = FirebaseFirestore.instance
+        .collection('Schedule')
+        .where('projectId', isEqualTo: widget.project.id)
+        .orderBy('updatedAt', descending: true)
+        .snapshots()
+        .listen((snapshot) {
       if (!mounted) return;
 
       List<GanttRowData> loadedRows = [];
@@ -105,87 +99,89 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
       }
 
-      // Cache the loaded data
-      _cachedProjects[widget.projectId] = List.from(loadedRows);
+      // Sort by displayOrder in-memory
+      loadedRows.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
 
-      while (loadedRows.length < defaultRowCount) {
-        loadedRows.add(GanttRowData(id: 'row_${loadedRows.length + 1}'));
+      // Update cache and UI
+      _cachedProjects[widget.project.id] = List.from(loadedRows);
+
+      if (loadedRows.isNotEmpty) {
+        _rows = loadedRows;
+        _sortRowsByHierarchy();
       }
 
-      _rows = loadedRows;
-      _calculateProjectDates();
-      _computeColumnWidths();
-      _isOfflineMode = false;
-      widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from Firebase');
+      while (_rows.length < defaultRowCount) {
+        _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
+      }
+
+      setState(() {
+        _isLoading = false;
+        _isOfflineMode = false;
+        _calculateProjectDates();
+        _computeColumnWidths();
+      });
+
+      widget.logger.i(
+        '📅 MSProjectGantt: Real-time update with ${_rows.length} rows',
+      );
+    }, onError: (e) {
+      widget.logger.e('❌ Firebase listener error', error: e);
+      setState(() {
+        _isOfflineMode = true;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Working offline - changes will sync when connection is restored',
+              style: GoogleFonts.poppins(),
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _loadTasksFromFirebase() async {
+    if (!mounted) return;
+    setState(() => _isLoading = true);
+
+    try {
+      // Try to load from cache first
+      if (_cachedProjects.containsKey(widget.project.id)) {
+        _rows = List.from(_cachedProjects[widget.project.id]!);
+        _sortRowsByHierarchy();
+        while (_rows.length < defaultRowCount) {
+          _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
+        }
+        _calculateProjectDates();
+        _computeColumnWidths();
+        setState(() => _isLoading = false);
+        widget.logger.i(
+          '📅 MSProjectGantt: Loaded ${_rows.length} rows from cache',
+        );
+        return;
+      }
+
+      // Initial load handled by real-time listener
+      // Just wait for the listener to update the UI
     } catch (e) {
       widget.logger.e('❌ MSProjectGantt: Error loading tasks', error: e);
       _isOfflineMode = true;
       if (mounted) {
         _initializeDefaultRows();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Working offline - changes will sync when connection is restored', 
-                        style: GoogleFonts.poppins()),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
         setState(() => _isLoading = false);
       }
     }
   }
 
-  Future<void> _refreshFromFirebaseInBackground() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('Schedule')
-          .where('projectId', isEqualTo: widget.projectId)
-          .get();
-
-      List<GanttRowData> loadedRows = [];
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
-      }
-
-      // Update cache and UI if data changed
-      if (mounted && loadedRows.isNotEmpty) {
-        _cachedProjects[widget.projectId] = List.from(loadedRows);
-        
-        // Check if we need to update the UI
-        bool hasChanges = false;
-        if (loadedRows.length != _rows.where((r) => r.hasData).length) {
-          hasChanges = true;
-        } else {
-          for (int i = 0; i < loadedRows.length; i++) {
-            if (i < _rows.length && _rows[i] != loadedRows[i]) {
-              hasChanges = true;
-              break;
-            }
-          }
-        }
-
-        if (hasChanges) {
-          while (loadedRows.length < defaultRowCount) {
-            loadedRows.add(GanttRowData(id: 'row_${loadedRows.length + 1}'));
-          }
-          setState(() {
-            _rows = loadedRows;
-            _calculateProjectDates();
-            _computeColumnWidths();
-          });
-          widget.logger.i('📅 MSProjectGantt: Updated from Firebase background refresh');
-        }
-      }
-    } catch (e) {
-      widget.logger.w('⚠️ Background refresh failed', error: e);
-    }
-  }
-
   void _initializeDefaultRows() {
-    _rows = List.generate(defaultRowCount, (index) => GanttRowData(id: 'row_${index + 1}'));
+    _rows = List.generate(
+      defaultRowCount,
+      (index) => GanttRowData(id: 'row_${index + 1}'),
+    );
+    _calculateProjectDates();
     _computeColumnWidths();
   }
 
@@ -195,7 +191,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     for (int i = 0; i < _rows.length; i++) {
       allRows.add(_editedRows[i] ?? _rows[i]);
     }
-    
+
     final activeTasks = allRows.where((row) => row.hasData).toList();
     if (activeTasks.isNotEmpty) {
       _projectStartDate = activeTasks
@@ -209,26 +205,44 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       _projectEndDate = _projectEndDate.add(Duration(days: 7));
     } else {
       final now = DateTime.now();
-      _projectStartDate = DateTime(now.year, now.month, 1);
-      _projectEndDate = DateTime(now.year, now.month + 1, 0);
+      _projectStartDate = DateTime(now.year, now.month, now.day);
+      _projectEndDate = DateTime(now.year, now.month + 1, now.day);
     }
   }
 
-  void _addNewRow() {
+  void _addNewRow({int? insertAfterIndex}) {
     if (!mounted) return;
     setState(() {
-      _rows.add(GanttRowData(id: 'new_row_${DateTime.now().millisecondsSinceEpoch}'));
+      final newRow = GanttRowData(id: 'new_row_${DateTime.now().millisecondsSinceEpoch}');
+      if (insertAfterIndex != null && insertAfterIndex >= 0 && insertAfterIndex < _rows.length) {
+        _rows.insert(insertAfterIndex + 1, newRow);
+      } else {
+        _rows.add(newRow);
+      }
+      _calculateHierarchy();
       _computeColumnWidths();
     });
   }
 
   void _deleteRow(int index) {
     if (!mounted) return;
-    if (_rows.length > defaultRowCount) {
+    if (_rows.length > defaultRowCount && index >= defaultRowCount) {
       final rowToDelete = _rows[index];
       setState(() {
         _rows.removeAt(index);
         _editedRows.remove(index);
+        // Update indices in _editedRows
+        final updatedEditedRows = <int, GanttRowData>{};
+        _editedRows.forEach((key, value) {
+          if (key > index) {
+            updatedEditedRows[key - 1] = value;
+          } else if (key < index) {
+            updatedEditedRows[key] = value;
+          }
+        });
+        _editedRows.clear();
+        _editedRows.addAll(updatedEditedRows);
+        _calculateHierarchy();
         _computeColumnWidths();
       });
 
@@ -240,7 +254,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Cannot delete below minimum $defaultRowCount rows',
+              'Cannot delete default rows or invalid index',
               style: GoogleFonts.poppins(),
             ),
             backgroundColor: Colors.orange,
@@ -252,25 +266,33 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Future<void> _saveRowToFirebase(GanttRowData row, int index) async {
     try {
-      final rowData = row.toFirebaseMap(widget.projectId, widget.projectName, index);
+      final rowData = row.toFirebaseMap(
+        widget.project.id,
+        widget.project.name,
+        index,
+      );
 
       if (row.firestoreId != null) {
         await FirebaseFirestore.instance
             .collection('Schedule')
             .doc(row.firestoreId)
             .update(rowData);
-        widget.logger.i('✅ Updated row: ${row.taskName}');
+        widget.logger.i(
+          '✅ Updated row: ${row.taskName} for project ${widget.project.name} (${widget.project.id})',
+        );
       } else {
         final docRef = await FirebaseFirestore.instance
             .collection('Schedule')
             .add(rowData);
         row.firestoreId = docRef.id;
-        widget.logger.i('✅ Created new row: ${row.taskName}');
+        widget.logger.i(
+          '✅ Created new row: ${row.taskName} for project ${widget.project.name} (${widget.project.id})',
+        );
       }
 
       // Update cache with successful save
-      if (_cachedProjects.containsKey(widget.projectId)) {
-        final cachedRows = _cachedProjects[widget.projectId]!;
+      if (_cachedProjects.containsKey(widget.project.id)) {
+        final cachedRows = _cachedProjects[widget.project.id]!;
         final existingIndex = cachedRows.indexWhere((r) => r.id == row.id);
         if (existingIndex != -1) {
           cachedRows[existingIndex] = GanttRowData.from(row);
@@ -279,11 +301,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         }
       }
     } catch (e) {
-      widget.logger.e('❌ Error saving row to Firebase', error: e);
+      widget.logger.e(
+        '❌ Error saving row to Firebase for project ${widget.project.name} (${widget.project.id})',
+        error: e,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to save task: $e', style: GoogleFonts.poppins()),
+            content: Text(
+              'Failed to save task: $e',
+              style: GoogleFonts.poppins(),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -303,13 +331,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
   }
 
-  // UPDATE this method to handle taskType
-  void _updateRowData(int index, {
+  void _updateRowData(
+    int index, {
     String? taskName,
     int? duration,
     DateTime? startDate,
     DateTime? endDate,
-    TaskType? taskType, 
+    TaskType? taskType,
   }) {
     if (!mounted) return;
 
@@ -321,14 +349,22 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (duration != null) row.duration = duration;
       if (startDate != null) row.startDate = startDate;
       if (endDate != null) row.endDate = endDate;
-      if (taskType != null) row.taskType = taskType; 
+      if (taskType != null) row.taskType = taskType;
 
-      if (row.startDate != null && row.endDate != null && row.duration == null) {
+      if (row.startDate != null &&
+          row.endDate != null &&
+          row.duration == null) {
         row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
-      } else if (row.startDate != null && row.duration != null && row.endDate == null) {
+      } else if (row.startDate != null &&
+          row.duration != null &&
+          row.endDate == null) {
         row.endDate = row.startDate!.add(Duration(days: row.duration! - 1));
-      } else if (row.endDate != null && row.duration != null && row.startDate == null) {
-        row.startDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
+      } else if (row.endDate != null &&
+          row.duration != null &&
+          row.startDate == null) {
+        row.startDate = row.endDate!.subtract(
+          Duration(days: row.duration! - 1),
+        );
       }
 
       _calculateProjectDates();
@@ -338,13 +374,16 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Future<void> _saveAllRows() async {
     if (!mounted) return;
-    
+
+    _calculateHierarchy();
+
     if (_isOfflineMode) {
-      // In offline mode, update local cache and show message
       for (var entry in _editedRows.entries) {
         final index = entry.key;
         final row = entry.value;
-        if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
+        if (row.taskName?.isNotEmpty == true ||
+            row.startDate != null ||
+            row.endDate != null) {
           setState(() {
             _rows[index] = GanttRowData.from(row);
           });
@@ -356,8 +395,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Changes saved locally - will sync when online', 
-                        style: GoogleFonts.poppins()),
+            content: Text(
+              'Changes saved locally - will sync when online',
+              style: GoogleFonts.poppins(),
+            ),
             backgroundColor: Colors.orange,
           ),
         );
@@ -365,14 +406,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       return;
     }
 
-    // Online mode - save to Firebase
-    for (var entry in _editedRows.entries) {
-      final index = entry.key;
-      final row = entry.value;
-      if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
-        await _saveRowToFirebase(row, index);
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      if (row.taskName?.isNotEmpty == true ||
+          row.startDate != null ||
+          row.endDate != null) {
+        await _saveRowToFirebase(row, i);
         setState(() {
-          _rows[index] = GanttRowData.from(row);
+          _rows[i] = GanttRowData.from(row);
         });
       }
     }
@@ -382,7 +423,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Changes saved successfully', style: GoogleFonts.poppins()),
+          content: Text(
+            'Changes saved successfully',
+            style: GoogleFonts.poppins(),
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -409,20 +453,19 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     // Number column
     double headerWidth = _measureText('No.', headerStyle) + 16;
     double maxCellWidth = 0;
-    bool canDelete = _rows.length > defaultRowCount;
     for (int i = 0; i < _rows.length; i++) {
       String noText = '${i + 1}';
       double textW = _measureText(noText, cellStyle);
       double cellW = textW;
-      if (canDelete) {
-        cellW += 16 + 8; // Icon size + padding
+      if (i >= defaultRowCount) {
+        cellW += 16 + 8;
       }
       if (cellW > maxCellWidth) maxCellWidth = cellW;
     }
     maxCellWidth += 32;
     _numberColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Task Name column - use edited data when available
+    // Task Name column
     headerWidth = _measureText('Task Name', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -434,7 +477,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 48;
     _taskColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Duration column - use edited data when available
+    // Duration column
     headerWidth = _measureText('Duration', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -446,7 +489,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _durationColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Start column - use edited data when available
+    // Start column
     headerWidth = _measureText('Start', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -460,7 +503,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _startColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Finish column - use edited data when available
+    // Finish column
     headerWidth = _measureText('Finish', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -475,6 +518,120 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     _finishColumnWidth = math.max(headerWidth, maxCellWidth);
   }
 
+  void _calculateHierarchy() {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      row.parentId = null;
+      row.hierarchyLevel = 0;
+      row.displayOrder = i;
+
+      try {
+        row.childIds.clear();
+      } catch (e) {
+        row.childIds = <String>[];
+        widget.logger.w('Had to recreate childIds list for row ${row.id}');
+      }
+    }
+
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+
+      if (row.taskType == TaskType.mainTask) {
+        row.hierarchyLevel = 0;
+        row.displayOrder = i;
+
+        for (int j = i + 1; j < _rows.length; j++) {
+          final childRow = _editedRows[j] ?? _rows[j];
+
+          if (childRow.taskType == TaskType.mainTask) break;
+
+          if (childRow.taskType == TaskType.subTask &&
+              childRow.parentId == null) {
+            childRow.parentId = row.id;
+            childRow.hierarchyLevel = 1;
+            _safeAddChildId(row, childRow.id);
+
+            for (int k = j + 1; k < _rows.length; k++) {
+              final subChildRow = _editedRows[k] ?? _rows[k];
+
+              if (subChildRow.taskType == TaskType.mainTask ||
+                  subChildRow.taskType == TaskType.subTask) {
+                break;
+              }
+
+              if (subChildRow.taskType == TaskType.task &&
+                  subChildRow.parentId == null) {
+                subChildRow.parentId = childRow.id;
+                subChildRow.hierarchyLevel = 2;
+                _safeAddChildId(childRow, subChildRow.id);
+              }
+            }
+          } else if (childRow.taskType == TaskType.task &&
+              childRow.parentId == null) {
+            childRow.parentId = row.id;
+            childRow.hierarchyLevel = 1;
+            _safeAddChildId(row, childRow.id);
+          }
+        }
+      }
+    }
+  }
+
+  void _safeAddChildId(GanttRowData parentRow, String childId) {
+    try {
+      parentRow.childIds.add(childId);
+    } catch (e) {
+      List<String> newList = List<String>.from(parentRow.childIds);
+      newList.add(childId);
+      parentRow.childIds = newList;
+      widget.logger.w(
+        'Had to recreate childIds list for parent ${parentRow.id}',
+      );
+    }
+  }
+
+  void _sortRowsByHierarchy() {
+    List<GanttRowData> sortedRows = [];
+    Map<String, GanttRowData> rowMap = {};
+
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      rowMap[row.id] = row;
+    }
+
+    void addRowAndChildren(GanttRowData row) {
+      sortedRows.add(row);
+      List<String> sortedChildIds = List.from(row.childIds);
+      sortedChildIds.sort((a, b) {
+        final rowA = rowMap[a];
+        final rowB = rowMap[b];
+        if (rowA == null || rowB == null) return 0;
+        return rowA.displayOrder.compareTo(rowB.displayOrder);
+      });
+
+      for (String childId in sortedChildIds) {
+        final childRow = rowMap[childId];
+        if (childRow != null) {
+          addRowAndChildren(childRow);
+        }
+      }
+    }
+
+    List<GanttRowData> topLevelRows = rowMap.values
+        .where((row) => row.hierarchyLevel == 0 || row.parentId == null)
+        .toList();
+
+    topLevelRows.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+
+    for (GanttRowData topRow in topLevelRows) {
+      addRowAndChildren(topRow);
+    }
+
+    setState(() {
+      _rows = sortedRows;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -487,15 +644,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return Column(
       children: [
         _buildToolbar(),
-        Expanded(
-          child: _buildUnifiedGanttLayout(ganttWidth),
-        ),
+        Expanded(child: _buildUnifiedGanttLayout(ganttWidth)),
       ],
     );
   }
 
   Widget _buildUnifiedGanttLayout(double ganttWidth) {
-    final totalTableWidth = _numberColumnWidth +
+    final totalTableWidth =
+        _numberColumnWidth +
         _taskColumnWidth +
         _durationColumnWidth +
         _startColumnWidth +
@@ -569,47 +725,24 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
   }
 
-  // New method to calculate hierarchical indentation
   EdgeInsets _getHierarchicalPadding(int index, TaskType taskType) {
-    if (taskType != TaskType.task) {
-      // MainTask and SubTask use default padding
-      return _getTaskNamePadding(taskType);
-    }
-
-    // For regular tasks, find the nearest parent
-    TaskType? parentType;
-    for (int i = index - 1; i >= 0; i--) {
-      final parentRow = _editedRows[i] ?? _rows[i];
-      if (parentRow.taskType == TaskType.mainTask || parentRow.taskType == TaskType.subTask) {
-        parentType = parentRow.taskType;
-        break;
-      }
-    }
-
-    // Calculate indentation based on parent
-    double leftPadding;
-    if (parentType == TaskType.mainTask) {
-      leftPadding = 32.0; // Indent from main task
-    } else if (parentType == TaskType.subTask) {
-      leftPadding = 48.0; // Indent from subtask (which is already indented)
-    } else {
-      leftPadding = 8.0; // Orphaned task - top level
-    }
-
+    final row = _editedRows[index] ?? _rows[index];
+    double leftPadding = 8.0 + (row.hierarchyLevel * 16.0);
     return EdgeInsets.only(left: leftPadding, right: 8, top: 4, bottom: 4);
   }
 
   Widget _buildRow(int index, double ganttWidth) {
-    // Use edited row data if available, otherwise use original row data
     final row = _editedRows[index] ?? _rows[index];
-    final canDelete = _rows.length > defaultRowCount;
+    final canDelete = index >= defaultRowCount;
     final TaskType currentTaskType = row.taskType;
 
     return Container(
       height: rowHeight,
       decoration: BoxDecoration(
         color: index % 2 == 0 ? Colors.white : Colors.grey.shade50,
-        border: Border(bottom: BorderSide(color: Colors.grey.shade300, width: 0.5)),
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade300, width: 0.5),
+        ),
       ),
       child: Row(
         children: [
@@ -618,7 +751,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             height: rowHeight,
             decoration: BoxDecoration(
               color: Colors.grey.shade100,
-              border: Border(right: BorderSide(color: Colors.grey.shade300, width: 0.5)),
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
             ),
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: 8),
@@ -628,19 +763,29 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                       children: [
                         Text(
                           '${index + 1}',
-                          style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w500),
+                          style: GoogleFonts.poppins(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                         InkWell(
                           onTap: () => _deleteRow(index),
-                          child: Icon(Icons.close, size: 12, color: Colors.red.shade600),
+                          child: Icon(
+                            Icons.close,
+                            size: 12,
+                            color: Colors.red.shade600,
+                          ),
                         ),
                       ],
                     )
                   : Center(
                       child: Text(
                         '${index + 1}',
-                        style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w500),
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
             ),
@@ -649,17 +794,23 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             width: _taskColumnWidth,
             height: rowHeight,
             decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: Colors.grey.shade300, width: 0.5)),
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
             ),
             child: GestureDetector(
               onSecondaryTapDown: (details) {
-                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final RenderBox renderBox =
+                    context.findRenderObject() as RenderBox;
                 final position = renderBox.localToGlobal(details.localPosition);
                 _showContextMenu(context, position, index);
               },
               onLongPress: () {
-                final RenderBox renderBox = context.findRenderObject() as RenderBox;
-                final position = renderBox.localToGlobal(Offset(_taskColumnWidth / 2, rowHeight / 2));
+                final RenderBox renderBox =
+                    context.findRenderObject() as RenderBox;
+                final position = renderBox.localToGlobal(
+                  Offset(_taskColumnWidth / 2, rowHeight / 2),
+                );
                 _showContextMenu(context, position, index);
                 HapticFeedback.mediumImpact();
               },
@@ -671,9 +822,15 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                   style: _getTaskNameStyle(currentTaskType),
                   decoration: InputDecoration(
                     hintText: 'Enter task name',
-                    hintStyle: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade400),
+                    hintStyle: GoogleFonts.poppins(
+                      fontSize: 11,
+                      color: Colors.grey.shade400,
+                    ),
                     border: InputBorder.none,
-                    contentPadding: _getHierarchicalPadding(index, currentTaskType), // CHANGED: Use hierarchical padding
+                    contentPadding: _getHierarchicalPadding(
+                      index,
+                      currentTaskType,
+                    ),
                     isDense: true,
                   ),
                   maxLines: 1,
@@ -688,7 +845,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             width: _durationColumnWidth,
             height: rowHeight,
             decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: Colors.grey.shade300, width: 0.5)),
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
             ),
             child: ConstrainedBox(
               constraints: BoxConstraints(maxWidth: _durationColumnWidth - 16),
@@ -704,9 +863,15 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                 style: GoogleFonts.poppins(fontSize: 11),
                 decoration: InputDecoration(
                   hintText: 'days',
-                  hintStyle: GoogleFonts.poppins(fontSize: 11, color: Colors.grey.shade400),
+                  hintStyle: GoogleFonts.poppins(
+                    fontSize: 11,
+                    color: Colors.grey.shade400,
+                  ),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   isDense: true,
                 ),
                 maxLines: 1,
@@ -717,7 +882,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             width: _startColumnWidth,
             height: rowHeight,
             decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: Colors.grey.shade300, width: 0.5)),
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
             ),
             child: _buildDateCell(
               date: row.startDate,
@@ -728,7 +895,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             width: _finishColumnWidth,
             height: rowHeight,
             decoration: BoxDecoration(
-              border: Border(right: BorderSide(color: Colors.grey.shade300, width: 0.5)),
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
             ),
             child: _buildDateCell(
               date: row.endDate,
@@ -739,7 +908,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             width: ganttWidth,
             height: rowHeight,
             decoration: BoxDecoration(
-              border: Border(left: BorderSide(color: Colors.grey.shade400, width: 1)),
+              border: Border(
+                left: BorderSide(color: Colors.grey.shade400, width: 1),
+              ),
             ),
             child: CustomPaint(
               painter: GanttRowPainter(
@@ -795,29 +966,38 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  widget.projectName,
-                  style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                // ADDED: Show offline status
-                if (_isOfflineMode)
-                  Text(
-                    'Offline Mode',
-                    style: GoogleFonts.poppins(
-                      fontSize: 10,
-                      color: Colors.orange.shade700,
-                      fontWeight: FontWeight.w500,
+            child: Container(
+              constraints: BoxConstraints(maxHeight: 34),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(
+                      widget.project.name,
+                      style: GoogleFonts.poppins(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-              ],
+                  if (_isOfflineMode)
+                    Flexible(
+                      child: Text(
+                        'Offline Mode',
+                        style: GoogleFonts.poppins(
+                          fontSize: 10,
+                          color: Colors.orange.shade700,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-          // Offline indicator icon
           if (_isOfflineMode)
             Padding(
               padding: EdgeInsets.only(right: 8),
@@ -865,18 +1045,28 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Widget _buildMonthHeaders() {
     List<Widget> monthHeaders = [];
-    DateTime currentMonth = DateTime(_projectStartDate.year, _projectStartDate.month, 1);
+    DateTime currentMonth = DateTime(
+      _projectStartDate.year,
+      _projectStartDate.month,
+      1,
+    );
     final totalDays = _projectEndDate.difference(_projectStartDate).inDays + 1;
     final ganttWidth = totalDays * dayWidth;
-    
-    // Available width excluding parent container borders
+
     final availableWidth = ganttWidth - 2.0;
 
-    while (currentMonth.isBefore(_projectEndDate) || currentMonth.isAtSameMomentAs(_projectEndDate)) {
-      DateTime monthEnd = DateTime(currentMonth.year, currentMonth.month + 1, 0);
+    while (currentMonth.isBefore(_projectEndDate) ||
+        currentMonth.isAtSameMomentAs(_projectEndDate)) {
+      DateTime monthEnd = DateTime(
+        currentMonth.year,
+        currentMonth.month + 1,
+        0,
+      );
       if (monthEnd.isAfter(_projectEndDate)) monthEnd = _projectEndDate;
 
-      DateTime monthStart = currentMonth.isBefore(_projectStartDate) ? _projectStartDate : currentMonth;
+      DateTime monthStart = currentMonth.isBefore(_projectStartDate)
+          ? _projectStartDate
+          : currentMonth;
       int daysInMonth = monthEnd.difference(monthStart).inDays + 1;
       double monthWidth = daysInMonth * dayWidth;
 
@@ -891,7 +1081,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           child: Center(
             child: Text(
               DateFormat('MMM yyyy').format(currentMonth),
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w500, fontSize: 10),
+              style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w500,
+                fontSize: 10,
+              ),
               overflow: TextOverflow.ellipsis,
               maxLines: 1,
             ),
@@ -917,10 +1110,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   Widget _buildDayHeaders() {
     List<Widget> dayHeaders = [];
     final totalDays = _projectEndDate.difference(_projectStartDate).inDays + 1;
-    final dayHeaderStyle = GoogleFonts.poppins(fontSize: 8, fontWeight: FontWeight.w400);
+    final dayHeaderStyle = GoogleFonts.poppins(
+      fontSize: 8,
+      fontWeight: FontWeight.w400,
+    );
     final ganttWidth = totalDays * dayWidth;
-    
-    // Available width excluding parent container borders
+
     final availableWidth = ganttWidth - 2.0;
 
     for (int i = 0; i < totalDays; i++) {
@@ -957,28 +1152,23 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
   }
 
-  // New methods for context menu functionality
   void _showContextMenu(BuildContext context, Offset position, int rowIndex) {
     _removeOverlay();
-    
+
     _overlayEntry = OverlayEntry(
       builder: (context) => GestureDetector(
-        onTap: _removeOverlay, // Dismiss when tapping outside
+        onTap: _removeOverlay,
         behavior: HitTestBehavior.translucent,
         child: Stack(
           children: [
-            // Full screen overlay to capture taps
-            Positioned.fill(
-              child: Container(color: Colors.transparent),
-            ),
-            // Context menu
+            Positioned.fill(child: Container(color: Colors.transparent)),
             Positioned(
               left: position.dx,
               top: position.dy,
               child: TaskContextMenu(
                 onMakeMainTask: () => _setTaskType(rowIndex, TaskType.mainTask),
                 onMakeSubtask: () => _setTaskType(rowIndex, TaskType.subTask),
-                onAddNewRow: _addNewRow,
+                onAddNewRow: () => _addNewRow(insertAfterIndex: rowIndex),
                 onDeleteRow: () => _deleteRow(rowIndex),
                 onDismiss: _removeOverlay,
               ),
@@ -987,7 +1177,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         ),
       ),
     );
-    
+
     Overlay.of(context).insert(_overlayEntry!);
   }
 
@@ -998,11 +1188,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   void _setTaskType(int index, TaskType taskType) {
     if (!mounted) return;
-    
+
     setState(() {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       _editedRows[index] = row;
-      row.taskType = taskType; 
+      row.taskType = taskType;
+
+      _calculateHierarchy();
       _computeColumnWidths();
     });
   }
@@ -1025,113 +1217,102 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         return GoogleFonts.poppins(fontSize: 11);
     }
   }
-
-  EdgeInsets _getTaskNamePadding(TaskType taskType) {
-    switch (taskType) {
-      case TaskType.mainTask:
-        return EdgeInsets.symmetric(horizontal: 8, vertical: 4);
-      case TaskType.subTask:
-        return EdgeInsets.only(left: 24, right: 8, top: 4, bottom: 4);
-      case TaskType.task:
-        return EdgeInsets.symmetric(horizontal: 8, vertical: 4);
-    }
-  }
 }
 
-  class GanttRowPainter extends CustomPainter {
-    final GanttRowData row;
-    final DateTime projectStartDate;
-    final double dayWidth;
-    final double rowHeight;
+class GanttRowPainter extends CustomPainter {
+  final GanttRowData row;
+  final DateTime projectStartDate;
+  final double dayWidth;
+  final double rowHeight;
 
-    GanttRowPainter({
-      required this.row,
-      required this.projectStartDate,
-      required this.dayWidth,
-      required this.rowHeight,
-    });
+  GanttRowPainter({
+    required this.row,
+    required this.projectStartDate,
+    required this.dayWidth,
+    required this.rowHeight,
+  });
 
-    @override
-    void paint(Canvas canvas, Size size) {
-      _drawGrid(canvas, size);
+  @override
+  void paint(Canvas canvas, Size size) {
+    _drawGrid(canvas, size);
 
-      if (row.hasData && row.startDate != null && row.endDate != null) {
-        _drawGanttBar(canvas, size);
-      }
+    if (row.hasData && row.startDate != null && row.endDate != null) {
+      _drawGanttBar(canvas, size);
     }
-
-    void _drawGrid(Canvas canvas, Size size) {
-      final gridPaint = Paint()
-        ..color = Colors.grey.shade300
-        ..strokeWidth = 0.5;
-
-      final totalDays = (size.width / dayWidth).ceil();
-      for (int i = 0; i <= totalDays; i++) {
-        final x = i * dayWidth;
-        canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
-      }
-    }
-
-    void _drawGanttBar(Canvas canvas, Size size) {
-      final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
-      final duration = row.endDate!.difference(row.startDate!).inDays + 1;
-      final barWidth = duration * dayWidth;
-
-      final barHeight = rowHeight * 0.6;
-      final barTop = (rowHeight - barHeight) / 2;
-
-      // Different colors based on task type
-      Color barColor;
-      Color borderColor;
-      switch (row.taskType) {
-        case TaskType.mainTask:
-          barColor = Colors.blue.shade800;
-          borderColor = Colors.blue.shade900;
-          break;
-        case TaskType.subTask:
-          barColor = Colors.green.shade600;
-          borderColor = Colors.green.shade800;
-          break;
-        case TaskType.task:
-          barColor = Colors.blue.shade600;
-          borderColor = Colors.blue.shade800;
-          break;
-      }
-
-      final barPaint = Paint()
-        ..color = barColor
-        ..style = PaintingStyle.fill;
-
-      final barRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(startOffset + 2, barTop, barWidth - 4, barHeight),
-        Radius.circular(2),
-      );
-
-      canvas.drawRRect(barRect, barPaint);
-
-      final borderPaint = Paint()
-        ..color = borderColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
-
-      canvas.drawRRect(barRect, borderPaint);
-
-      final progressPaint = Paint()
-        ..color = barColor.withValues(alpha: 0.5) 
-        ..style = PaintingStyle.fill;
-
-      final progressWidth = (barWidth - 4) * 0.6;
-      final progressRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(startOffset + 2, barTop + 2, progressWidth, barHeight - 4),
-        Radius.circular(1),
-      );
-
-      canvas.drawRRect(progressRect, progressPaint);
-    }
-
-    @override
-    bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
   }
+
+  void _drawGrid(Canvas canvas, Size size) {
+    final gridPaint = Paint()
+      ..color = Colors.grey.shade300
+      ..strokeWidth = 0.5;
+
+    final totalDays = (size.width / dayWidth).ceil();
+    for (int i = 0; i <= totalDays; i++) {
+      final x = i * dayWidth;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+    }
+  }
+
+  void _drawGanttBar(Canvas canvas, Size size) {
+    final startOffset =
+        row.startDate!.difference(projectStartDate).inDays * dayWidth;
+    final duration = row.endDate!.difference(row.startDate!).inDays + 1;
+    final barWidth = duration * dayWidth;
+
+    final barHeight = rowHeight * 0.6;
+    final barTop = (rowHeight - barHeight) / 2;
+
+    Color barColor;
+    Color borderColor;
+    switch (row.taskType) {
+      case TaskType.mainTask:
+        barColor = Colors.blue.shade800;
+        borderColor = Colors.blue.shade900;
+        break;
+      case TaskType.subTask:
+        barColor = Colors.green.shade600;
+        borderColor = Colors.green.shade800;
+        break;
+      case TaskType.task:
+        barColor = Colors.blue.shade600;
+        borderColor = Colors.blue.shade800;
+        break;
+    }
+
+    final barPaint = Paint()
+      ..color = barColor
+      ..style = PaintingStyle.fill;
+
+    final barRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(startOffset + 2, barTop, barWidth - 4, barHeight),
+      Radius.circular(2),
+    );
+
+    canvas.drawRRect(barRect, barPaint);
+
+    final borderPaint = Paint()
+      ..color = borderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+
+    canvas.drawRRect(barRect, borderPaint);
+
+    final progressPaint = Paint()
+      ..color = barColor.withValues(alpha: 0.5)
+      ..style = PaintingStyle.fill;
+
+    final progressWidth = (barWidth - 4) * 0.6;
+    final progressRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(startOffset + 2, barTop + 2, progressWidth, barHeight - 4),
+      Radius.circular(1),
+    );
+
+    canvas.drawRRect(progressRect, progressPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
 
 class GanttChartPainter extends CustomPainter {
   final List<GanttRowData> rows;
@@ -1178,7 +1359,8 @@ class GanttChartPainter extends CustomPainter {
   void _drawGanttBar(Canvas canvas, GanttRowData row, int rowIndex) {
     if (row.startDate == null || row.endDate == null) return;
 
-    final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
+    final startOffset =
+        row.startDate!.difference(projectStartDate).inDays * dayWidth;
     final duration = row.endDate!.difference(row.startDate!).inDays + 1;
     final barWidth = duration * dayWidth;
 
@@ -1270,7 +1452,7 @@ class TaskContextMenu extends StatelessWidget {
             const Divider(height: 1),
             _buildMenuItem(
               icon: Icons.add,
-              text: 'Add New Row',
+              text: 'Insert Row Below',
               onTap: () {
                 onDismiss();
                 onAddNewRow();
@@ -1305,11 +1487,7 @@ class TaskContextMenu extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            Icon(
-              icon,
-              size: 16,
-              color: textColor ?? Colors.grey.shade700,
-            ),
+            Icon(icon, size: 16, color: textColor ?? Colors.grey.shade700),
             const SizedBox(width: 12),
             Text(
               text,

@@ -38,7 +38,9 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    widget.logger.d('🎨 ProjectSummaryScreen: Building project summary for: ${widget.project.name}');
+    widget.logger.d(
+      '🎨 ProjectSummaryScreen: Building project summary for: ${widget.project.name}',
+    );
 
     return BaseLayout(
       title: widget.project.name,
@@ -59,9 +61,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
         builder: (context, constraints) {
           return SingleChildScrollView(
             child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight: constraints.maxHeight,
-              ),
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -79,7 +79,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   void _handleMenuNavigation(String menuItem) {
     widget.logger.d('🧭 ProjectSummaryScreen: Navigation to: $menuItem');
-    
+
     switch (menuItem) {
       case 'Switch Project':
         Navigator.pushReplacement(
@@ -112,61 +112,67 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   }
 
   void _navigateToEditProject() {
-    widget.logger.i('✏️ ProjectSummaryScreen: Navigating to edit project: ${widget.project.name}');
+    widget.logger.i(
+      '✏️ ProjectSummaryScreen: Navigating to edit project: ${widget.project.name}',
+    );
 
     if (!mounted) return;
 
     final navigator = Navigator.of(context);
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
-    navigator.push(
-      MaterialPageRoute(
-        builder: (context) => EditProjectScreen(
-          project: widget.project,
-          logger: widget.logger,
-        ),
-      ),
-    ).then((result) {
-      if (result == true && mounted) {
-        widget.logger.d('🔄 ProjectSummaryScreen: Project edited successfully, returning to summary');
-        scaffoldMessenger.showSnackBar(
-          const SnackBar(
-            content: Text('Project updated successfully'),
-            backgroundColor: Colors.green,
+    navigator
+        .push(
+          MaterialPageRoute(
+            builder: (context) => EditProjectScreen(
+              project: widget.project,
+              logger: widget.logger,
+            ),
           ),
-        );
-      }
-    });
+        )
+        .then((result) {
+          if (result == true && mounted) {
+            widget.logger.d(
+              '🔄 ProjectSummaryScreen: Project edited successfully, returning to summary',
+            );
+            scaffoldMessenger.showSnackBar(
+              const SnackBar(
+                content: Text('Project updated successfully'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        });
   }
 
   void _navigateToDocuments() {
-    widget.logger.i('📂 ProjectSummaryScreen: Navigating to documents for project: ${widget.project.name}');
+    widget.logger.i(
+      '📂 ProjectSummaryScreen: Navigating to documents for project: ${widget.project.name}',
+    );
 
     if (!mounted) return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => DocumentsScreen(
-          project: widget.project,
-          logger: widget.logger,
-        ),
+        builder: (context) =>
+            DocumentsScreen(project: widget.project, logger: widget.logger),
       ),
     );
   }
 
   void _navigateToDrawings() {
-    widget.logger.i('🏗️ ProjectSummaryScreen: Navigating to drawings for project: ${widget.project.name}');
+    widget.logger.i(
+      '🏗️ ProjectSummaryScreen: Navigating to drawings for project: ${widget.project.name}',
+    );
 
     if (!mounted) return;
 
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => DrawingsScreen(
-          project: widget.project,
-          logger: widget.logger,
-        ),
+        builder: (context) =>
+            DrawingsScreen(project: widget.project, logger: widget.logger),
       ),
     );
   }
@@ -218,8 +224,15 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     );
   }
 
-  Widget _buildProjectMetrics(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
-    widget.logger.d('📊 ProjectSummaryScreen: Building project metrics, isMobile: $isMobile, isTablet: $isTablet, isDesktop: $isDesktop');
+  Widget _buildProjectMetrics(
+    BuildContext context,
+    bool isMobile,
+    bool isTablet,
+    bool isDesktop,
+  ) {
+    widget.logger.d(
+      '📊 ProjectSummaryScreen: Building project metrics, isMobile: $isMobile, isTablet: $isTablet, isDesktop: $isDesktop',
+    );
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: isMobile ? 12 : 16),
@@ -237,7 +250,9 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   icon: Icons.attach_money,
                   color: Colors.green,
                   onTap: () {
-                    widget.logger.i('👆 ProjectSummaryScreen: Budget card tapped');
+                    widget.logger.i(
+                      '👆 ProjectSummaryScreen: Budget card tapped',
+                    );
                   },
                 );
               },
@@ -251,7 +266,9 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               icon: Icons.trending_up,
               color: widget.project.isActive ? Colors.blue : Colors.grey,
               onTap: () {
-                widget.logger.i('👆 ProjectSummaryScreen: Progress card tapped');
+                widget.logger.i(
+                  '👆 ProjectSummaryScreen: Progress card tapped',
+                );
               },
             ),
           ),
@@ -263,7 +280,9 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               icon: Icons.people,
               color: Colors.purple,
               onTap: () {
-                widget.logger.i('👆 ProjectSummaryScreen: Team members card tapped');
+                widget.logger.i(
+                  '👆 ProjectSummaryScreen: Team members card tapped',
+                );
                 _showTeamMembers(context);
               },
             ),
@@ -324,8 +343,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   if (widget.project.status != null)
                     Chip(
                       label: Text(_getStatusText(widget.project.status!)),
-                      backgroundColor: _getStatusColor(widget.project.status).withValues(alpha: 0.1),
-                      labelStyle: TextStyle(color: _getStatusColor(widget.project.status)),
+                      backgroundColor: _getStatusColor(
+                        widget.project.status,
+                      ).withValues(alpha: 0.1),
+                      labelStyle: TextStyle(
+                        color: _getStatusColor(widget.project.status),
+                      ),
                     )
                   else
                     Chip(
@@ -347,10 +370,16 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: _buildInfoItem('Project Manager', widget.project.projectManager),
+                    child: _buildInfoItem(
+                      'Project Manager',
+                      widget.project.projectManager,
+                    ),
                   ),
                   Expanded(
-                    child: _buildInfoItem('Team Size', '${widget.project.teamMembers.length} members'),
+                    child: _buildInfoItem(
+                      'Team Size',
+                      '${widget.project.teamMembers.length} members',
+                    ),
                   ),
                 ],
               ),
@@ -358,12 +387,17 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: _buildInfoItem('Start Date', _formatDate(widget.project.startDate)),
+                    child: _buildInfoItem(
+                      'Start Date',
+                      _formatDate(widget.project.startDate),
+                    ),
                   ),
                   Expanded(
                     child: _buildInfoItem(
                       'End Date',
-                      widget.project.endDate != null ? _formatDate(widget.project.endDate!) : 'TBD',
+                      widget.project.endDate != null
+                          ? _formatDate(widget.project.endDate!)
+                          : 'TBD',
                     ),
                   ),
                 ],
@@ -373,10 +407,16 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: _buildInfoItem('Days Remaining', '${widget.project.daysRemaining} days'),
+                      child: _buildInfoItem(
+                        'Days Remaining',
+                        '${widget.project.daysRemaining} days',
+                      ),
                     ),
                     Expanded(
-                      child: _buildInfoItem('Health Status', widget.project.healthStatus),
+                      child: _buildInfoItem(
+                        'Health Status',
+                        widget.project.healthStatus,
+                      ),
                     ),
                   ],
                 ),
@@ -403,10 +443,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
         const SizedBox(height: 2),
         Text(
           value,
-          style: GoogleFonts.poppins(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-          ),
+          style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600),
         ),
       ],
     );
@@ -434,8 +471,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                     child: Text(member.substring(0, 1).toUpperCase()),
                   ),
                   title: Text(member, style: GoogleFonts.poppins()),
-                  subtitle: isManager ? Text('Project Manager', style: GoogleFonts.poppins()) : null,
-                  trailing: isManager ? const Icon(Icons.star, color: Colors.amber) : null,
+                  subtitle: isManager
+                      ? Text('Project Manager', style: GoogleFonts.poppins())
+                      : null,
+                  trailing: isManager
+                      ? const Icon(Icons.star, color: Colors.amber)
+                      : null,
                 );
               },
             ),
@@ -451,13 +492,20 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     );
   }
 
-  Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
+  Widget _buildContentSection(
+    BuildContext context,
+    bool isMobile,
+    bool isTablet,
+    bool isDesktop,
+  ) {
     final screenWidth = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     const double widgetHeight = 400.0;
 
-    widget.logger.d('🏗️ ProjectSummaryScreen: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
+    widget.logger.d(
+      '🏗️ ProjectSummaryScreen: Building content section, isMobile: $isMobile, availableWidth: $availableWidth',
+    );
 
     final widgets = [
       SizedBox(
@@ -498,8 +546,9 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   child: widgets[index],
                 );
               },
-              physics: const BouncingScrollPhysics(),
-              pageSnapping: true,
+              physics:
+                  const NeverScrollableScrollPhysics(), // Disables all swiping/flings
+              pageSnapping: false,
               scrollBehavior: const ScrollBehavior().copyWith(
                 scrollbars: false,
                 overscroll: false,

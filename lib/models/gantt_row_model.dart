@@ -1,17 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// Add the TaskType enum
 enum TaskType { mainTask, subTask, task }
 
-/// Data model for gantt rows with Firebase integration
-class GanttRowData {
+class GanttRowData {  
   final String id;
-  String? firestoreId; // Firebase document ID
+  String? firestoreId;
   String? taskName;
   int? duration;
   DateTime? startDate;
   DateTime? endDate;
-  TaskType taskType; // Add the new field
+  TaskType taskType;
+  
+  String? parentId;
+  int hierarchyLevel;
+  int displayOrder;
+  List<String> childIds;
 
   GanttRowData({
     required this.id,
@@ -20,10 +23,13 @@ class GanttRowData {
     this.duration,
     this.startDate,
     this.endDate,
-    this.taskType = TaskType.task, // Default to regular task
-  });
+    this.taskType = TaskType.task,
+    this.parentId,
+    this.hierarchyLevel = 0,
+    this.displayOrder = 0,
+    List<String>? childIds,
+  }) : childIds = childIds ?? <String>[];
 
-  // Factory constructor to create a copy of an existing GanttRowData instance
   factory GanttRowData.from(GanttRowData other) {
     return GanttRowData(
       id: other.id,
@@ -32,16 +38,18 @@ class GanttRowData {
       duration: other.duration,
       startDate: other.startDate,
       endDate: other.endDate,
-      taskType: other.taskType, // Include taskType in copy
+      taskType: other.taskType,
+      parentId: other.parentId,
+      hierarchyLevel: other.hierarchyLevel,
+      displayOrder: other.displayOrder,
+      childIds: List<String>.from(other.childIds), // Create new mutable list
     );
   }
 
-  /// Returns true if the row has meaningful data
-  bool get hasData => taskName?.isNotEmpty == true && startDate != null && endDate != null;
+  bool get hasData =>
+      taskName?.isNotEmpty == true && startDate != null && endDate != null;
 
-  /// Create GanttRowData from Firebase document
   factory GanttRowData.fromFirebaseMap(String firestoreId, Map<String, dynamic> data) {
-    // Parse taskType from Firebase data
     TaskType taskType = TaskType.task;
     if (data['taskType'] != null) {
       switch (data['taskType']) {
@@ -58,6 +66,12 @@ class GanttRowData {
       }
     }
 
+    // Ensure childIds is a mutable list
+    List<String> childIdsList = <String>[];
+    if (data['childIds'] != null) {
+      childIdsList = List<String>.from(data['childIds']);
+    }
+
     return GanttRowData(
       id: data['id'] as String? ?? firestoreId,
       firestoreId: firestoreId,
@@ -66,12 +80,18 @@ class GanttRowData {
       startDate: (data['startDate'] as Timestamp?)?.toDate(),
       endDate: (data['endDate'] as Timestamp?)?.toDate(),
       taskType: taskType,
+      parentId: data['parentId'] as String?,
+      hierarchyLevel: data['hierarchyLevel'] as int? ?? 0,
+      displayOrder: data['displayOrder'] as int? ?? 0,
+      childIds: childIdsList, // Use the mutable list
     );
   }
 
-  /// Convert GanttRowData to Firebase map for storage
-  Map<String, dynamic> toFirebaseMap(String projectId, String projectName, int rowOrder) {
-    // Convert TaskType enum to string for Firebase storage
+  Map<String, dynamic> toFirebaseMap(
+    String projectId,
+    String projectName,
+    int rowOrder,
+  ) {
     String taskTypeString = 'Task';
     switch (taskType) {
       case TaskType.mainTask:
@@ -95,11 +115,14 @@ class GanttRowData {
       'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
       'rowOrder': rowOrder,
       'updatedAt': Timestamp.fromDate(DateTime.now()),
-      'taskType': taskTypeString, // Store as string in Firebase
+      'taskType': taskTypeString,
+      'parentId': parentId,
+      'hierarchyLevel': hierarchyLevel,
+      'displayOrder': displayOrder,
+      'childIds': childIds,
     };
   }
 
-  /// Create a copy of this GanttRowData with updated values
   GanttRowData copyWith({
     String? id,
     String? firestoreId,
@@ -107,7 +130,7 @@ class GanttRowData {
     int? duration,
     DateTime? startDate,
     DateTime? endDate,
-    TaskType? taskType, // Add taskType to copyWith
+    TaskType? taskType,
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -117,6 +140,10 @@ class GanttRowData {
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       taskType: taskType ?? this.taskType,
+      parentId: parentId,
+      hierarchyLevel: hierarchyLevel,
+      displayOrder: displayOrder,
+      childIds: List.from(childIds),
     );
   }
 
@@ -135,7 +162,7 @@ class GanttRowData {
         other.duration == duration &&
         other.startDate == startDate &&
         other.endDate == endDate &&
-        other.taskType == taskType; // Include taskType in equality check
+        other.taskType == taskType;
   }
 
   @override
@@ -146,10 +173,9 @@ class GanttRowData {
         duration.hashCode ^
         startDate.hashCode ^
         endDate.hashCode ^
-        taskType.hashCode; // Include taskType in hash
+        taskType.hashCode;
   }
 
-  /// Helper method to get display text for task type
   String get taskTypeDisplayText {
     switch (taskType) {
       case TaskType.mainTask:
@@ -161,12 +187,9 @@ class GanttRowData {
     }
   }
 
-  /// Helper method to check if this is a main task
   bool get isMainTask => taskType == TaskType.mainTask;
 
-  /// Helper method to check if this is a subtask
   bool get isSubTask => taskType == TaskType.subTask;
 
-  /// Helper method to check if this is a regular task
   bool get isRegularTask => taskType == TaskType.task;
 }

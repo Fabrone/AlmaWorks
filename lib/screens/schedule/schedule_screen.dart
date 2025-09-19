@@ -1,9 +1,7 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/resource_model.dart';
-//import 'package:almaworks/screens/schedule/gantt_chart_screen.dart';
 import 'package:almaworks/screens/schedule/critical_path_screen.dart';
 import 'package:almaworks/screens/schedule/msproject_gantt_screen.dart';
-//import 'package:almaworks/screens/schedule/gantt_chart_screen_refactored.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -101,16 +99,19 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                             constraints.maxHeight -
                             48 -
                             (isMobile ? 12 : 16) * 2,
-                        child: TabBarView(
+                        child: 
+                        TabBarView(
                           controller: _tabController,
                           children: [
                             MSProjectGanttScreen(
                               project: widget.project,
-                              logger: widget.logger, projectId: '', projectName: '',
+                              logger: widget.logger,
                             ),
                             CriticalPathScreen(
-                              //project: widget.project,
-                              logger: widget.logger, projectId: '', projectName: '',
+                              project: widget.project,
+                              logger: widget.logger,
+                              projectId: widget.project.id, 
+                              projectName: widget.project.name,
                             ),
                             _buildResourcesTab(),
                             _buildUpdatesTab(),
