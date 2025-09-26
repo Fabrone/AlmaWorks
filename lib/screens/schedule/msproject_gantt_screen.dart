@@ -148,7 +148,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     });
   }
 
-  // Setup Firebase real-time listener
+  // Updated _setupFirebaseListener method to handle orphaned tasks after loading
   void _setupFirebaseListener() {
     _firebaseListener = FirebaseFirestore.instance
         .collection('Schedule')
@@ -171,6 +171,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (loadedRows.isNotEmpty) {
         _rows = loadedRows;
         _sortRowsByHierarchy();
+        
+        // Handle orphaned tasks that may exist in loaded data
+        _assignParentsToOrphanedTasks();
       }
 
       while (_rows.length < defaultRowCount) {
@@ -203,6 +206,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     });
   }
 
+  // Updated _loadTasksFromFirebase method to handle orphaned tasks
   Future<void> _loadTasksFromFirebase() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
@@ -211,12 +215,16 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (_cachedProjects.containsKey(widget.project.id)) {
         _rows = List.from(_cachedProjects[widget.project.id]!);
         _sortRowsByHierarchy();
+        
+        // Handle orphaned tasks in cached data
+        _assignParentsToOrphanedTasks();
+        
         while (_rows.length < defaultRowCount) {
           _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
         }
         _computeColumnWidths();
         setState(() => _isLoading = false);
-        widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from cache');
+        widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from cache with orphaned task handling');
         return;
       }
     } catch (e, stackTrace) {
@@ -241,11 +249,69 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     if (!mounted) return;
     setState(() {
       final newRow = GanttRowData(id: 'new_row_${DateTime.now().millisecondsSinceEpoch}');
+      
+      // Determine insertion index
+      int insertIndex = insertAfterIndex != null && insertAfterIndex >= 0 && insertAfterIndex < _rows.length 
+          ? insertAfterIndex + 1 
+          : _rows.length;
+      
+      // Find the nearest parent (MainTask or SubTask) by scanning upward from insertion point
+      GanttRowData? nearestParent;
+      int parentHierarchyLevel = -1;
+      
+      // Scan upward from the insertion point to find the nearest MainTask or SubTask
+      for (int i = insertIndex - 1; i >= 0; i--) {
+        final candidateParent = _editedRows[i] ?? _rows[i];
+        
+        if (candidateParent.taskType == TaskType.mainTask) {
+          // MainTask found - this becomes the parent
+          nearestParent = candidateParent;
+          parentHierarchyLevel = candidateParent.hierarchyLevel;
+          break;
+        } else if (candidateParent.taskType == TaskType.subTask) {
+          // SubTask found - check if it's the most immediate parent
+          if (nearestParent == null || candidateParent.hierarchyLevel > parentHierarchyLevel) {
+            nearestParent = candidateParent;
+            parentHierarchyLevel = candidateParent.hierarchyLevel;
+          }
+          // Continue scanning to see if there's a higher-level parent
+        }
+      }
+      
+      // Assign parent and hierarchy level to the new task
+      if (nearestParent != null) {
+        newRow.parentId = nearestParent.id;
+        newRow.hierarchyLevel = nearestParent.hierarchyLevel + 1;
+        newRow.taskType = TaskType.task; // New tasks are always regular tasks initially
+        
+        // Add the new task to parent's childIds list
+        _safeAddChildId(nearestParent, newRow.id);
+        
+        // Update the parent in _editedRows if it exists there
+        for (int i = 0; i < _rows.length; i++) {
+          final row = _editedRows[i] ?? _rows[i];
+          if (row.id == nearestParent.id) {
+            _editedRows[i] = nearestParent;
+            break;
+          }
+        }
+        
+        widget.logger.i('📅 Auto-assigned parent "${nearestParent.taskName}" (${nearestParent.taskType}) to new task at hierarchy level ${newRow.hierarchyLevel}');
+      } else {
+        // No parent found - this becomes a top-level task
+        newRow.hierarchyLevel = 0;
+        newRow.taskType = TaskType.task;
+        widget.logger.i('📅 New task created as top-level task (no parent found)');
+      }
+      
+      // Insert the new row
       if (insertAfterIndex != null && insertAfterIndex >= 0 && insertAfterIndex < _rows.length) {
         _rows.insert(insertAfterIndex + 1, newRow);
       } else {
         _rows.add(newRow);
       }
+      
+      // Recalculate hierarchy and update display orders
       _calculateHierarchy();
       _computeColumnWidths();
     });
@@ -361,6 +427,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
   }
 
+  // Enhanced _updateRowData method to trigger hierarchy recalculation when needed
   void _updateRowData(
     int index, {
     String? taskName,
@@ -379,94 +446,281 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         row.taskName = taskName;
         widget.logger.d('Updated task name for row $index: $taskName');
       }
+      
       if (duration != null) {
         row.duration = duration;
         widget.logger.d('Updated duration for row $index: $duration');
       }
-      if (startDate != null && _projectStartDate != null && _projectEndDate != null) {
-        if (startDate.isAfter(_projectStartDate!.subtract(Duration(days: 1))) &&
-            startDate.isBefore(_projectEndDate!.add(Duration(days: 1)))) {
-          row.startDate = startDate;
-          widget.logger.d('Updated start date for row $index: $startDate');
-        } else {
-          widget.logger.w('⚠️ Start date $startDate outside project timeline ($_projectStartDate to $_projectEndDate)');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Start date must be within project timeline',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-      if (endDate != null && _projectStartDate != null && _projectEndDate != null) {
-        if (endDate.isAfter(_projectStartDate!.subtract(Duration(days: 1))) &&
-            endDate.isBefore(_projectEndDate!.add(Duration(days: 1)))) {
-          row.endDate = endDate;
-          widget.logger.d('Updated end date for row $index: $endDate');
-        } else {
-          widget.logger.w('⚠️ End date $endDate outside project timeline ($_projectStartDate to $_projectEndDate)');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'End date must be within project timeline',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
+      
+      // Handle task type changes with hierarchy recalculation
       if (taskType != null) {
+        final oldTaskType = row.taskType;
         row.taskType = taskType;
-        widget.logger.d('Updated task type for row $index: $taskType');
-      }
-
-      if (row.startDate != null && row.endDate != null && row.duration == null) {
-        row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
-        widget.logger.d('Calculated duration for row $index: ${row.duration}');
-      } else if (row.startDate != null && row.duration != null && row.endDate == null) {
-        final potentialEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
-        if (_projectEndDate != null && potentialEndDate.isBefore(_projectEndDate!.add(Duration(days: 1)))) {
-          row.endDate = potentialEndDate;
-          widget.logger.d('Calculated end date for row $index: ${row.endDate}');
-        } else {
-          row.duration = null;
-          widget.logger.w('⚠️ Duration results in end date $potentialEndDate outside project timeline');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Duration results in end date outside project timeline',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      } else if (row.endDate != null && row.duration != null && row.startDate == null) {
-        final potentialStartDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
-        if (_projectStartDate != null && potentialStartDate.isAfter(_projectStartDate!.subtract(Duration(days: 1)))) {
-          row.startDate = potentialStartDate;
-          widget.logger.d('Calculated start date for row $index: ${row.startDate}');
-        } else {
-          row.duration = null;
-          widget.logger.w('⚠️ Duration results in start date $potentialStartDate outside project timeline');
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Duration results in start date outside project timeline',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
+        
+        // If this is a significant task type change, recalculate hierarchy
+        if (oldTaskType != taskType) {
+          _clearAffectedRelationships(index, oldTaskType, taskType);
+          _calculateHierarchy(); // This will reassign parent-child relationships
+          widget.logger.d('Updated task type for row $index: $taskType with hierarchy recalculation');
         }
       }
 
+      // Handle date updates with parent-child constraints
+      if (startDate != null) {
+        if (_validateAndSetStartDate(row, startDate, index)) {
+          _updateParentDatesIfNeeded(row, index);
+        }
+      }
+      
+      if (endDate != null) {
+        if (_validateAndSetEndDate(row, endDate, index)) {
+          _updateParentDatesIfNeeded(row, index);
+        }
+      }
+
+      // Recalculate dates based on duration
+      _recalculateDatesFromDuration(row, index);
       _computeColumnWidths();
     });
+  }
+
+  // New method to validate and set start date with parent-child constraints
+  bool _validateAndSetStartDate(GanttRowData row, DateTime startDate, int index) {
+    // First check project-level constraints
+    if (_projectStartDate != null && _projectEndDate != null) {
+      if (startDate.isBefore(_projectStartDate!) || startDate.isAfter(_projectEndDate!)) {
+        _showDateConstraintError('Start date must be within project timeline');
+        return false;
+      }
+    }
+
+    // Check parent constraints
+    final parentRow = _getParentRow(row);
+    if (parentRow != null && parentRow.startDate != null) {
+      if (startDate.isBefore(parentRow.startDate!)) {
+        _showDateConstraintError('Start date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})');
+        return false;
+      }
+      if (parentRow.endDate != null && startDate.isAfter(parentRow.endDate!)) {
+        _showDateConstraintError('Start date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})');
+        return false;
+      }
+    }
+
+    // Check child constraints - ensure no child starts before this date
+    if (!_validateChildrenStartDates(row, startDate)) {
+      return false;
+    }
+
+    row.startDate = startDate;
+    widget.logger.d('Updated start date for row $index: $startDate');
+    return true;
+  }
+
+  // New method to validate and set end date with parent-child constraints
+  bool _validateAndSetEndDate(GanttRowData row, DateTime endDate, int index) {
+    // First check project-level constraints
+    if (_projectStartDate != null && _projectEndDate != null) {
+      if (endDate.isBefore(_projectStartDate!) || endDate.isAfter(_projectEndDate!)) {
+        _showDateConstraintError('End date must be within project timeline');
+        return false;
+      }
+    }
+
+    // Check parent constraints
+    final parentRow = _getParentRow(row);
+    if (parentRow != null && parentRow.endDate != null) {
+      if (endDate.isAfter(parentRow.endDate!)) {
+        _showDateConstraintError('End date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})');
+        return false;
+      }
+      if (parentRow.startDate != null && endDate.isBefore(parentRow.startDate!)) {
+        _showDateConstraintError('End date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})');
+        return false;
+      }
+    }
+
+    // Check child constraints - ensure no child ends after this date
+    if (!_validateChildrenEndDates(row, endDate)) {
+      return false;
+    }
+
+    row.endDate = endDate;
+    widget.logger.d('Updated end date for row $index: $endDate');
+    return true;
+  }
+
+  // New method to get parent row
+  GanttRowData? _getParentRow(GanttRowData row) {
+    if (row.parentId == null) return null;
+    
+    for (int i = 0; i < _rows.length; i++) {
+      final parentRow = _editedRows[i] ?? _rows[i];
+      if (parentRow.id == row.parentId) {
+        return parentRow;
+      }
+    }
+    return null;
+  }
+
+  // New method to get child rows
+  List<GanttRowData> _getChildRows(GanttRowData row) {
+    List<GanttRowData> children = [];
+    
+    for (String childId in row.childIds) {
+      for (int i = 0; i < _rows.length; i++) {
+        final childRow = _editedRows[i] ?? _rows[i];
+        if (childRow.id == childId) {
+          children.add(childRow);
+          break;
+        }
+      }
+    }
+    return children;
+  }
+
+  // New method to validate children start dates
+  bool _validateChildrenStartDates(GanttRowData parentRow, DateTime newStartDate) {
+    final children = _getChildRows(parentRow);
+    
+    for (final child in children) {
+      if (child.startDate != null && child.startDate!.isBefore(newStartDate)) {
+        _showDateConstraintError('Cannot set start date after child task "${child.taskName}" starts (${DateFormat('MM/dd/yyyy').format(child.startDate!)})');
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // New method to validate children end dates
+  bool _validateChildrenEndDates(GanttRowData parentRow, DateTime newEndDate) {
+    final children = _getChildRows(parentRow);
+    
+    for (final child in children) {
+      if (child.endDate != null && child.endDate!.isAfter(newEndDate)) {
+        _showDateConstraintError('Cannot set end date before child task "${child.taskName}" ends (${DateFormat('MM/dd/yyyy').format(child.endDate!)})');
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // New method to automatically update parent dates when child dates change
+  void _updateParentDatesIfNeeded(GanttRowData childRow, int childIndex) {
+    final parentRow = _getParentRow(childRow);
+    if (parentRow == null) return;
+
+    final allChildren = _getChildRows(parentRow);
+    if (allChildren.isEmpty) return;
+
+    // Find the earliest start date among all children
+    DateTime? earliestStart;
+    DateTime? latestEnd;
+
+    for (final child in allChildren) {
+      if (child.startDate != null) {
+        if (earliestStart == null || child.startDate!.isBefore(earliestStart)) {
+          earliestStart = child.startDate;
+        }
+      }
+      if (child.endDate != null) {
+        if (latestEnd == null || child.endDate!.isAfter(latestEnd)) {
+          latestEnd = child.endDate;
+        }
+      }
+    }
+
+    bool parentUpdated = false;
+
+    // Update parent start date if necessary
+    if (earliestStart != null && (parentRow.startDate == null || earliestStart.isBefore(parentRow.startDate!))) {
+      // Check if the new start date is within project bounds
+      if (_projectStartDate != null && earliestStart.isBefore(_projectStartDate!)) {
+        widget.logger.w('Cannot auto-adjust parent start date - would exceed project start date');
+      } else {
+        parentRow.startDate = earliestStart;
+        parentUpdated = true;
+        widget.logger.i('Auto-updated parent task "${parentRow.taskName}" start date to: $earliestStart');
+      }
+    }
+
+    // Update parent end date if necessary
+    if (latestEnd != null && (parentRow.endDate == null || latestEnd.isAfter(parentRow.endDate!))) {
+      // Check if the new end date is within project bounds
+      if (_projectEndDate != null && latestEnd.isAfter(_projectEndDate!)) {
+        widget.logger.w('Cannot auto-adjust parent end date - would exceed project end date');
+      } else {
+        parentRow.endDate = latestEnd;
+        parentUpdated = true;
+        widget.logger.i('Auto-updated parent task "${parentRow.taskName}" end date to: $latestEnd');
+      }
+    }
+
+    // Update parent duration if both dates are set
+    if (parentRow.startDate != null && parentRow.endDate != null) {
+      parentRow.duration = parentRow.endDate!.difference(parentRow.startDate!).inDays + 1;
+    }
+
+    // If parent was updated, recursively update its parent
+    if (parentUpdated) {
+      final parentIndex = _getRowIndex(parentRow.id);
+      if (parentIndex != -1) {
+        _editedRows[parentIndex] = parentRow;
+        _updateParentDatesIfNeeded(parentRow, parentIndex);
+      }
+    }
+  }
+
+  // Helper method to get row index by ID
+  int _getRowIndex(String rowId) {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      if (row.id == rowId) return i;
+    }
+    return -1;
+  }
+
+  // Updated method to recalculate dates from duration
+  void _recalculateDatesFromDuration(GanttRowData row, int index) {
+    if (row.startDate != null && row.endDate != null && row.duration == null) {
+      row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
+      widget.logger.d('Calculated duration for row $index: ${row.duration}');
+    } else if (row.startDate != null && row.duration != null && row.endDate == null) {
+      final potentialEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
+      
+      // Validate the calculated end date
+      if (_validateAndSetEndDate(row, potentialEndDate, index)) {
+        widget.logger.d('Calculated end date for row $index: ${row.endDate}');
+      } else {
+        row.duration = null;
+      }
+    } else if (row.endDate != null && row.duration != null && row.startDate == null) {
+      final potentialStartDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
+      
+      // Validate the calculated start date
+      if (_validateAndSetStartDate(row, potentialStartDate, index)) {
+        widget.logger.d('Calculated start date for row $index: ${row.startDate}');
+      } else {
+        row.duration = null;
+      }
+    }
+  }
+
+  // Helper method to show date constraint errors
+  void _showDateConstraintError(String message) {
+    widget.logger.w('Date constraint violation: $message');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            message,
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 4),
+        ),
+      );
+    }
   }
 
   Future<void> _saveAllRows() async {
@@ -609,7 +863,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     widget.logger.d('📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth');
   }
 
+  // Updated _calculateHierarchy method with orphaned task assignment
   void _calculateHierarchy() {
+    // First pass: Reset all hierarchy data
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
       row.parentId = null;
@@ -624,6 +880,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
+    // Second pass: Establish parent-child relationships dynamically
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
 
@@ -631,38 +888,59 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         row.hierarchyLevel = 0;
         row.displayOrder = i;
 
+        // Scan forward to find children for this MainTask
         for (int j = i + 1; j < _rows.length; j++) {
-          final childRow = _editedRows[j] ?? _rows[j];
+          final candidateChild = _editedRows[j] ?? _rows[j];
 
-          if (childRow.taskType == TaskType.mainTask) break;
+          // Stop if we hit another MainTask
+          if (candidateChild.taskType == TaskType.mainTask) break;
 
-          if (childRow.taskType == TaskType.subTask && childRow.parentId == null) {
-            childRow.parentId = row.id;
-            childRow.hierarchyLevel = 1;
-            _safeAddChildId(row, childRow.id);
-
-            for (int k = j + 1; k < _rows.length; k++) {
-              final subChildRow = _editedRows[k] ?? _rows[k];
-
-              if (subChildRow.taskType == TaskType.mainTask || subChildRow.taskType == TaskType.subTask) {
-                break;
+          // Assign SubTasks and regular Tasks as direct children of MainTask
+          if (candidateChild.parentId == null) {
+            if (candidateChild.taskType == TaskType.subTask) {
+              candidateChild.parentId = row.id;
+              candidateChild.hierarchyLevel = 1;
+              _safeAddChildId(row, candidateChild.id);
+              
+              // Now find children for this SubTask
+              for (int k = j + 1; k < _rows.length; k++) {
+                final subCandidate = _editedRows[k] ?? _rows[k];
+                
+                // Stop if we hit MainTask or another SubTask
+                if (subCandidate.taskType == TaskType.mainTask || 
+                    subCandidate.taskType == TaskType.subTask) {
+                  break;
+                }
+                
+                // Assign regular Tasks as children of SubTask
+                if (subCandidate.taskType == TaskType.task && subCandidate.parentId == null) {
+                  subCandidate.parentId = candidateChild.id;
+                  subCandidate.hierarchyLevel = 2;
+                  _safeAddChildId(candidateChild, subCandidate.id);
+                }
               }
-
-              if (subChildRow.taskType == TaskType.task && subChildRow.parentId == null) {
-                subChildRow.parentId = childRow.id;
-                subChildRow.hierarchyLevel = 2;
-                _safeAddChildId(childRow, subChildRow.id);
-              }
+            } else if (candidateChild.taskType == TaskType.task) {
+              candidateChild.parentId = row.id;
+              candidateChild.hierarchyLevel = 1;
+              _safeAddChildId(row, candidateChild.id);
             }
-          } else if (childRow.taskType == TaskType.task && childRow.parentId == null) {
-            childRow.parentId = row.id;
-            childRow.hierarchyLevel = 1;
-            _safeAddChildId(row, childRow.id);
           }
         }
       }
     }
-    widget.logger.d('📅 Calculated hierarchy for ${_rows.length} rows');
+    
+    // Third pass: Handle any remaining orphaned tasks
+    _assignParentsToOrphanedTasks();
+    
+    // Update _editedRows to reflect hierarchy changes
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      if (row.parentId != null || row.childIds.isNotEmpty) {
+        _editedRows[i] = row;
+      }
+    }
+    
+    widget.logger.d('📅 Enhanced hierarchy calculation completed for ${_rows.length} rows');
   }
 
   void _safeAddChildId(GanttRowData parentRow, String childId) {
@@ -1266,17 +1544,115 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     widget.logger.d('📅 Removed context menu overlay');
   }
 
+  // Updated _setTaskType method with orphaned task handling
   void _setTaskType(int index, TaskType taskType) {
     if (!mounted) return;
 
     setState(() {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       _editedRows[index] = row;
+      
+      final oldTaskType = row.taskType;
       row.taskType = taskType;
-      _calculateHierarchy();
-      _computeColumnWidths();
+      
+      // If task type changed significantly, recalculate all relationships
+      if (oldTaskType != taskType) {
+        // Clear existing relationships for this row
+        row.parentId = null;
+        row.childIds.clear();
+        
+        // Also clear any existing parent-child relationships that might be affected
+        _clearAffectedRelationships(index, oldTaskType, taskType);
+        
+        // Recalculate entire hierarchy
+        _calculateHierarchy(); // This now includes _assignParentsToOrphanedTasks()
+        _computeColumnWidths();
+        
+        widget.logger.i('📅 Task type changed from $oldTaskType to $taskType for row $index - hierarchy recalculated with orphaned task handling');
+      }
     });
-    widget.logger.i('📅 Set task type for row $index to $taskType');
+  }
+
+  // Helper method to clear relationships affected by task type changes
+  void _clearAffectedRelationships(int changedIndex, TaskType oldType, TaskType newType) {
+    final changedRow = _editedRows[changedIndex] ?? _rows[changedIndex];
+    
+    // If changing from MainTask or SubTask to regular Task, clear all children
+    if ((oldType == TaskType.mainTask || oldType == TaskType.subTask) && newType == TaskType.task) {
+      for (int i = 0; i < _rows.length; i++) {
+        final row = _editedRows[i] ?? _rows[i];
+        if (row.parentId == changedRow.id) {
+          row.parentId = null;
+          row.hierarchyLevel = 0;
+          _editedRows[i] = row;
+        }
+      }
+      changedRow.childIds.clear();
+    }
+    
+    // If changing to MainTask or SubTask, clear existing parent relationship
+    if (newType == TaskType.mainTask || newType == TaskType.subTask) {
+      if (changedRow.parentId != null) {
+        // Remove this row from its current parent's children
+        for (int i = 0; i < _rows.length; i++) {
+          final potentialParent = _editedRows[i] ?? _rows[i];
+          if (potentialParent.id == changedRow.parentId) {
+            potentialParent.childIds.remove(changedRow.id);
+            _editedRows[i] = potentialParent;
+            break;
+          }
+        }
+        changedRow.parentId = null;
+      }
+    }
+  }
+
+  // New method to automatically assign parents to orphaned tasks
+  void _assignParentsToOrphanedTasks() {
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      
+      // Skip if already has parent or is a MainTask
+      if (row.parentId != null || row.taskType == TaskType.mainTask) continue;
+      
+      // Find nearest parent by scanning upward
+      GanttRowData? nearestParent;
+      int parentHierarchyLevel = -1;
+      
+      for (int j = i - 1; j >= 0; j--) {
+        final candidateParent = _editedRows[j] ?? _rows[j];
+        
+        if (candidateParent.taskType == TaskType.mainTask) {
+          nearestParent = candidateParent;
+          parentHierarchyLevel = candidateParent.hierarchyLevel;
+          break;
+        } else if (candidateParent.taskType == TaskType.subTask) {
+          if (nearestParent == null || candidateParent.hierarchyLevel > parentHierarchyLevel) {
+            nearestParent = candidateParent;
+            parentHierarchyLevel = candidateParent.hierarchyLevel;
+          }
+        }
+      }
+      
+      // Assign parent if found
+      if (nearestParent != null) {
+        row.parentId = nearestParent.id;
+        row.hierarchyLevel = nearestParent.hierarchyLevel + 1;
+        _safeAddChildId(nearestParent, row.id);
+        
+        // Update in _editedRows
+        _editedRows[i] = row;
+        for (int k = 0; k < _rows.length; k++) {
+          final checkRow = _editedRows[k] ?? _rows[k];
+          if (checkRow.id == nearestParent.id) {
+            _editedRows[k] = nearestParent;
+            break;
+          }
+        }
+        
+        widget.logger.i('📅 Auto-assigned parent "${nearestParent.taskName}" to orphaned task "${row.taskName}"');
+      }
+    }
   }
 
   TextStyle _getTaskNameStyle(TaskType taskType) {
