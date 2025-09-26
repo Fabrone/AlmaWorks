@@ -1,5 +1,6 @@
 import 'package:almaworks/models/gantt_row_model.dart';
 import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/projects/edit_project_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -484,17 +485,37 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     });
   }
 
-  // New method to validate and set start date with parent-child constraints
+  // Updated _validateAndSetStartDate method with project boundary checks for main tasks
   bool _validateAndSetStartDate(GanttRowData row, DateTime startDate, int index) {
-    // First check project-level constraints
+    // Enhanced project-level constraints specifically for main tasks
     if (_projectStartDate != null && _projectEndDate != null) {
-      if (startDate.isBefore(_projectStartDate!) || startDate.isAfter(_projectEndDate!)) {
-        _showDateConstraintError('Start date must be within project timeline');
-        return false;
+      if (row.taskType == TaskType.mainTask) {
+        if (startDate.isBefore(_projectStartDate!)) {
+          _showProjectDateViolationDialog(
+            'Your selected start date is before the defined project start date',
+            'start',
+            startDate
+          );
+          return false;
+        }
+        if (startDate.isAfter(_projectEndDate!)) {
+          _showProjectDateViolationDialog(
+            'Your selected start date is after the defined project end date',
+            'end',
+            startDate
+          );
+          return false;
+        }
+      } else {
+        // Regular project boundary check for non-main tasks
+        if (startDate.isBefore(_projectStartDate!) || startDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError('Start date must be within project timeline');
+          return false;
+        }
       }
     }
 
-    // Check parent constraints
+    // Check parent constraints (existing logic)
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.startDate != null) {
       if (startDate.isBefore(parentRow.startDate!)) {
@@ -507,7 +528,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Check child constraints - ensure no child starts before this date
+    // Check child constraints
     if (!_validateChildrenStartDates(row, startDate)) {
       return false;
     }
@@ -517,17 +538,37 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return true;
   }
 
-  // New method to validate and set end date with parent-child constraints
+  // Updated _validateAndSetEndDate method with project boundary checks for main tasks
   bool _validateAndSetEndDate(GanttRowData row, DateTime endDate, int index) {
-    // First check project-level constraints
+    // Enhanced project-level constraints specifically for main tasks
     if (_projectStartDate != null && _projectEndDate != null) {
-      if (endDate.isBefore(_projectStartDate!) || endDate.isAfter(_projectEndDate!)) {
-        _showDateConstraintError('End date must be within project timeline');
-        return false;
+      if (row.taskType == TaskType.mainTask) {
+        if (endDate.isBefore(_projectStartDate!)) {
+          _showProjectDateViolationDialog(
+            'Your selected end date is before the defined project start date',
+            'start',
+            endDate
+          );
+          return false;
+        }
+        if (endDate.isAfter(_projectEndDate!)) {
+          _showProjectDateViolationDialog(
+            'Your selected end date is after the defined project end date',
+            'end',
+            endDate
+          );
+          return false;
+        }
+      } else {
+        // Regular project boundary check for non-main tasks
+        if (endDate.isBefore(_projectStartDate!) || endDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError('End date must be within project timeline');
+          return false;
+        }
       }
     }
 
-    // Check parent constraints
+    // Check parent constraints (existing logic)
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.endDate != null) {
       if (endDate.isAfter(parentRow.endDate!)) {
@@ -540,7 +581,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Check child constraints - ensure no child ends after this date
+    // Check child constraints
     if (!_validateChildrenEndDates(row, endDate)) {
       return false;
     }
@@ -997,6 +1038,125 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     widget.logger.d('📅 Sorted rows by hierarchy, total rows: ${_rows.length}');
   }
 
+  // NEW METHOD: Show project date violation dialog
+  void _showProjectDateViolationDialog(String message, String boundaryType, DateTime attemptedDate) {
+    final dateStr = DateFormat('MM/dd/yyyy').format(attemptedDate);
+    final projectStartStr = DateFormat('MM/dd/yyyy').format(_projectStartDate!);
+    final projectEndStr = DateFormat('MM/dd/yyyy').format(_projectEndDate!);
+    
+    String fullMessage = '$message.\n\n';
+    fullMessage += 'Attempted date: $dateStr\n';
+    fullMessage += 'Project timeline: $projectStartStr - $projectEndStr\n\n';
+    fullMessage += 'Would you like to edit the project dates to accommodate this task?';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.orange.shade600,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Date Outside Project Timeline',
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            constraints: BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fullMessage,
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                widget.logger.i('📅 User canceled date selection due to project boundary violation');
+              },
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _navigateToEditProjectScreen();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade600,
+                foregroundColor: Colors.white,
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: Text(
+                'Edit Project Dates',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 8,
+        );
+      },
+    );
+
+    widget.logger.w('⚠️ Project date boundary violation: $message for date $dateStr');
+  }
+
+  // NEW METHOD: Navigate to edit project screen
+  void _navigateToEditProjectScreen() {
+    widget.logger.i('📅 Navigating to edit project screen for project: ${widget.project.name}');
+    
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => EditProjectScreen(
+          project: widget.project,
+          logger: widget.logger,
+        ),
+      ),
+    ).then((_) {
+      // Refresh project dates when returning from edit screen
+      _loadProjectDates();
+      widget.logger.i('📅 Returned from edit project screen, refreshing project dates');
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading || _projectStartDate == null || _projectEndDate == null) {
@@ -1096,6 +1256,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return EdgeInsets.only(left: leftPadding, right: 8, top: 4, bottom: 4);
   }
 
+  // Updated _buildRow method to pass row data to date cells
   Widget _buildRow(int index, double ganttWidth) {
     final row = _editedRows[index] ?? _rows[index];
     final canDelete = index >= defaultRowCount;
@@ -1246,6 +1407,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             child: _buildDateCell(
               date: row.startDate,
               onDateSelected: (date) => _updateRowData(index, startDate: date),
+              rowData: row, // Pass row data for validation context
             ),
           ),
           Container(
@@ -1259,6 +1421,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             child: _buildDateCell(
               date: row.endDate,
               onDateSelected: (date) => _updateRowData(index, endDate: date),
+              rowData: row, // Pass row data for validation context
             ),
           ),
           Container(
@@ -1283,21 +1446,45 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
   }
 
+  // Updated _buildDateCell method with enhanced date picker constraints
   Widget _buildDateCell({
     required DateTime? date,
     required Function(DateTime) onDateSelected,
+    GanttRowData? rowData,
   }) {
     return InkWell(
       onTap: () async {
+        // Determine date picker bounds based on task type
+        DateTime firstDate = _projectStartDate ?? DateTime(2020);
+        DateTime lastDate = _projectEndDate ?? DateTime(2030);
+        
+        // For main tasks, we still allow selection outside project bounds to trigger validation dialog
+        if (rowData != null && rowData.taskType == TaskType.mainTask) {
+          firstDate = DateTime(2020); // Allow broader selection to catch violations
+          lastDate = DateTime(2030);
+        }
+
         final selectedDate = await showDatePicker(
           context: context,
           initialDate: date ?? _projectStartDate ?? DateTime.now(),
-          firstDate: _projectStartDate ?? DateTime(2020),
-          lastDate: _projectEndDate ?? DateTime(2030),
+          firstDate: firstDate,
+          lastDate: lastDate,
+          builder: (context, child) {
+            return Theme(
+              data: Theme.of(context).copyWith(
+                colorScheme: ColorScheme.light(
+                  primary: Colors.blue.shade600,
+                  onPrimary: Colors.white,
+                ),
+              ),
+              child: child!,
+            );
+          },
         );
+        
         if (selectedDate != null) {
           onDateSelected(selectedDate);
-          widget.logger.d('Selected date: $selectedDate');
+          widget.logger.d('Selected date: $selectedDate for task type: ${rowData?.taskType}');
         }
       },
       child: Container(
