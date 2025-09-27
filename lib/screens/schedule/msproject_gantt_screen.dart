@@ -514,7 +514,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
   }
 
-  // Updated _updateRowData method - ensure proper tracking in _editedRows
+  // Updated _updateRowData method - enhanced for better date/duration handling
   void _updateRowData(
     int index, {
     String? taskName,
@@ -539,11 +539,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         widget.logger.d('Updated task name for row $index: $taskName');
       }
 
-      if (duration != null) {
-        row.duration = duration;
-        widget.logger.d('Updated duration for row $index: $duration');
-      }
-
       // Handle task type changes with hierarchy recalculation
       if (taskType != null) {
         final oldTaskType = row.taskType;
@@ -558,26 +553,213 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         }
       }
 
+      // Enhanced date and duration handling with automatic recalculation
+      bool needsRecalculation = false;
+
+      // Handle duration changes first
+      if (duration != null && duration != row.duration) {
+        row.duration = duration;
+        needsRecalculation = true;
+        widget.logger.d('Updated duration for row $index: $duration');
+      }
+
       // Handle date updates with parent-child constraints
-      if (startDate != null) {
+      if (startDate != null && startDate != row.startDate) {
         if (_validateAndSetStartDate(row, startDate, index)) {
+          needsRecalculation = true;
           _updateParentDatesIfNeeded(row, index);
+        } else {
+          // If validation failed, don't proceed with recalculation
+          return;
         }
       }
 
-      if (endDate != null) {
+      if (endDate != null && endDate != row.endDate) {
         if (_validateAndSetEndDate(row, endDate, index)) {
+          needsRecalculation = true;
           _updateParentDatesIfNeeded(row, index);
+        } else {
+          // If validation failed, don't proceed with recalculation
+          return;
         }
       }
 
-      // Recalculate dates based on duration
-      _recalculateDatesFromDuration(row, index);
+      // Perform automatic recalculation if any date/duration field changed
+      if (needsRecalculation) {
+        _performSmartRecalculation(row, index);
+      }
+
       _computeColumnWidths();
     });
   }
 
-  // Updated _validateAndSetStartDate method with project boundary checks for main tasks
+  void _performSmartRecalculation(GanttRowData row, int index) {
+    // Count how many fields are populated
+    bool hasStart = row.startDate != null;
+    bool hasEnd = row.endDate != null;
+    bool hasDuration = row.duration != null && row.duration! > 0;
+
+    widget.logger.d(
+      'Smart recalculation for row $index: start=$hasStart, end=$hasEnd, duration=$hasDuration',
+    );
+
+    if (hasStart && hasEnd && !hasDuration) {
+      // Calculate duration from start and end dates
+      row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
+      widget.logger.d('Calculated duration: ${row.duration}');
+      
+    } else if (hasStart && hasDuration && !hasEnd) {
+      // Calculate end date from start date and duration
+      final calculatedEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
+      if (_validateCalculatedEndDate(row, calculatedEndDate, index)) {
+        row.endDate = calculatedEndDate;
+        widget.logger.d('Calculated end date: ${row.endDate}');
+      } else {
+        // Clear duration if calculated end date is invalid
+        row.duration = null;
+        widget.logger.w('Cleared duration due to invalid calculated end date');
+      }
+      
+    } else if (hasEnd && hasDuration && !hasStart) {
+      // Calculate start date from end date and duration
+      final calculatedStartDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
+      if (_validateCalculatedStartDate(row, calculatedStartDate, index)) {
+        row.startDate = calculatedStartDate;
+        widget.logger.d('Calculated start date: ${row.startDate}');
+      } else {
+        // Clear duration if calculated start date is invalid
+        row.duration = null;
+        widget.logger.w('Cleared duration due to invalid calculated start date');
+      }
+      
+    } else if (hasStart && hasEnd && hasDuration) {
+      // All three fields are populated - verify consistency and adjust if needed
+      final calculatedDuration = row.endDate!.difference(row.startDate!).inDays + 1;
+      if (calculatedDuration != row.duration) {
+        // Prioritize the most recently changed field by recalculating end date from start + duration
+        final recalculatedEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
+        if (_validateCalculatedEndDate(row, recalculatedEndDate, index)) {
+          row.endDate = recalculatedEndDate;
+          widget.logger.d('Recalculated end date for consistency: ${row.endDate}');
+        } else {
+          // Fall back to calculating duration from existing dates
+          row.duration = calculatedDuration;
+          widget.logger.d('Recalculated duration for consistency: ${row.duration}');
+        }
+      }
+    }
+
+    // Update parent dates if this row has a parent
+    _updateParentDatesIfNeeded(row, index);
+  }
+
+  bool _validateCalculatedEndDate(GanttRowData row, DateTime calculatedEndDate, int index) {
+    // Enhanced project-level constraints specifically for main tasks
+    if (_projectStartDate != null && _projectEndDate != null) {
+      if (row.taskType == TaskType.mainTask) {
+        if (calculatedEndDate.isBefore(_projectStartDate!)) {
+          _showDateConstraintError(
+            'Calculated end date would be before project start date. Please adjust duration or start date.',
+          );
+          return false;
+        }
+        if (calculatedEndDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError(
+            'Calculated end date would exceed project end date. Please adjust duration or start date.',
+          );
+          return false;
+        }
+      } else {
+        // Regular project boundary check for non-main tasks
+        if (calculatedEndDate.isBefore(_projectStartDate!) ||
+            calculatedEndDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError(
+            'Calculated end date would be outside project timeline. Please adjust duration or start date.',
+          );
+          return false;
+        }
+      }
+    }
+
+    // Check parent constraints
+    final parentRow = _getParentRow(row);
+    if (parentRow != null && parentRow.endDate != null) {
+      if (calculatedEndDate.isAfter(parentRow.endDate!)) {
+        _showDateConstraintError(
+          'Calculated end date would be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)}). Please adjust duration or start date.',
+        );
+        return false;
+      }
+      if (parentRow.startDate != null &&
+          calculatedEndDate.isBefore(parentRow.startDate!)) {
+        _showDateConstraintError(
+          'Calculated end date would be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)}). Please adjust duration or start date.',
+        );
+        return false;
+      }
+    }
+
+    // Check child constraints
+    if (!_validateChildrenEndDates(row, calculatedEndDate)) {
+      return false;
+    }
+
+    return true;
+  }
+
+  bool _validateCalculatedStartDate(GanttRowData row, DateTime calculatedStartDate, int index) {
+    // Enhanced project-level constraints specifically for main tasks
+    if (_projectStartDate != null && _projectEndDate != null) {
+      if (row.taskType == TaskType.mainTask) {
+        if (calculatedStartDate.isBefore(_projectStartDate!)) {
+          _showDateConstraintError(
+            'Calculated start date would be before project start date. Please adjust duration or end date.',
+          );
+          return false;
+        }
+        if (calculatedStartDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError(
+            'Calculated start date would be after project end date. Please adjust duration or end date.',
+          );
+          return false;
+        }
+      } else {
+        // Regular project boundary check for non-main tasks
+        if (calculatedStartDate.isBefore(_projectStartDate!) ||
+            calculatedStartDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError(
+            'Calculated start date would be outside project timeline. Please adjust duration or end date.',
+          );
+          return false;
+        }
+      }
+    }
+
+    // Check parent constraints
+    final parentRow = _getParentRow(row);
+    if (parentRow != null && parentRow.startDate != null) {
+      if (calculatedStartDate.isBefore(parentRow.startDate!)) {
+        _showDateConstraintError(
+          'Calculated start date would be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)}). Please adjust duration or end date.',
+        );
+        return false;
+      }
+      if (parentRow.endDate != null && calculatedStartDate.isAfter(parentRow.endDate!)) {
+        _showDateConstraintError(
+          'Calculated start date would be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)}). Please adjust duration or end date.',
+        );
+        return false;
+      }
+    }
+
+    // Check child constraints
+    if (!_validateChildrenStartDates(row, calculatedStartDate)) {
+      return false;
+    }
+
+    return true;
+  }
+
   bool _validateAndSetStartDate(
     GanttRowData row,
     DateTime startDate,
@@ -607,7 +789,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         if (startDate.isBefore(_projectStartDate!) ||
             startDate.isAfter(_projectEndDate!)) {
           _showDateConstraintError(
-            'Start date must be within project timeline',
+            'Start date must be within project timeline (${DateFormat('MM/dd/yyyy').format(_projectStartDate!)} - ${DateFormat('MM/dd/yyyy').format(_projectEndDate!)})',
           );
           return false;
         }
@@ -641,7 +823,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return true;
   }
 
-  // Updated _validateAndSetEndDate method with project boundary checks for main tasks
   bool _validateAndSetEndDate(GanttRowData row, DateTime endDate, int index) {
     // Enhanced project-level constraints specifically for main tasks
     if (_projectStartDate != null && _projectEndDate != null) {
@@ -666,7 +847,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         // Regular project boundary check for non-main tasks
         if (endDate.isBefore(_projectStartDate!) ||
             endDate.isAfter(_projectEndDate!)) {
-          _showDateConstraintError('End date must be within project timeline');
+          _showDateConstraintError(
+            'End date must be within project timeline (${DateFormat('MM/dd/yyyy').format(_projectStartDate!)} - ${DateFormat('MM/dd/yyyy').format(_projectEndDate!)})',
+          );
           return false;
         }
       }
@@ -825,7 +1008,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Update parent duration if both dates are set
     if (parentRow.startDate != null && parentRow.endDate != null) {
       parentRow.duration =
           parentRow.endDate!.difference(parentRow.startDate!).inDays + 1;
@@ -850,43 +1032,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return -1;
   }
 
-  // Updated method to recalculate dates from duration
-  void _recalculateDatesFromDuration(GanttRowData row, int index) {
-    if (row.startDate != null && row.endDate != null && row.duration == null) {
-      row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
-      widget.logger.d('Calculated duration for row $index: ${row.duration}');
-    } else if (row.startDate != null &&
-        row.duration != null &&
-        row.endDate == null) {
-      final potentialEndDate = row.startDate!.add(
-        Duration(days: row.duration! - 1),
-      );
-
-      // Validate the calculated end date
-      if (_validateAndSetEndDate(row, potentialEndDate, index)) {
-        widget.logger.d('Calculated end date for row $index: ${row.endDate}');
-      } else {
-        row.duration = null;
-      }
-    } else if (row.endDate != null &&
-        row.duration != null &&
-        row.startDate == null) {
-      final potentialStartDate = row.endDate!.subtract(
-        Duration(days: row.duration! - 1),
-      );
-
-      // Validate the calculated start date
-      if (_validateAndSetStartDate(row, potentialStartDate, index)) {
-        widget.logger.d(
-          'Calculated start date for row $index: ${row.startDate}',
-        );
-      } else {
-        row.duration = null;
-      }
-    }
-  }
-
-  // Helper method to show date constraint errors
   void _showDateConstraintError(String message) {
     widget.logger.w('Date constraint violation: $message');
     if (mounted) {
@@ -900,7 +1045,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
   }
 
-  // Updated _saveAllRows method - enhanced to handle all rows properly
   Future<void> _saveAllRows() async {
     if (!mounted) return;
 
@@ -910,7 +1054,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       // In offline mode, save all rows with data to local state
       for (int i = 0; i < _rows.length; i++) {
         final row = _editedRows[i] ?? _rows[i];
-        // Enhanced condition: save if row has any meaningful data
         if (_shouldSaveRow(row)) {
           setState(() {
             _rows[i] = GanttRowData.from(row);
@@ -937,13 +1080,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       return;
     }
 
-    // CRITICAL FIX: Process ALL rows, not just edited ones
     List<Future<void>> saveFutures = [];
 
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
 
-      // Enhanced saving condition
       if (_shouldSaveRow(row)) {
         widget.logger.d(
           '📅 Preparing to save row $i: ${row.taskName} (firestoreId: ${row.firestoreId})',
@@ -952,7 +1093,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Wait for all saves to complete
     try {
       await Future.wait(saveFutures);
 
@@ -1001,15 +1141,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   bool _shouldSaveRow(GanttRowData row) {
-    // Save if row has task name OR any date information OR is a structured task type
     return (row.taskName?.trim().isNotEmpty == true) ||
         (row.startDate != null) ||
         (row.endDate != null) ||
         (row.duration != null && row.duration! > 0) ||
         (row.taskType !=
-            TaskType.task) || // Save main tasks and subtasks even without data
-        (row.parentId != null) || // Save if it has hierarchical relationships
-        (row.childIds.isNotEmpty); // Save if it has children
+            TaskType.task) || 
+        (row.parentId != null) || 
+        (row.childIds.isNotEmpty); 
   }
 
   double _measureText(String text, TextStyle style) {
