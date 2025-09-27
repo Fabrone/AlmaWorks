@@ -2161,23 +2161,34 @@ class GanttRowPainter extends CustomPainter {
     final duration = row.endDate!.difference(row.startDate!).inDays + 1;
     final barWidth = duration * dayWidth;
 
-    final barHeight = rowHeight * 0.6;
+    // Determine bar height based on task type
+    double barHeight;
+    switch (row.taskType) {
+      case TaskType.mainTask:
+      case TaskType.subTask:
+        barHeight = rowHeight * 0.15; 
+        break;
+      case TaskType.task:
+        barHeight = rowHeight * 0.6; 
+        break;
+    }
+    
     final barTop = (rowHeight - barHeight) / 2;
 
     Color barColor;
     Color borderColor;
     switch (row.taskType) {
       case TaskType.mainTask:
-        barColor = Colors.blue.shade800;
-        borderColor = Colors.blue.shade900;
+        barColor = Colors.grey[600]!;
+        borderColor = Colors.black;
         break;
       case TaskType.subTask:
-        barColor = Colors.green.shade600;
-        borderColor = Colors.green.shade800;
-        break;
-      case TaskType.task:
         barColor = Colors.blue.shade600;
         borderColor = Colors.blue.shade800;
+        break;
+      case TaskType.task:
+        barColor = Colors.green.shade600;
+        borderColor = Colors.green.shade800;
         break;
     }
 
@@ -2199,17 +2210,20 @@ class GanttRowPainter extends CustomPainter {
 
     canvas.drawRRect(barRect, borderPaint);
 
-    final progressPaint = Paint()
-      ..color = barColor.withValues(alpha: 0.5)
-      ..style = PaintingStyle.fill;
+    // Only draw progress indicator for regular tasks (not for slim MainTask/SubTask bars)
+    if (row.taskType == TaskType.task) {
+      final progressPaint = Paint()
+        ..color = barColor.withValues(alpha: 0.5)
+        ..style = PaintingStyle.fill;
 
-    final progressWidth = (barWidth - 4) * 0.6;
-    final progressRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(startOffset + 2, barTop + 2, progressWidth, barHeight - 4),
-      Radius.circular(1),
-    );
+      final progressWidth = (barWidth - 4) * 0.6;
+      final progressRect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(startOffset + 2, barTop + 2, progressWidth, barHeight - 4),
+        Radius.circular(1),
+      );
 
-    canvas.drawRRect(progressRect, progressPaint);
+      canvas.drawRRect(progressRect, progressPaint);
+    }
   }
 
   @override
