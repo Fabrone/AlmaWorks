@@ -654,18 +654,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   bool _validateCalculatedEndDate(GanttRowData row, DateTime calculatedEndDate, int index) {
-    // Enhanced project-level constraints specifically for main tasks
+    // Enhanced project-level constraints - MainTasks can be anywhere within project bounds
     if (_projectStartDate != null && _projectEndDate != null) {
       if (row.taskType == TaskType.mainTask) {
-        if (calculatedEndDate.isBefore(_projectStartDate!)) {
+        // MainTask must be within project timeline but doesn't need to match exact dates
+        if (calculatedEndDate.isBefore(_projectStartDate!) || calculatedEndDate.isAfter(_projectEndDate!)) {
           _showDateConstraintError(
-            'Calculated end date would be before project start date. Please adjust duration or start date.',
-          );
-          return false;
-        }
-        if (calculatedEndDate.isAfter(_projectEndDate!)) {
-          _showDateConstraintError(
-            'Calculated end date would exceed project end date. Please adjust duration or start date.',
+            'Calculated end date would place MainTask outside project timeline. Please adjust duration or start date.',
           );
           return false;
         }
@@ -720,18 +715,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   bool _validateCalculatedStartDate(GanttRowData row, DateTime calculatedStartDate, int index) {
-    // Enhanced project-level constraints specifically for main tasks
+    // Enhanced project-level constraints - MainTasks can be anywhere within project bounds
     if (_projectStartDate != null && _projectEndDate != null) {
       if (row.taskType == TaskType.mainTask) {
-        if (calculatedStartDate.isBefore(_projectStartDate!)) {
+        // MainTask must be within project timeline but doesn't need to match exact dates
+        if (calculatedStartDate.isBefore(_projectStartDate!) || calculatedStartDate.isAfter(_projectEndDate!)) {
           _showDateConstraintError(
-            'Calculated start date would be before project start date. Please adjust duration or end date.',
-          );
-          return false;
-        }
-        if (calculatedStartDate.isAfter(_projectEndDate!)) {
-          _showDateConstraintError(
-            'Calculated start date would be after project end date. Please adjust duration or end date.',
+            'Calculated start date would place MainTask outside project timeline. Please adjust duration or end date.',
           );
           return false;
         }
@@ -789,21 +779,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     DateTime startDate,
     int index,
   ) {
-    // Enhanced project-level constraints specifically for main tasks
+    // Enhanced project-level constraints - MainTasks can be anywhere within project bounds
     if (_projectStartDate != null && _projectEndDate != null) {
       if (row.taskType == TaskType.mainTask) {
-        if (startDate.isBefore(_projectStartDate!)) {
+        // MainTask must be within project timeline but doesn't need to match exact dates
+        if (startDate.isBefore(_projectStartDate!) || startDate.isAfter(_projectEndDate!)) {
           _showProjectDateViolationDialog(
-            'Your selected start date is before the defined project start date',
+            'MainTask start date must be within the project timeline',
             'start',
-            startDate,
-          );
-          return false;
-        }
-        if (startDate.isAfter(_projectEndDate!)) {
-          _showProjectDateViolationDialog(
-            'Your selected start date is after the defined project end date',
-            'end',
             startDate,
           );
           return false;
@@ -860,20 +843,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   bool _validateAndSetEndDate(GanttRowData row, DateTime endDate, int index) {
-    // Enhanced project-level constraints specifically for main tasks
+    // Enhanced project-level constraints - MainTasks can be anywhere within project bounds
     if (_projectStartDate != null && _projectEndDate != null) {
       if (row.taskType == TaskType.mainTask) {
-        if (endDate.isBefore(_projectStartDate!)) {
+        // MainTask must be within project timeline but doesn't need to match exact dates
+        if (endDate.isBefore(_projectStartDate!) || endDate.isAfter(_projectEndDate!)) {
           _showProjectDateViolationDialog(
-            'Your selected end date is before the defined project start date',
-            'start',
-            endDate,
-          );
-          return false;
-        }
-        if (endDate.isAfter(_projectEndDate!)) {
-          _showProjectDateViolationDialog(
-            'Your selected end date is after the defined project end date',
+            'MainTask end date must be within the project timeline',
             'end',
             endDate,
           );
@@ -1092,17 +1068,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     // Check if adjusted parent dates would violate project constraints
     if (_projectStartDate != null && _projectEndDate != null) {
       if (parentRow.taskType == TaskType.mainTask) {
-        // For main tasks, check against project dates and show project dialog if needed
-        if ((newParentStart != null && newParentStart.isBefore(_projectStartDate!)) ||
-            (newParentEnd != null && newParentEnd.isAfter(_projectEndDate!))) {
+        // For main tasks, check they remain within project bounds (not exact match)
+        if ((newParentStart != null && (newParentStart.isBefore(_projectStartDate!) || newParentStart.isAfter(_projectEndDate!))) ||
+            (newParentEnd != null && (newParentEnd.isBefore(_projectStartDate!) || newParentEnd.isAfter(_projectEndDate!)))) {
           
-          String violationType = newParentStart != null && newParentStart.isBefore(_projectStartDate!) 
-              ? 'start' 
-              : 'end';
-          DateTime violatingDate = violationType == 'start' ? newParentStart! : newParentEnd!;
+          String violationType = 'timeline';
+          DateTime violatingDate = newParentStart != null && newParentStart.isBefore(_projectStartDate!) 
+              ? newParentStart 
+              : (newParentEnd != null && newParentEnd.isAfter(_projectEndDate!) ? newParentEnd : attemptedDate);
           
           _showProjectDateViolationDialog(
-            'Adjusting the parent task would ${violationType == 'start' ? 'move it before' : 'extend it beyond'} the project $violationType date',
+            'Adjusting the MainTask would place it outside the project timeline',
             violationType,
             violatingDate,
           );
@@ -1121,8 +1097,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Apply the parent date adjustments
+    // Apply the parent date adjustments and child date changes in single setState
     setState(() {
+      // Update parent dates
       if (newParentStart != null) {
         parentRow.startDate = newParentStart;
       }
@@ -1141,7 +1118,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         _editedRows[parentIndex] = parentRow;
       }
 
-      // Now apply the child date change
+      // CRITICAL FIX: Apply child date change AND perform full recalculation immediately
       if (dateType == 'start' || dateType == 'calculated_start') {
         childRow.startDate = attemptedDate;
       } else if (dateType == 'end' || dateType == 'calculated_end') {
@@ -1151,15 +1128,15 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       // Ensure child row is in edited rows
       _editedRows[childIndex] = childRow;
 
-      // Recalculate child dates/duration if needed
-      _performSmartRecalculation(childRow, childIndex);
+      // CRITICAL FIX: Perform complete recalculation for the child row immediately
+      _performImmediateRecalculation(childRow, childIndex);
     });
 
     // Check if parent needs further adjustment (e.g., its own parent)
     _updateParentDatesIfNeeded(parentRow, _getRowIndex(parentRow.id));
 
     widget.logger.i(
-      '✅ Successfully adjusted parent task dates and applied child task change',
+      '✅ Successfully adjusted parent task dates and applied child task change with full recalculation',
     );
 
     if (mounted) {
@@ -1174,6 +1151,88 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         ),
       );
     }
+  }
+
+  void _performImmediateRecalculation(GanttRowData row, int index) {
+    // Count how many fields are populated
+    bool hasStart = row.startDate != null;
+    bool hasEnd = row.endDate != null;
+    bool hasDuration = row.duration != null && row.duration! > 0;
+
+    widget.logger.d(
+      'Immediate recalculation for row $index: start=$hasStart, end=$hasEnd, duration=$hasDuration',
+    );
+
+    if (hasStart && hasEnd && !hasDuration) {
+      // Calculate duration from start and end dates
+      row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
+      widget.logger.d('Immediately calculated duration: ${row.duration}');
+      
+    } else if (hasStart && hasDuration && !hasEnd) {
+      // Calculate end date from start date and duration
+      final calculatedEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
+      
+      // Validate without triggering dialogs (since we're in parent adjustment flow)
+      if (_isDateWithinBounds(row, calculatedEndDate, 'end')) {
+        row.endDate = calculatedEndDate;
+        widget.logger.d('Immediately calculated end date: ${row.endDate}');
+      }
+      
+    } else if (hasEnd && hasDuration && !hasStart) {
+      // Calculate start date from end date and duration
+      final calculatedStartDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
+      
+      // Validate without triggering dialogs (since we're in parent adjustment flow)
+      if (_isDateWithinBounds(row, calculatedStartDate, 'start')) {
+        row.startDate = calculatedStartDate;
+        widget.logger.d('Immediately calculated start date: ${row.startDate}');
+      }
+      
+    } else if (hasStart && hasEnd && hasDuration) {
+      // All three fields are populated - verify consistency and adjust if needed
+      final calculatedDuration = row.endDate!.difference(row.startDate!).inDays + 1;
+      if (calculatedDuration != row.duration) {
+        // Prioritize dates over duration in parent adjustment scenarios
+        row.duration = calculatedDuration;
+        widget.logger.d('Immediately recalculated duration for consistency: ${row.duration}');
+      }
+    }
+
+    // Update edited rows to ensure changes are tracked
+    _editedRows[index] = row;
+  }
+
+  bool _isDateWithinBounds(GanttRowData row, DateTime date, String dateType) {
+    // Check project bounds
+    if (_projectStartDate != null && _projectEndDate != null) {
+      if (row.taskType == TaskType.mainTask) {
+        if (date.isBefore(_projectStartDate!) || date.isAfter(_projectEndDate!)) {
+          return false;
+        }
+      } else {
+        if (date.isBefore(_projectStartDate!) || date.isAfter(_projectEndDate!)) {
+          return false;
+        }
+      }
+    }
+
+    // Check parent bounds (if any)
+    final parentRow = _getParentRow(row);
+    if (parentRow != null) {
+      if (dateType == 'start' && parentRow.startDate != null) {
+        if (date.isBefore(parentRow.startDate!)) return false;
+      }
+      if (dateType == 'end' && parentRow.endDate != null) {
+        if (date.isAfter(parentRow.endDate!)) return false;
+      }
+      if (parentRow.startDate != null && parentRow.endDate != null) {
+        if (date.isBefore(parentRow.startDate!) || date.isAfter(parentRow.endDate!)) {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   // New method to get parent row
