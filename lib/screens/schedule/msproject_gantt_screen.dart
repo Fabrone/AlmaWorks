@@ -74,20 +74,28 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   // Fetch project start and end dates from Firestore with detailed logging
   Future<void> _loadProjectDates() async {
-    widget.logger.i('📅 Attempting to load project dates for project ID: ${widget.project.id}');
+    widget.logger.i(
+      '📅 Attempting to load project dates for project ID: ${widget.project.id}',
+    );
     try {
-      final docRef = FirebaseFirestore.instance.collection('Projects').doc(widget.project.id);
-      widget.logger.d('Querying Firestore at path: Projects/${widget.project.id}');
+      final docRef = FirebaseFirestore.instance
+          .collection('Projects')
+          .doc(widget.project.id);
+      widget.logger.d(
+        'Querying Firestore at path: Projects/${widget.project.id}',
+      );
       final doc = await docRef.get();
-      
+
       if (doc.exists) {
         final data = doc.data();
         widget.logger.d('Document data: $data');
-        
-        if (data != null && data.containsKey('startDate') && data.containsKey('endDate')) {
+
+        if (data != null &&
+            data.containsKey('startDate') &&
+            data.containsKey('endDate')) {
           final startDate = (data['startDate'] as Timestamp?)?.toDate();
           final endDate = (data['endDate'] as Timestamp?)?.toDate();
-          
+
           if (startDate != null && endDate != null) {
             if (mounted) {
               setState(() {
@@ -95,10 +103,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                 _projectEndDate = endDate;
                 _isLoading = false; // Only set to false if dates are valid
               });
-              widget.logger.i('✅ Successfully loaded project dates: $startDate to $endDate');
+              widget.logger.i(
+                '✅ Successfully loaded project dates: $startDate to $endDate',
+              );
             }
           } else {
-            widget.logger.w('⚠️ startDate or endDate is null in Firestore document');
+            widget.logger.w(
+              '⚠️ startDate or endDate is null in Firestore document',
+            );
             _setDefaultDates();
           }
         } else {
@@ -106,11 +118,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           _setDefaultDates();
         }
       } else {
-        widget.logger.w('⚠️ Project document does not exist for ID: ${widget.project.id}');
+        widget.logger.w(
+          '⚠️ Project document does not exist for ID: ${widget.project.id}',
+        );
         _setDefaultDates();
       }
     } catch (e, stackTrace) {
-      widget.logger.e('❌ Error loading project dates for project ID: ${widget.project.id}', error: e, stackTrace: stackTrace);
+      widget.logger.e(
+        '❌ Error loading project dates for project ID: ${widget.project.id}',
+        error: e,
+        stackTrace: stackTrace,
+      );
       _setDefaultDates();
     }
   }
@@ -124,7 +142,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         _isOfflineMode = true;
         _isLoading = false;
       });
-      widget.logger.i('📅 Set default dates: $_projectStartDate to $_projectEndDate');
+      widget.logger.i(
+        '📅 Set default dates: $_projectStartDate to $_projectEndDate',
+      );
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -156,55 +176,66 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         .where('projectId', isEqualTo: widget.project.id)
         .orderBy('updatedAt', descending: true)
         .snapshots()
-        .listen((snapshot) {
-      if (!mounted) return;
+        .listen(
+          (snapshot) {
+            if (!mounted) return;
 
-      widget.logger.d('📅 Received Firebase snapshot with ${snapshot.docs.length} documents');
-      List<GanttRowData> loadedRows = [];
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
-      }
+            widget.logger.d(
+              '📅 Received Firebase snapshot with ${snapshot.docs.length} documents',
+            );
+            List<GanttRowData> loadedRows = [];
+            for (var doc in snapshot.docs) {
+              final data = doc.data();
+              loadedRows.add(GanttRowData.fromFirebaseMap(doc.id, data));
+            }
 
-      loadedRows.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
-      _cachedProjects[widget.project.id] = List.from(loadedRows);
+            loadedRows.sort((a, b) => a.displayOrder.compareTo(b.displayOrder));
+            _cachedProjects[widget.project.id] = List.from(loadedRows);
 
-      if (loadedRows.isNotEmpty) {
-        _rows = loadedRows;
-        _sortRowsByHierarchy();
-        
-        // Handle orphaned tasks that may exist in loaded data
-        _assignParentsToOrphanedTasks();
-      }
+            if (loadedRows.isNotEmpty) {
+              _rows = loadedRows;
+              _sortRowsByHierarchy();
 
-      while (_rows.length < defaultRowCount) {
-        _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
-      }
+              // Handle orphaned tasks that may exist in loaded data
+              _assignParentsToOrphanedTasks();
+            }
 
-      setState(() {
-        _isLoading = false;
-        _isOfflineMode = false;
-        _computeColumnWidths();
-      });
+            while (_rows.length < defaultRowCount) {
+              _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
+            }
 
-      widget.logger.i('📅 MSProjectGantt: Real-time update with ${_rows.length} rows');
-    }, onError: (e, stackTrace) {
-      widget.logger.e('❌ Firebase listener error', error: e, stackTrace: stackTrace);
-      setState(() {
-        _isOfflineMode = true;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Working offline - changes will sync when connection is restored',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.orange,
-          ),
+            setState(() {
+              _isLoading = false;
+              _isOfflineMode = false;
+              _computeColumnWidths();
+            });
+
+            widget.logger.i(
+              '📅 MSProjectGantt: Real-time update with ${_rows.length} rows',
+            );
+          },
+          onError: (e, stackTrace) {
+            widget.logger.e(
+              '❌ Firebase listener error',
+              error: e,
+              stackTrace: stackTrace,
+            );
+            setState(() {
+              _isOfflineMode = true;
+            });
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Working offline - changes will sync when connection is restored',
+                    style: GoogleFonts.poppins(),
+                  ),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+          },
         );
-      }
-    });
   }
 
   // Updated _loadTasksFromFirebase method to handle orphaned tasks
@@ -216,20 +247,26 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       if (_cachedProjects.containsKey(widget.project.id)) {
         _rows = List.from(_cachedProjects[widget.project.id]!);
         _sortRowsByHierarchy();
-        
+
         // Handle orphaned tasks in cached data
         _assignParentsToOrphanedTasks();
-        
+
         while (_rows.length < defaultRowCount) {
           _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
         }
         _computeColumnWidths();
         setState(() => _isLoading = false);
-        widget.logger.i('📅 MSProjectGantt: Loaded ${_rows.length} rows from cache with orphaned task handling');
+        widget.logger.i(
+          '📅 MSProjectGantt: Loaded ${_rows.length} rows from cache with orphaned task handling',
+        );
         return;
       }
     } catch (e, stackTrace) {
-      widget.logger.e('❌ MSProjectGantt: Error loading tasks', error: e, stackTrace: stackTrace);
+      widget.logger.e(
+        '❌ MSProjectGantt: Error loading tasks',
+        error: e,
+        stackTrace: stackTrace,
+      );
       _isOfflineMode = true;
       if (mounted) {
         _initializeDefaultRows();
@@ -246,49 +283,52 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     _computeColumnWidths();
   }
 
+  // Updated _addNewRow method - ensures new rows are tracked properly
   void _addNewRow({int? insertAfterIndex}) {
     if (!mounted) return;
     setState(() {
-      final newRow = GanttRowData(id: 'new_row_${DateTime.now().millisecondsSinceEpoch}');
-      
+      final newRow = GanttRowData(
+        id: 'new_row_${DateTime.now().millisecondsSinceEpoch}',
+        isUnsaved: true, // Mark new rows as unsaved
+      );
+
       // Determine insertion index
-      int insertIndex = insertAfterIndex != null && insertAfterIndex >= 0 && insertAfterIndex < _rows.length 
-          ? insertAfterIndex + 1 
+      int insertIndex =
+          insertAfterIndex != null &&
+              insertAfterIndex >= 0 &&
+              insertAfterIndex < _rows.length
+          ? insertAfterIndex + 1
           : _rows.length;
-      
+
       // Find the nearest parent (MainTask or SubTask) by scanning upward from insertion point
       GanttRowData? nearestParent;
       int parentHierarchyLevel = -1;
-      
+
       // Scan upward from the insertion point to find the nearest MainTask or SubTask
       for (int i = insertIndex - 1; i >= 0; i--) {
         final candidateParent = _editedRows[i] ?? _rows[i];
-        
+
         if (candidateParent.taskType == TaskType.mainTask) {
-          // MainTask found - this becomes the parent
           nearestParent = candidateParent;
           parentHierarchyLevel = candidateParent.hierarchyLevel;
           break;
         } else if (candidateParent.taskType == TaskType.subTask) {
-          // SubTask found - check if it's the most immediate parent
-          if (nearestParent == null || candidateParent.hierarchyLevel > parentHierarchyLevel) {
+          if (nearestParent == null ||
+              candidateParent.hierarchyLevel > parentHierarchyLevel) {
             nearestParent = candidateParent;
             parentHierarchyLevel = candidateParent.hierarchyLevel;
           }
-          // Continue scanning to see if there's a higher-level parent
         }
       }
-      
+
       // Assign parent and hierarchy level to the new task
       if (nearestParent != null) {
         newRow.parentId = nearestParent.id;
         newRow.hierarchyLevel = nearestParent.hierarchyLevel + 1;
-        newRow.taskType = TaskType.task; // New tasks are always regular tasks initially
-        
-        // Add the new task to parent's childIds list
+        newRow.taskType = TaskType.task;
+
         _safeAddChildId(nearestParent, newRow.id);
-        
-        // Update the parent in _editedRows if it exists there
+
         for (int i = 0; i < _rows.length; i++) {
           final row = _editedRows[i] ?? _rows[i];
           if (row.id == nearestParent.id) {
@@ -296,67 +336,106 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             break;
           }
         }
-        
-        widget.logger.i('📅 Auto-assigned parent "${nearestParent.taskName}" (${nearestParent.taskType}) to new task at hierarchy level ${newRow.hierarchyLevel}');
+
+        widget.logger.i(
+          '📅 Auto-assigned parent "${nearestParent.taskName}" (${nearestParent.taskType}) to new unsaved task at hierarchy level ${newRow.hierarchyLevel}',
+        );
       } else {
-        // No parent found - this becomes a top-level task
         newRow.hierarchyLevel = 0;
         newRow.taskType = TaskType.task;
-        widget.logger.i('📅 New task created as top-level task (no parent found)');
+        widget.logger.i(
+          '📅 New unsaved task created as top-level task (no parent found)',
+        );
       }
-      
-      // Insert the new row
-      if (insertAfterIndex != null && insertAfterIndex >= 0 && insertAfterIndex < _rows.length) {
-        _rows.insert(insertAfterIndex + 1, newRow);
-      } else {
-        _rows.add(newRow);
-      }
-      
-      // Recalculate hierarchy and update display orders
-      _calculateHierarchy();
-      _computeColumnWidths();
-    });
-    widget.logger.i('📅 Added new row at index: ${insertAfterIndex ?? _rows.length - 1}');
-  }
 
-  void _deleteRow(int index) {
-    if (!mounted) return;
-    if (_rows.length > defaultRowCount && index >= defaultRowCount) {
-      final rowToDelete = _rows[index];
-      setState(() {
-        _rows.removeAt(index);
-        _editedRows.remove(index);
+      // Insert the new row
+      if (insertAfterIndex != null &&
+          insertAfterIndex >= 0 &&
+          insertAfterIndex < _rows.length) {
+        _rows.insert(insertAfterIndex + 1, newRow);
+        // CRITICAL: Add the new row to _editedRows immediately to track it for saving
+        _editedRows[insertAfterIndex + 1] = newRow;
+
+        // Update indices for existing edited rows that come after the insertion point
         final updatedEditedRows = <int, GanttRowData>{};
         _editedRows.forEach((key, value) {
-          if (key > index) {
-            updatedEditedRows[key - 1] = value;
-          } else if (key < index) {
+          if (key > insertAfterIndex) {
+            updatedEditedRows[key + 1] = value;
+          } else {
             updatedEditedRows[key] = value;
           }
         });
         _editedRows.clear();
         _editedRows.addAll(updatedEditedRows);
-        _calculateHierarchy();
-        _computeColumnWidths();
-      });
-
-      if (rowToDelete.firestoreId != null) {
-        _deleteRowFromFirebase(rowToDelete.firestoreId!);
+      } else {
+        _rows.add(newRow);
+        // CRITICAL: Add the new row to _editedRows immediately
+        _editedRows[_rows.length - 1] = newRow;
       }
-      widget.logger.i('📅 Deleted row at index: $index, firestoreId: ${rowToDelete.firestoreId}');
-    } else {
+
+      // Recalculate hierarchy and update display orders
+      _calculateHierarchy();
+      _computeColumnWidths();
+    });
+    widget.logger.i(
+      '📅 Added new unsaved row at index: ${insertAfterIndex ?? _rows.length - 1}',
+    );
+  }
+
+  void _deleteRow(int index) {
+    if (!mounted) return;
+
+    final rowToDelete = _editedRows[index] ?? _rows[index];
+
+    // Only allow deletion of unsaved rows or rows beyond default count
+    if (!rowToDelete.isUnsaved && index < defaultRowCount) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Cannot delete default rows or invalid index',
+              'Cannot delete saved rows within default range',
               style: GoogleFonts.poppins(),
             ),
             backgroundColor: Colors.orange,
           ),
         );
       }
-      widget.logger.w('⚠️ Attempted to delete protected row at index: $index');
+      widget.logger.w(
+        '⚠️ Attempted to delete saved row within default range at index: $index',
+      );
+      return;
+    }
+
+    if (index >= 0 && index < _rows.length) {
+      setState(() {
+        _rows.removeAt(index);
+
+        // Properly manage _editedRows indices after deletion
+        final updatedEditedRows = <int, GanttRowData>{};
+        _editedRows.forEach((key, value) {
+          if (key < index) {
+            // Rows before deletion point keep same index
+            updatedEditedRows[key] = value;
+          } else if (key > index) {
+            // Rows after deletion point shift down by 1
+            updatedEditedRows[key - 1] = value;
+          }
+          // Skip the deleted row (key == index)
+        });
+        _editedRows.clear();
+        _editedRows.addAll(updatedEditedRows);
+
+        _calculateHierarchy();
+        _computeColumnWidths();
+      });
+
+      // Only delete from Firebase if it was previously saved
+      if (rowToDelete.firestoreId != null) {
+        _deleteRowFromFirebase(rowToDelete.firestoreId!);
+      }
+      widget.logger.i(
+        '📅 Deleted row at index: $index, firestoreId: ${rowToDelete.firestoreId}, was unsaved: ${rowToDelete.isUnsaved}',
+      );
     }
   }
 
@@ -386,6 +465,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           '✅ Created new row: ${row.taskName} for project ${widget.project.name} (${widget.project.id})',
         );
       }
+
+      // Mark row as saved
+      row.isUnsaved = false;
 
       if (_cachedProjects.containsKey(widget.project.id)) {
         final cachedRows = _cachedProjects[widget.project.id]!;
@@ -424,11 +506,15 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           .delete();
       widget.logger.i('✅ Deleted row from Firebase: $firestoreId');
     } catch (e, stackTrace) {
-      widget.logger.e('❌ Error deleting row from Firebase', error: e, stackTrace: stackTrace);
+      widget.logger.e(
+        '❌ Error deleting row from Firebase',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
-  // Enhanced _updateRowData method to trigger hierarchy recalculation when needed
+  // Updated _updateRowData method - ensure proper tracking in _editedRows
   void _updateRowData(
     int index, {
     String? taskName,
@@ -438,8 +524,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     TaskType? taskType,
   }) {
     if (!mounted) return;
+    if (index < 0 || index >= _rows.length) {
+      widget.logger.w('⚠️ Attempted to update row at invalid index: $index');
+      return;
+    }
 
     setState(() {
+      // CRITICAL FIX: Ensure we always have a row in _editedRows for tracking
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       _editedRows[index] = row;
 
@@ -447,22 +538,23 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         row.taskName = taskName;
         widget.logger.d('Updated task name for row $index: $taskName');
       }
-      
+
       if (duration != null) {
         row.duration = duration;
         widget.logger.d('Updated duration for row $index: $duration');
       }
-      
+
       // Handle task type changes with hierarchy recalculation
       if (taskType != null) {
         final oldTaskType = row.taskType;
         row.taskType = taskType;
-        
-        // If this is a significant task type change, recalculate hierarchy
+
         if (oldTaskType != taskType) {
           _clearAffectedRelationships(index, oldTaskType, taskType);
-          _calculateHierarchy(); // This will reassign parent-child relationships
-          widget.logger.d('Updated task type for row $index: $taskType with hierarchy recalculation');
+          _calculateHierarchy();
+          widget.logger.d(
+            'Updated task type for row $index: $taskType with hierarchy recalculation',
+          );
         }
       }
 
@@ -472,7 +564,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           _updateParentDatesIfNeeded(row, index);
         }
       }
-      
+
       if (endDate != null) {
         if (_validateAndSetEndDate(row, endDate, index)) {
           _updateParentDatesIfNeeded(row, index);
@@ -486,7 +578,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   // Updated _validateAndSetStartDate method with project boundary checks for main tasks
-  bool _validateAndSetStartDate(GanttRowData row, DateTime startDate, int index) {
+  bool _validateAndSetStartDate(
+    GanttRowData row,
+    DateTime startDate,
+    int index,
+  ) {
     // Enhanced project-level constraints specifically for main tasks
     if (_projectStartDate != null && _projectEndDate != null) {
       if (row.taskType == TaskType.mainTask) {
@@ -494,7 +590,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           _showProjectDateViolationDialog(
             'Your selected start date is before the defined project start date',
             'start',
-            startDate
+            startDate,
           );
           return false;
         }
@@ -502,14 +598,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           _showProjectDateViolationDialog(
             'Your selected start date is after the defined project end date',
             'end',
-            startDate
+            startDate,
           );
           return false;
         }
       } else {
         // Regular project boundary check for non-main tasks
-        if (startDate.isBefore(_projectStartDate!) || startDate.isAfter(_projectEndDate!)) {
-          _showDateConstraintError('Start date must be within project timeline');
+        if (startDate.isBefore(_projectStartDate!) ||
+            startDate.isAfter(_projectEndDate!)) {
+          _showDateConstraintError(
+            'Start date must be within project timeline',
+          );
           return false;
         }
       }
@@ -519,11 +618,15 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.startDate != null) {
       if (startDate.isBefore(parentRow.startDate!)) {
-        _showDateConstraintError('Start date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})');
+        _showDateConstraintError(
+          'Start date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})',
+        );
         return false;
       }
       if (parentRow.endDate != null && startDate.isAfter(parentRow.endDate!)) {
-        _showDateConstraintError('Start date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})');
+        _showDateConstraintError(
+          'Start date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})',
+        );
         return false;
       }
     }
@@ -547,7 +650,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           _showProjectDateViolationDialog(
             'Your selected end date is before the defined project start date',
             'start',
-            endDate
+            endDate,
           );
           return false;
         }
@@ -555,13 +658,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           _showProjectDateViolationDialog(
             'Your selected end date is after the defined project end date',
             'end',
-            endDate
+            endDate,
           );
           return false;
         }
       } else {
         // Regular project boundary check for non-main tasks
-        if (endDate.isBefore(_projectStartDate!) || endDate.isAfter(_projectEndDate!)) {
+        if (endDate.isBefore(_projectStartDate!) ||
+            endDate.isAfter(_projectEndDate!)) {
           _showDateConstraintError('End date must be within project timeline');
           return false;
         }
@@ -572,11 +676,16 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.endDate != null) {
       if (endDate.isAfter(parentRow.endDate!)) {
-        _showDateConstraintError('End date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})');
+        _showDateConstraintError(
+          'End date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})',
+        );
         return false;
       }
-      if (parentRow.startDate != null && endDate.isBefore(parentRow.startDate!)) {
-        _showDateConstraintError('End date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})');
+      if (parentRow.startDate != null &&
+          endDate.isBefore(parentRow.startDate!)) {
+        _showDateConstraintError(
+          'End date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})',
+        );
         return false;
       }
     }
@@ -594,7 +703,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   // New method to get parent row
   GanttRowData? _getParentRow(GanttRowData row) {
     if (row.parentId == null) return null;
-    
+
     for (int i = 0; i < _rows.length; i++) {
       final parentRow = _editedRows[i] ?? _rows[i];
       if (parentRow.id == row.parentId) {
@@ -607,7 +716,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   // New method to get child rows
   List<GanttRowData> _getChildRows(GanttRowData row) {
     List<GanttRowData> children = [];
-    
+
     for (String childId in row.childIds) {
       for (int i = 0; i < _rows.length; i++) {
         final childRow = _editedRows[i] ?? _rows[i];
@@ -621,12 +730,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   // New method to validate children start dates
-  bool _validateChildrenStartDates(GanttRowData parentRow, DateTime newStartDate) {
+  bool _validateChildrenStartDates(
+    GanttRowData parentRow,
+    DateTime newStartDate,
+  ) {
     final children = _getChildRows(parentRow);
-    
+
     for (final child in children) {
       if (child.startDate != null && child.startDate!.isBefore(newStartDate)) {
-        _showDateConstraintError('Cannot set start date after child task "${child.taskName}" starts (${DateFormat('MM/dd/yyyy').format(child.startDate!)})');
+        _showDateConstraintError(
+          'Cannot set start date after child task "${child.taskName}" starts (${DateFormat('MM/dd/yyyy').format(child.startDate!)})',
+        );
         return false;
       }
     }
@@ -636,10 +750,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   // New method to validate children end dates
   bool _validateChildrenEndDates(GanttRowData parentRow, DateTime newEndDate) {
     final children = _getChildRows(parentRow);
-    
+
     for (final child in children) {
       if (child.endDate != null && child.endDate!.isAfter(newEndDate)) {
-        _showDateConstraintError('Cannot set end date before child task "${child.taskName}" ends (${DateFormat('MM/dd/yyyy').format(child.endDate!)})');
+        _showDateConstraintError(
+          'Cannot set end date before child task "${child.taskName}" ends (${DateFormat('MM/dd/yyyy').format(child.endDate!)})',
+        );
         return false;
       }
     }
@@ -674,32 +790,45 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     bool parentUpdated = false;
 
     // Update parent start date if necessary
-    if (earliestStart != null && (parentRow.startDate == null || earliestStart.isBefore(parentRow.startDate!))) {
+    if (earliestStart != null &&
+        (parentRow.startDate == null ||
+            earliestStart.isBefore(parentRow.startDate!))) {
       // Check if the new start date is within project bounds
-      if (_projectStartDate != null && earliestStart.isBefore(_projectStartDate!)) {
-        widget.logger.w('Cannot auto-adjust parent start date - would exceed project start date');
+      if (_projectStartDate != null &&
+          earliestStart.isBefore(_projectStartDate!)) {
+        widget.logger.w(
+          'Cannot auto-adjust parent start date - would exceed project start date',
+        );
       } else {
         parentRow.startDate = earliestStart;
         parentUpdated = true;
-        widget.logger.i('Auto-updated parent task "${parentRow.taskName}" start date to: $earliestStart');
+        widget.logger.i(
+          'Auto-updated parent task "${parentRow.taskName}" start date to: $earliestStart',
+        );
       }
     }
 
     // Update parent end date if necessary
-    if (latestEnd != null && (parentRow.endDate == null || latestEnd.isAfter(parentRow.endDate!))) {
+    if (latestEnd != null &&
+        (parentRow.endDate == null || latestEnd.isAfter(parentRow.endDate!))) {
       // Check if the new end date is within project bounds
       if (_projectEndDate != null && latestEnd.isAfter(_projectEndDate!)) {
-        widget.logger.w('Cannot auto-adjust parent end date - would exceed project end date');
+        widget.logger.w(
+          'Cannot auto-adjust parent end date - would exceed project end date',
+        );
       } else {
         parentRow.endDate = latestEnd;
         parentUpdated = true;
-        widget.logger.i('Auto-updated parent task "${parentRow.taskName}" end date to: $latestEnd');
+        widget.logger.i(
+          'Auto-updated parent task "${parentRow.taskName}" end date to: $latestEnd',
+        );
       }
     }
 
     // Update parent duration if both dates are set
     if (parentRow.startDate != null && parentRow.endDate != null) {
-      parentRow.duration = parentRow.endDate!.difference(parentRow.startDate!).inDays + 1;
+      parentRow.duration =
+          parentRow.endDate!.difference(parentRow.startDate!).inDays + 1;
     }
 
     // If parent was updated, recursively update its parent
@@ -726,21 +855,31 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     if (row.startDate != null && row.endDate != null && row.duration == null) {
       row.duration = row.endDate!.difference(row.startDate!).inDays + 1;
       widget.logger.d('Calculated duration for row $index: ${row.duration}');
-    } else if (row.startDate != null && row.duration != null && row.endDate == null) {
-      final potentialEndDate = row.startDate!.add(Duration(days: row.duration! - 1));
-      
+    } else if (row.startDate != null &&
+        row.duration != null &&
+        row.endDate == null) {
+      final potentialEndDate = row.startDate!.add(
+        Duration(days: row.duration! - 1),
+      );
+
       // Validate the calculated end date
       if (_validateAndSetEndDate(row, potentialEndDate, index)) {
         widget.logger.d('Calculated end date for row $index: ${row.endDate}');
       } else {
         row.duration = null;
       }
-    } else if (row.endDate != null && row.duration != null && row.startDate == null) {
-      final potentialStartDate = row.endDate!.subtract(Duration(days: row.duration! - 1));
-      
+    } else if (row.endDate != null &&
+        row.duration != null &&
+        row.startDate == null) {
+      final potentialStartDate = row.endDate!.subtract(
+        Duration(days: row.duration! - 1),
+      );
+
       // Validate the calculated start date
       if (_validateAndSetStartDate(row, potentialStartDate, index)) {
-        widget.logger.d('Calculated start date for row $index: ${row.startDate}');
+        widget.logger.d(
+          'Calculated start date for row $index: ${row.startDate}',
+        );
       } else {
         row.duration = null;
       }
@@ -753,10 +892,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            message,
-            style: GoogleFonts.poppins(),
-          ),
+          content: Text(message, style: GoogleFonts.poppins()),
           backgroundColor: Colors.red,
           duration: Duration(seconds: 4),
         ),
@@ -764,20 +900,24 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
   }
 
+  // Updated _saveAllRows method - enhanced to handle all rows properly
   Future<void> _saveAllRows() async {
     if (!mounted) return;
 
     _calculateHierarchy();
 
     if (_isOfflineMode) {
-      for (var entry in _editedRows.entries) {
-        final index = entry.key;
-        final row = entry.value;
-        if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
+      // In offline mode, save all rows with data to local state
+      for (int i = 0; i < _rows.length; i++) {
+        final row = _editedRows[i] ?? _rows[i];
+        // Enhanced condition: save if row has any meaningful data
+        if (_shouldSaveRow(row)) {
           setState(() {
-            _rows[index] = GanttRowData.from(row);
+            _rows[i] = GanttRowData.from(row);
           });
-          widget.logger.i('📅 Saved row $index locally in offline mode');
+          widget.logger.i(
+            '📅 Saved row $i locally in offline mode: ${row.taskName}',
+          );
         }
       }
       setState(() {
@@ -797,30 +937,79 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       return;
     }
 
+    // CRITICAL FIX: Process ALL rows, not just edited ones
+    List<Future<void>> saveFutures = [];
+
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
-      if (row.taskName?.isNotEmpty == true || row.startDate != null || row.endDate != null) {
-        await _saveRowToFirebase(row, i);
-        setState(() {
-          _rows[i] = GanttRowData.from(row);
-        });
+
+      // Enhanced saving condition
+      if (_shouldSaveRow(row)) {
+        widget.logger.d(
+          '📅 Preparing to save row $i: ${row.taskName} (firestoreId: ${row.firestoreId})',
+        );
+        saveFutures.add(_saveRowToFirebase(row, i));
       }
     }
-    setState(() {
-      _editedRows.clear();
-    });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Changes saved successfully',
-            style: GoogleFonts.poppins(),
+
+    // Wait for all saves to complete
+    try {
+      await Future.wait(saveFutures);
+
+      // Update local state after successful saves
+      for (int i = 0; i < _rows.length; i++) {
+        final row = _editedRows[i] ?? _rows[i];
+        if (_shouldSaveRow(row)) {
+          setState(() {
+            _rows[i] = GanttRowData.from(row);
+          });
+        }
+      }
+
+      setState(() {
+        _editedRows.clear();
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'All changes saved successfully (${saveFutures.length} rows)',
+              style: GoogleFonts.poppins(),
+            ),
+            backgroundColor: Colors.green,
           ),
-          backgroundColor: Colors.green,
-        ),
+        );
+      }
+      widget.logger.i(
+        '📅 Successfully saved ${saveFutures.length} rows to Firebase',
       );
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error saving rows', error: e, stackTrace: stackTrace);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Error saving some changes: $e',
+              style: GoogleFonts.poppins(),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
-    widget.logger.i('📅 Saved all rows to Firebase');
+  }
+
+  bool _shouldSaveRow(GanttRowData row) {
+    // Save if row has task name OR any date information OR is a structured task type
+    return (row.taskName?.trim().isNotEmpty == true) ||
+        (row.startDate != null) ||
+        (row.endDate != null) ||
+        (row.duration != null && row.duration! > 0) ||
+        (row.taskType !=
+            TaskType.task) || // Save main tasks and subtasks even without data
+        (row.parentId != null) || // Save if it has hierarchical relationships
+        (row.childIds.isNotEmpty); // Save if it has children
   }
 
   double _measureText(String text, TextStyle style) {
@@ -901,7 +1090,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
     maxCellWidth += 48;
     _finishColumnWidth = math.max(headerWidth, maxCellWidth);
-    widget.logger.d('📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth');
+    widget.logger.d(
+      '📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth',
+    );
   }
 
   // Updated _calculateHierarchy method with orphaned task assignment
@@ -917,7 +1108,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         row.childIds.clear();
       } catch (e, stackTrace) {
         row.childIds = <String>[];
-        widget.logger.w('⚠️ Had to recreate childIds list for row ${row.id}', error: e, stackTrace: stackTrace);
+        widget.logger.w(
+          '⚠️ Had to recreate childIds list for row ${row.id}',
+          error: e,
+          stackTrace: stackTrace,
+        );
       }
     }
 
@@ -942,19 +1137,20 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
               candidateChild.parentId = row.id;
               candidateChild.hierarchyLevel = 1;
               _safeAddChildId(row, candidateChild.id);
-              
+
               // Now find children for this SubTask
               for (int k = j + 1; k < _rows.length; k++) {
                 final subCandidate = _editedRows[k] ?? _rows[k];
-                
+
                 // Stop if we hit MainTask or another SubTask
-                if (subCandidate.taskType == TaskType.mainTask || 
+                if (subCandidate.taskType == TaskType.mainTask ||
                     subCandidate.taskType == TaskType.subTask) {
                   break;
                 }
-                
+
                 // Assign regular Tasks as children of SubTask
-                if (subCandidate.taskType == TaskType.task && subCandidate.parentId == null) {
+                if (subCandidate.taskType == TaskType.task &&
+                    subCandidate.parentId == null) {
                   subCandidate.parentId = candidateChild.id;
                   subCandidate.hierarchyLevel = 2;
                   _safeAddChildId(candidateChild, subCandidate.id);
@@ -969,10 +1165,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         }
       }
     }
-    
+
     // Third pass: Handle any remaining orphaned tasks
     _assignParentsToOrphanedTasks();
-    
+
     // Update _editedRows to reflect hierarchy changes
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
@@ -980,8 +1176,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         _editedRows[i] = row;
       }
     }
-    
-    widget.logger.d('📅 Enhanced hierarchy calculation completed for ${_rows.length} rows');
+
+    widget.logger.d(
+      '📅 Enhanced hierarchy calculation completed for ${_rows.length} rows',
+    );
   }
 
   void _safeAddChildId(GanttRowData parentRow, String childId) {
@@ -991,7 +1189,11 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       List<String> newList = List<String>.from(parentRow.childIds);
       newList.add(childId);
       parentRow.childIds = newList;
-      widget.logger.w('⚠️ Had to recreate childIds list for parent ${parentRow.id}', error: e, stackTrace: stackTrace);
+      widget.logger.w(
+        '⚠️ Had to recreate childIds list for parent ${parentRow.id}',
+        error: e,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -1039,15 +1241,20 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   // NEW METHOD: Show project date violation dialog
-  void _showProjectDateViolationDialog(String message, String boundaryType, DateTime attemptedDate) {
+  void _showProjectDateViolationDialog(
+    String message,
+    String boundaryType,
+    DateTime attemptedDate,
+  ) {
     final dateStr = DateFormat('MM/dd/yyyy').format(attemptedDate);
     final projectStartStr = DateFormat('MM/dd/yyyy').format(_projectStartDate!);
     final projectEndStr = DateFormat('MM/dd/yyyy').format(_projectEndDate!);
-    
+
     String fullMessage = '$message.\n\n';
     fullMessage += 'Attempted date: $dateStr\n';
     fullMessage += 'Project timeline: $projectStartStr - $projectEndStr\n\n';
-    fullMessage += 'Would you like to edit the project dates to accommodate this task?';
+    fullMessage +=
+        'Would you like to edit the project dates to accommodate this task?';
 
     showDialog(
       context: context,
@@ -1095,7 +1302,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                widget.logger.i('📅 User canceled date selection due to project boundary violation');
+                widget.logger.i(
+                  '📅 User canceled date selection due to project boundary violation',
+                );
               },
               child: Text(
                 'Cancel',
@@ -1136,25 +1345,33 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       },
     );
 
-    widget.logger.w('⚠️ Project date boundary violation: $message for date $dateStr');
+    widget.logger.w(
+      '⚠️ Project date boundary violation: $message for date $dateStr',
+    );
   }
 
   // NEW METHOD: Navigate to edit project screen
   void _navigateToEditProjectScreen() {
-    widget.logger.i('📅 Navigating to edit project screen for project: ${widget.project.name}');
-    
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => EditProjectScreen(
-          project: widget.project,
-          logger: widget.logger,
-        ),
-      ),
-    ).then((_) {
-      // Refresh project dates when returning from edit screen
-      _loadProjectDates();
-      widget.logger.i('📅 Returned from edit project screen, refreshing project dates');
-    });
+    widget.logger.i(
+      '📅 Navigating to edit project screen for project: ${widget.project.name}',
+    );
+
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (context) => EditProjectScreen(
+              project: widget.project,
+              logger: widget.logger,
+            ),
+          ),
+        )
+        .then((_) {
+          // Refresh project dates when returning from edit screen
+          _loadProjectDates();
+          widget.logger.i(
+            '📅 Returned from edit project screen, refreshing project dates',
+          );
+        });
   }
 
   @override
@@ -1163,7 +1380,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       return Center(child: CircularProgressIndicator());
     }
 
-    final totalDays = _projectEndDate!.difference(_projectStartDate!).inDays + 1;
+    final totalDays =
+        _projectEndDate!.difference(_projectStartDate!).inDays + 1;
     final ganttWidth = totalDays * dayWidth;
 
     return Column(
@@ -1259,7 +1477,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   // Updated _buildRow method to pass row data to date cells
   Widget _buildRow(int index, double ganttWidth) {
     final row = _editedRows[index] ?? _rows[index];
-    final canDelete = index >= defaultRowCount;
+    final canDelete = row.isUnsaved; // Only show delete button for unsaved rows
     final TaskType currentTaskType = row.taskType;
 
     return Container(
@@ -1326,12 +1544,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             ),
             child: GestureDetector(
               onSecondaryTapDown: (details) {
-                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final RenderBox renderBox =
+                    context.findRenderObject() as RenderBox;
                 final position = renderBox.localToGlobal(details.localPosition);
                 _showContextMenu(context, position, index);
               },
               onLongPress: () {
-                final RenderBox renderBox = context.findRenderObject() as RenderBox;
+                final RenderBox renderBox =
+                    context.findRenderObject() as RenderBox;
                 final position = renderBox.localToGlobal(
                   Offset(_taskColumnWidth / 2, rowHeight / 2),
                 );
@@ -1351,7 +1571,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                       color: Colors.grey.shade400,
                     ),
                     border: InputBorder.none,
-                    contentPadding: _getHierarchicalPadding(index, currentTaskType),
+                    contentPadding: _getHierarchicalPadding(
+                      index,
+                      currentTaskType,
+                    ),
                     isDense: true,
                   ),
                   maxLines: 1,
@@ -1389,7 +1612,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                     color: Colors.grey.shade400,
                   ),
                   border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  contentPadding: EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
                   isDense: true,
                 ),
                 maxLines: 1,
@@ -1457,10 +1683,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         // Determine date picker bounds based on task type
         DateTime firstDate = _projectStartDate ?? DateTime(2020);
         DateTime lastDate = _projectEndDate ?? DateTime(2030);
-        
+
         // For main tasks, we still allow selection outside project bounds to trigger validation dialog
         if (rowData != null && rowData.taskType == TaskType.mainTask) {
-          firstDate = DateTime(2020); // Allow broader selection to catch violations
+          firstDate = DateTime(
+            2020,
+          ); // Allow broader selection to catch violations
           lastDate = DateTime(2030);
         }
 
@@ -1481,10 +1709,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             );
           },
         );
-        
+
         if (selectedDate != null) {
           onDateSelected(selectedDate);
-          widget.logger.d('Selected date: $selectedDate for task type: ${rowData?.taskType}');
+          widget.logger.d(
+            'Selected date: $selectedDate for task type: ${rowData?.taskType}',
+          );
         }
       },
       child: Container(
@@ -1604,14 +1834,26 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Widget _buildMonthHeaders() {
     List<Widget> monthHeaders = [];
-    DateTime currentMonth = DateTime(_projectStartDate!.year, _projectStartDate!.month, 1);
-    final totalDays = _projectEndDate!.difference(_projectStartDate!).inDays + 1;
+    DateTime currentMonth = DateTime(
+      _projectStartDate!.year,
+      _projectStartDate!.month,
+      1,
+    );
+    final totalDays =
+        _projectEndDate!.difference(_projectStartDate!).inDays + 1;
     final ganttWidth = totalDays * dayWidth;
 
-    while (currentMonth.isBefore(_projectEndDate!) || currentMonth.isAtSameMomentAs(_projectEndDate!)) {
-      DateTime monthEnd = DateTime(currentMonth.year, currentMonth.month + 1, 0);
+    while (currentMonth.isBefore(_projectEndDate!) ||
+        currentMonth.isAtSameMomentAs(_projectEndDate!)) {
+      DateTime monthEnd = DateTime(
+        currentMonth.year,
+        currentMonth.month + 1,
+        0,
+      );
       if (monthEnd.isAfter(_projectEndDate!)) monthEnd = _projectEndDate!;
-      DateTime monthStart = currentMonth.isBefore(_projectStartDate!) ? _projectStartDate! : currentMonth;
+      DateTime monthStart = currentMonth.isBefore(_projectStartDate!)
+          ? _projectStartDate!
+          : currentMonth;
       int daysInMonth = monthEnd.difference(monthStart).inDays + 1;
       double monthWidth = daysInMonth * dayWidth;
 
@@ -1654,7 +1896,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Widget _buildDayHeaders() {
     List<Widget> dayHeaders = [];
-    final totalDays = _projectEndDate!.difference(_projectStartDate!).inDays + 1;
+    final totalDays =
+        _projectEndDate!.difference(_projectStartDate!).inDays + 1;
     final dayHeaderStyle = GoogleFonts.poppins(
       fontSize: 8,
       fontWeight: FontWeight.w400,
@@ -1698,6 +1941,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   void _showContextMenu(BuildContext context, Offset position, int rowIndex) {
     _removeOverlay();
 
+    final row = _editedRows[rowIndex] ?? _rows[rowIndex];
+    final canDelete = row.isUnsaved;
+
     _overlayEntry = OverlayEntry(
       builder: (context) => GestureDetector(
         onTap: _removeOverlay,
@@ -1714,6 +1960,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                 onAddNewRow: () => _addNewRow(insertAfterIndex: rowIndex),
                 onDeleteRow: () => _deleteRow(rowIndex),
                 onDismiss: _removeOverlay,
+                canDelete: canDelete, // Pass the canDelete parameter
               ),
             ),
           ],
@@ -1722,7 +1969,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
 
     Overlay.of(context).insert(_overlayEntry!);
-    widget.logger.d('📅 Showing context menu for row $rowIndex at position $position');
+    widget.logger.d(
+      '📅 Showing context menu for row $rowIndex at position $position, canDelete: $canDelete',
+    );
   }
 
   void _removeOverlay() {
@@ -1738,34 +1987,41 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     setState(() {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       _editedRows[index] = row;
-      
+
       final oldTaskType = row.taskType;
       row.taskType = taskType;
-      
+
       // If task type changed significantly, recalculate all relationships
       if (oldTaskType != taskType) {
         // Clear existing relationships for this row
         row.parentId = null;
         row.childIds.clear();
-        
+
         // Also clear any existing parent-child relationships that might be affected
         _clearAffectedRelationships(index, oldTaskType, taskType);
-        
+
         // Recalculate entire hierarchy
         _calculateHierarchy(); // This now includes _assignParentsToOrphanedTasks()
         _computeColumnWidths();
-        
-        widget.logger.i('📅 Task type changed from $oldTaskType to $taskType for row $index - hierarchy recalculated with orphaned task handling');
+
+        widget.logger.i(
+          '📅 Task type changed from $oldTaskType to $taskType for row $index - hierarchy recalculated with orphaned task handling',
+        );
       }
     });
   }
 
   // Helper method to clear relationships affected by task type changes
-  void _clearAffectedRelationships(int changedIndex, TaskType oldType, TaskType newType) {
+  void _clearAffectedRelationships(
+    int changedIndex,
+    TaskType oldType,
+    TaskType newType,
+  ) {
     final changedRow = _editedRows[changedIndex] ?? _rows[changedIndex];
-    
+
     // If changing from MainTask or SubTask to regular Task, clear all children
-    if ((oldType == TaskType.mainTask || oldType == TaskType.subTask) && newType == TaskType.task) {
+    if ((oldType == TaskType.mainTask || oldType == TaskType.subTask) &&
+        newType == TaskType.task) {
       for (int i = 0; i < _rows.length; i++) {
         final row = _editedRows[i] ?? _rows[i];
         if (row.parentId == changedRow.id) {
@@ -1776,7 +2032,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
       changedRow.childIds.clear();
     }
-    
+
     // If changing to MainTask or SubTask, clear existing parent relationship
     if (newType == TaskType.mainTask || newType == TaskType.subTask) {
       if (changedRow.parentId != null) {
@@ -1798,35 +2054,36 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   void _assignParentsToOrphanedTasks() {
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
-      
+
       // Skip if already has parent or is a MainTask
       if (row.parentId != null || row.taskType == TaskType.mainTask) continue;
-      
+
       // Find nearest parent by scanning upward
       GanttRowData? nearestParent;
       int parentHierarchyLevel = -1;
-      
+
       for (int j = i - 1; j >= 0; j--) {
         final candidateParent = _editedRows[j] ?? _rows[j];
-        
+
         if (candidateParent.taskType == TaskType.mainTask) {
           nearestParent = candidateParent;
           parentHierarchyLevel = candidateParent.hierarchyLevel;
           break;
         } else if (candidateParent.taskType == TaskType.subTask) {
-          if (nearestParent == null || candidateParent.hierarchyLevel > parentHierarchyLevel) {
+          if (nearestParent == null ||
+              candidateParent.hierarchyLevel > parentHierarchyLevel) {
             nearestParent = candidateParent;
             parentHierarchyLevel = candidateParent.hierarchyLevel;
           }
         }
       }
-      
+
       // Assign parent if found
       if (nearestParent != null) {
         row.parentId = nearestParent.id;
         row.hierarchyLevel = nearestParent.hierarchyLevel + 1;
         _safeAddChildId(nearestParent, row.id);
-        
+
         // Update in _editedRows
         _editedRows[i] = row;
         for (int k = 0; k < _rows.length; k++) {
@@ -1836,8 +2093,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             break;
           }
         }
-        
-        widget.logger.i('📅 Auto-assigned parent "${nearestParent.taskName}" to orphaned task "${row.taskName}"');
+
+        widget.logger.i(
+          '📅 Auto-assigned parent "${nearestParent.taskName}" to orphaned task "${row.taskName}"',
+        );
       }
     }
   }
@@ -1897,7 +2156,8 @@ class GanttRowPainter extends CustomPainter {
   }
 
   void _drawGanttBar(Canvas canvas, Size size) {
-    final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
+    final startOffset =
+        row.startDate!.difference(projectStartDate).inDays * dayWidth;
     final duration = row.endDate!.difference(row.startDate!).inDays + 1;
     final barWidth = duration * dayWidth;
 
@@ -2001,7 +2261,8 @@ class GanttChartPainter extends CustomPainter {
   void _drawGanttBar(Canvas canvas, GanttRowData row, int rowIndex) {
     if (row.startDate == null || row.endDate == null) return;
 
-    final startOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
+    final startOffset =
+        row.startDate!.difference(projectStartDate).inDays * dayWidth;
     final duration = row.endDate!.difference(row.startDate!).inDays + 1;
     final barWidth = duration * dayWidth;
 
@@ -2049,6 +2310,7 @@ class TaskContextMenu extends StatelessWidget {
   final VoidCallback onAddNewRow;
   final VoidCallback onDeleteRow;
   final VoidCallback onDismiss;
+  final bool canDelete; // Add this parameter
 
   const TaskContextMenu({
     super.key,
@@ -2057,6 +2319,7 @@ class TaskContextMenu extends StatelessWidget {
     required this.onAddNewRow,
     required this.onDeleteRow,
     required this.onDismiss,
+    required this.canDelete, // Add this parameter
   });
 
   @override
@@ -2099,15 +2362,16 @@ class TaskContextMenu extends StatelessWidget {
                 onAddNewRow();
               },
             ),
-            _buildMenuItem(
-              icon: Icons.delete_outline,
-              text: 'Delete Row',
-              onTap: () {
-                onDismiss();
-                onDeleteRow();
-              },
-              textColor: Colors.red.shade600,
-            ),
+            if (canDelete)
+              _buildMenuItem(
+                icon: Icons.delete_outline,
+                text: 'Delete Row',
+                onTap: () {
+                  onDismiss();
+                  onDeleteRow();
+                },
+                textColor: Colors.red.shade600,
+              ),
           ],
         ),
       ),

@@ -10,6 +10,7 @@ class GanttRowData {
   DateTime? startDate;
   DateTime? endDate;
   TaskType taskType;
+  bool isUnsaved; // NEW: Track unsaved status
   
   String? parentId;
   int hierarchyLevel;
@@ -24,6 +25,7 @@ class GanttRowData {
     this.startDate,
     this.endDate,
     this.taskType = TaskType.task,
+    this.isUnsaved = false, // NEW: Default to false for existing rows
     this.parentId,
     this.hierarchyLevel = 0,
     this.displayOrder = 0,
@@ -39,6 +41,7 @@ class GanttRowData {
       startDate: other.startDate,
       endDate: other.endDate,
       taskType: other.taskType,
+      isUnsaved: other.isUnsaved, // NEW: Copy unsaved status
       parentId: other.parentId,
       hierarchyLevel: other.hierarchyLevel,
       displayOrder: other.displayOrder,
@@ -80,6 +83,7 @@ class GanttRowData {
       startDate: (data['startDate'] as Timestamp?)?.toDate(),
       endDate: (data['endDate'] as Timestamp?)?.toDate(),
       taskType: taskType,
+      isUnsaved: false, // NEW: Rows from Firebase are already saved
       parentId: data['parentId'] as String?,
       hierarchyLevel: data['hierarchyLevel'] as int? ?? 0,
       displayOrder: data['displayOrder'] as int? ?? 0,
@@ -120,6 +124,7 @@ class GanttRowData {
       'hierarchyLevel': hierarchyLevel,
       'displayOrder': displayOrder,
       'childIds': childIds,
+      // NOTE: isUnsaved is not saved to Firebase as it's a local tracking field
     };
   }
 
@@ -131,6 +136,7 @@ class GanttRowData {
     DateTime? startDate,
     DateTime? endDate,
     TaskType? taskType,
+    bool? isUnsaved, // NEW: Allow copying unsaved status
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -140,6 +146,7 @@ class GanttRowData {
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       taskType: taskType ?? this.taskType,
+      isUnsaved: isUnsaved ?? this.isUnsaved, // NEW: Copy unsaved status
       parentId: parentId,
       hierarchyLevel: hierarchyLevel,
       displayOrder: displayOrder,
@@ -149,7 +156,7 @@ class GanttRowData {
 
   @override
   String toString() {
-    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType)';
+    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved)';
   }
 
   @override
@@ -162,7 +169,8 @@ class GanttRowData {
         other.duration == duration &&
         other.startDate == startDate &&
         other.endDate == endDate &&
-        other.taskType == taskType;
+        other.taskType == taskType &&
+        other.isUnsaved == isUnsaved; // NEW: Include in equality check
   }
 
   @override
@@ -173,7 +181,8 @@ class GanttRowData {
         duration.hashCode ^
         startDate.hashCode ^
         endDate.hashCode ^
-        taskType.hashCode;
+        taskType.hashCode ^
+        isUnsaved.hashCode; // NEW: Include in hash
   }
 
   String get taskTypeDisplayText {
