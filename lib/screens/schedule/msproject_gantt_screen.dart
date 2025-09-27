@@ -681,19 +681,31 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Check parent constraints
+    // Check parent constraints with dialog option for calculated dates
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.endDate != null) {
       if (calculatedEndDate.isAfter(parentRow.endDate!)) {
-        _showDateConstraintError(
-          'Calculated end date would be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)}). Please adjust duration or start date.',
+        _showParentTaskDateViolationDialog(
+          'The calculated end date would be after the parent task end date',
+          'end',
+          calculatedEndDate,
+          parentRow,
+          row,
+          index,
+          'calculated_end',
         );
         return false;
       }
       if (parentRow.startDate != null &&
           calculatedEndDate.isBefore(parentRow.startDate!)) {
-        _showDateConstraintError(
-          'Calculated end date would be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)}). Please adjust duration or start date.',
+        _showParentTaskDateViolationDialog(
+          'The calculated end date would be before the parent task start date',
+          'start',
+          calculatedEndDate,
+          parentRow,
+          row,
+          index,
+          'calculated_end',
         );
         return false;
       }
@@ -735,18 +747,30 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Check parent constraints
+    // Check parent constraints with dialog option for calculated dates
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.startDate != null) {
       if (calculatedStartDate.isBefore(parentRow.startDate!)) {
-        _showDateConstraintError(
-          'Calculated start date would be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)}). Please adjust duration or end date.',
+        _showParentTaskDateViolationDialog(
+          'The calculated start date would be before the parent task start date',
+          'start',
+          calculatedStartDate,
+          parentRow,
+          row,
+          index,
+          'calculated_start',
         );
         return false;
       }
       if (parentRow.endDate != null && calculatedStartDate.isAfter(parentRow.endDate!)) {
-        _showDateConstraintError(
-          'Calculated start date would be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)}). Please adjust duration or end date.',
+        _showParentTaskDateViolationDialog(
+          'The calculated start date would be after the parent task end date',
+          'end',
+          calculatedStartDate,
+          parentRow,
+          row,
+          index,
+          'calculated_start',
         );
         return false;
       }
@@ -796,18 +820,30 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Check parent constraints (existing logic)
+    // Check parent constraints with dialog option
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.startDate != null) {
       if (startDate.isBefore(parentRow.startDate!)) {
-        _showDateConstraintError(
-          'Start date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})',
+        _showParentTaskDateViolationDialog(
+          'Your selected start date is before the parent task start date',
+          'start',
+          startDate,
+          parentRow,
+          row,
+          index,
+          'start',
         );
         return false;
       }
       if (parentRow.endDate != null && startDate.isAfter(parentRow.endDate!)) {
-        _showDateConstraintError(
-          'Start date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})',
+        _showParentTaskDateViolationDialog(
+          'Your selected start date is after the parent task end date',
+          'end',
+          startDate,
+          parentRow,
+          row,
+          index,
+          'start',
         );
         return false;
       }
@@ -855,19 +891,31 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       }
     }
 
-    // Check parent constraints (existing logic)
+    // Check parent constraints with dialog option
     final parentRow = _getParentRow(row);
     if (parentRow != null && parentRow.endDate != null) {
       if (endDate.isAfter(parentRow.endDate!)) {
-        _showDateConstraintError(
-          'End date cannot be after parent task end date (${DateFormat('MM/dd/yyyy').format(parentRow.endDate!)})',
+        _showParentTaskDateViolationDialog(
+          'Your selected end date is after the parent task end date',
+          'end',
+          endDate,
+          parentRow,
+          row,
+          index,
+          'end',
         );
         return false;
       }
       if (parentRow.startDate != null &&
           endDate.isBefore(parentRow.startDate!)) {
-        _showDateConstraintError(
-          'End date cannot be before parent task start date (${DateFormat('MM/dd/yyyy').format(parentRow.startDate!)})',
+        _showParentTaskDateViolationDialog(
+          'Your selected end date is before the parent task start date',
+          'start',
+          endDate,
+          parentRow,
+          row,
+          index,
+          'end',
         );
         return false;
       }
@@ -881,6 +929,251 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     row.endDate = endDate;
     widget.logger.d('Updated end date for row $index: $endDate');
     return true;
+  }
+
+  // Show parent task date violation dialog
+  void _showParentTaskDateViolationDialog(
+    String message,
+    String boundaryType,
+    DateTime attemptedDate,
+    GanttRowData parentRow,
+    GanttRowData childRow,
+    int childIndex,
+    String dateType,
+  ) {
+    final dateStr = DateFormat('MM/dd/yyyy').format(attemptedDate);
+    final parentStartStr = parentRow.startDate != null 
+        ? DateFormat('MM/dd/yyyy').format(parentRow.startDate!) 
+        : 'Not set';
+    final parentEndStr = parentRow.endDate != null 
+        ? DateFormat('MM/dd/yyyy').format(parentRow.endDate!) 
+        : 'Not set';
+
+    String fullMessage = '$message.\n\n';
+    fullMessage += 'Attempted date: $dateStr\n';
+    fullMessage += 'Parent task "${parentRow.taskName ?? 'Unnamed'}" timeline: $parentStartStr - $parentEndStr\n\n';
+    fullMessage += 'Would you like to adjust the parent task dates to accommodate this change?';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.orange.shade600,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Date Outside Parent Task Timeline',
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            constraints: BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fullMessage,
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                widget.logger.i(
+                  '📅 User canceled date selection due to parent task boundary violation',
+                );
+              },
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _adjustParentTaskDates(
+                  parentRow,
+                  childRow,
+                  childIndex,
+                  attemptedDate,
+                  dateType,
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue.shade600,
+                foregroundColor: Colors.white,
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              child: Text(
+                'Continue',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 8,
+        );
+      },
+    );
+
+    widget.logger.w(
+      '⚠️ Parent task date boundary violation: $message for date $dateStr',
+    );
+  }
+
+  Future<void> _adjustParentTaskDates(
+    GanttRowData parentRow,
+    GanttRowData childRow,
+    int childIndex,
+    DateTime attemptedDate,
+    String dateType,
+  ) async {
+    widget.logger.i(
+      '📅 Attempting to adjust parent task "${parentRow.taskName}" dates for child task change',
+    );
+
+    DateTime? newParentStart = parentRow.startDate;
+    DateTime? newParentEnd = parentRow.endDate;
+    bool parentNeedsUpdate = false;
+
+    // Determine which parent date needs adjustment
+    if (dateType == 'start' || dateType == 'calculated_start') {
+      if (parentRow.startDate == null || attemptedDate.isBefore(parentRow.startDate!)) {
+        newParentStart = attemptedDate;
+        parentNeedsUpdate = true;
+      }
+    }
+
+    if (dateType == 'end' || dateType == 'calculated_end') {
+      if (parentRow.endDate == null || attemptedDate.isAfter(parentRow.endDate!)) {
+        newParentEnd = attemptedDate;
+        parentNeedsUpdate = true;
+      }
+    }
+
+    if (!parentNeedsUpdate) {
+      widget.logger.w('No parent adjustment needed');
+      return;
+    }
+
+    // Check if adjusted parent dates would violate project constraints
+    if (_projectStartDate != null && _projectEndDate != null) {
+      if (parentRow.taskType == TaskType.mainTask) {
+        // For main tasks, check against project dates and show project dialog if needed
+        if ((newParentStart != null && newParentStart.isBefore(_projectStartDate!)) ||
+            (newParentEnd != null && newParentEnd.isAfter(_projectEndDate!))) {
+          
+          String violationType = newParentStart != null && newParentStart.isBefore(_projectStartDate!) 
+              ? 'start' 
+              : 'end';
+          DateTime violatingDate = violationType == 'start' ? newParentStart! : newParentEnd!;
+          
+          _showProjectDateViolationDialog(
+            'Adjusting the parent task would ${violationType == 'start' ? 'move it before' : 'extend it beyond'} the project $violationType date',
+            violationType,
+            violatingDate,
+          );
+          return;
+        }
+      } else {
+        // For subtasks, check against project bounds
+        if ((newParentStart != null && (newParentStart.isBefore(_projectStartDate!) || newParentStart.isAfter(_projectEndDate!))) ||
+            (newParentEnd != null && (newParentEnd.isBefore(_projectStartDate!) || newParentEnd.isAfter(_projectEndDate!)))) {
+          
+          _showDateConstraintError(
+            'Adjusting the parent task would place it outside the project timeline',
+          );
+          return;
+        }
+      }
+    }
+
+    // Apply the parent date adjustments
+    setState(() {
+      if (newParentStart != null) {
+        parentRow.startDate = newParentStart;
+      }
+      if (newParentEnd != null) {
+        parentRow.endDate = newParentEnd;
+      }
+
+      // Update parent duration if both dates are set
+      if (parentRow.startDate != null && parentRow.endDate != null) {
+        parentRow.duration = parentRow.endDate!.difference(parentRow.startDate!).inDays + 1;
+      }
+
+      // Find parent row index and mark it as edited
+      final parentIndex = _getRowIndex(parentRow.id);
+      if (parentIndex != -1) {
+        _editedRows[parentIndex] = parentRow;
+      }
+
+      // Now apply the child date change
+      if (dateType == 'start' || dateType == 'calculated_start') {
+        childRow.startDate = attemptedDate;
+      } else if (dateType == 'end' || dateType == 'calculated_end') {
+        childRow.endDate = attemptedDate;
+      }
+
+      // Ensure child row is in edited rows
+      _editedRows[childIndex] = childRow;
+
+      // Recalculate child dates/duration if needed
+      _performSmartRecalculation(childRow, childIndex);
+    });
+
+    // Check if parent needs further adjustment (e.g., its own parent)
+    _updateParentDatesIfNeeded(parentRow, _getRowIndex(parentRow.id));
+
+    widget.logger.i(
+      '✅ Successfully adjusted parent task dates and applied child task change',
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Parent task "${parentRow.taskName ?? 'Unnamed'}" dates adjusted to accommodate the change',
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.blue.shade600,
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   // New method to get parent row
