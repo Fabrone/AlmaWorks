@@ -1,3 +1,4 @@
+import 'dart:js_interop';
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
@@ -9,10 +10,13 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'dart:typed_data';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:open_file/open_file.dart';
+import 'package:web/web.dart' as web;
 
 class DocumentsScreen extends StatefulWidget {
   final ProjectModel project;
@@ -216,9 +220,36 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                       }
                     },
                     itemBuilder: (context) => [
-                      PopupMenuItem(value: 'view', child: Text('View', style: GoogleFonts.poppins())),
-                      PopupMenuItem(value: 'download', child: Text('Download', style: GoogleFonts.poppins())),
-                      PopupMenuItem(value: 'delete', child: Text('Delete', style: GoogleFonts.poppins())),
+                      PopupMenuItem(
+                        value: 'view',
+                        child: Row(
+                          children: [
+                            Icon(Icons.visibility, color: Colors.blue[600]),
+                            const SizedBox(width: 8),
+                            Text('View', style: GoogleFonts.poppins()),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'download',
+                        child: Row(
+                          children: [
+                            Icon(Icons.download, color: Colors.green[600]),
+                            const SizedBox(width: 8),
+                            Text('Download', style: GoogleFonts.poppins()),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete, color: Colors.red[600]),
+                            const SizedBox(width: 8),
+                            Text('Delete', style: GoogleFonts.poppins()),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -243,12 +274,6 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     final section = _subSections[subIndex];
 
     widget.logger.i('📤 DocumentsScreen: Initiating add document to $role - $section');
-
-    final title = await _getDocumentTitle();
-    if (title == null) {
-      widget.logger.d('📤 DocumentsScreen: Add document cancelled - no title provided');
-      return;
-    }
 
     widget.logger.d('📤 DocumentsScreen: Picking file...');
     final result = await FilePicker.platform.pickFiles(
@@ -278,6 +303,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
 
     if (fileBytes == null) {
       throw Exception('Could not read file data');
+    }
+
+    final title = await _getDocumentTitle(fileName);
+    if (title == null) {
+      widget.logger.d('📤 DocumentsScreen: Add document cancelled - no title provided');
+      return;
     }
 
     if (!mounted) return;
@@ -328,35 +359,50 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       _isLoading = true;
     });
 
+    UploadTask? uploadTask;
+    final GlobalKey<State> dialogKey = GlobalKey<State>();
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          title: Text('Uploading $fileName', style: GoogleFonts.poppins()),
-          content: StatefulBuilder(
-            builder: (context, setDialogState) {
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  LinearProgressIndicator(
-                    value: _uploadProgress,
-                    backgroundColor: Colors.grey[300],
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.blueGrey),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    _uploadProgress != null
-                        ? '${(_uploadProgress! * 100).toStringAsFixed(0)}%'
-                        : 'Starting upload...',
-                    style: GoogleFonts.poppins(),
-                  ),
-                ],
-              );
-            },
-          ),
+      builder: (context) => AlertDialog(
+        key: dialogKey,
+        title: Text('Uploading $fileName', style: GoogleFonts.poppins()),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(
+                  value: _uploadProgress,
+                  backgroundColor: Colors.grey[300],
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blueGrey),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _uploadProgress != null
+                      ? '${(_uploadProgress! * 100).toStringAsFixed(0)}%'
+                      : 'Starting upload...',
+                  style: GoogleFonts.poppins(),
+                ),
+              ],
+            );
+          },
         ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              if (uploadTask != null) {
+                await uploadTask.cancel();
+                widget.logger.d('📤 DocumentsScreen: Upload cancelled by user');
+              }
+              if (context.mounted) {
+                Navigator.pop(context);
+              }
+            },
+            child: Text('Cancel', style: GoogleFonts.poppins(color: Colors.red)),
+          ),
+        ],
       ),
     );
 
@@ -377,7 +423,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         },
       );
 
-      final uploadTask = storageRef.putData(fileBytes, metadata);
+      uploadTask = storageRef.putData(fileBytes, metadata);
 
       uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
         if (mounted) {
@@ -423,6 +469,27 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
           ),
         );
         widget.logger.i('✅ DocumentsScreen: Document uploaded successfully: $fileName with title $title');
+      }
+    } on FirebaseException catch (e) {
+      if (e.code == 'canceled') {
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Upload cancelled', style: GoogleFonts.poppins()),
+            ),
+          );
+        }
+      } else {
+        widget.logger.e('❌ DocumentsScreen: Error adding document', error: e);
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error adding document: ${e.message}', style: GoogleFonts.poppins()),
+            ),
+          );
+        }
       }
     } catch (e) {
       widget.logger.e('❌ DocumentsScreen: Error adding document', error: e);
@@ -478,14 +545,16 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     }
   }
 
-  Future<String?> _getDocumentTitle() async {
-    String? title;
+  Future<String?> _getDocumentTitle(String prefilledName) async {
+    String? title = prefilledName;
+    final controller = TextEditingController(text: prefilledName);
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
           title: Text('Enter Document Title', style: GoogleFonts.poppins()),
           content: TextField(
+            controller: controller,
             autofocus: true,
             decoration: InputDecoration(
               labelText: 'Title (e.g., RFI, Close Out doc)',
@@ -539,77 +608,97 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     }
   }
 
-  void _viewDocument(String url, String type, String name) async {
+  String _getViewerUrl(String url, String type) {
+    final encodedUrl = Uri.encodeComponent(url);
+    if (type.toLowerCase() == 'pdf') {
+      return url;
+    } else {
+      return 'https://view.officeapps.live.com/op/view.aspx?src=$encodedUrl';
+    }
+  }
+
+  Future<void> _viewDocument(String url, String type, String name) async {
     widget.logger.i('👀 DocumentsScreen: Viewing document: $name ($type)');
-    if (type == 'pdf') {
-      if (mounted) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => Scaffold(
-              appBar: AppBar(
-                title: Text(name, style: GoogleFonts.poppins(color: Colors.white)),
-                backgroundColor: const Color(0xFF0A2E5A),
-              ),
-              body: SfPdfViewer.network(
-                url,
-                onDocumentLoadFailed: (details) {
-                  widget.logger.e('PDF load failed: ${details.error}');
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Error loading PDF: ${details.error}', style: GoogleFonts.poppins()),
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-          ),
-        );
+    final connectivityResult = await Connectivity().checkConnectivity();
+    final isOnline = connectivityResult.any((r) => r != ConnectivityResult.none);
+
+    try {
+      final cacheManager = DefaultCacheManager();
+      FileInfo? cachedFile;
+      if (isOnline) {
+        cachedFile = await cacheManager.downloadFile(url);
+      } else {
+        cachedFile = await cacheManager.getFileFromCache(url);
       }
-    } else if (type == 'txt') {
-      widget.logger.d('👀 DocumentsScreen: Downloading TXT for viewing');
-      try {
-        final tempDir = await getTemporaryDirectory();
-        final filePath = '${tempDir.path}/$name';
-        await Dio().download(url, filePath);
-        final content = await File(filePath).readAsString();
-        if (mounted) {
-          showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Text(name, style: GoogleFonts.poppins()),
-              content: SingleChildScrollView(
-                child: Text(content, style: GoogleFonts.poppins()),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text('Close', style: GoogleFonts.poppins()),
+
+      if (cachedFile != null) {
+        final localPath = cachedFile.file.path;
+        if (type.toLowerCase() == 'txt') {
+          // For TXT, read and show in dialog (works offline)
+          final content = await File(localPath).readAsString();
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: Text(name, style: GoogleFonts.poppins()),
+                content: SingleChildScrollView(
+                  child: SelectableText(content, style: GoogleFonts.poppins()),
                 ),
-              ],
-            ),
-          );
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text('Close', style: GoogleFonts.poppins()),
+                  ),
+                ],
+              ),
+            );
+          }
+        } else if (kIsWeb) {
+          // On web, always use launchUrl (can't open local files directly)
+          final viewerUrl = _getViewerUrl(url, type);
+          final uri = Uri.parse(viewerUrl);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          } else {
+            if (mounted) {
+              widget.logger.e('Could not launch $viewerUrl');
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Could not open document viewer', style: GoogleFonts.poppins()),
+                ),
+              );
+            }
+          }
+        } else {
+          // On native, open local file with system viewer (prompts if multiple apps)
+          final result = await OpenFile.open(localPath);
+          if (result.type != ResultType.done && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not open file: ${result.message}', style: GoogleFonts.poppins()),
+                action: SnackBarAction(
+                  label: 'Download instead',
+                  onPressed: () => _downloadDocument(url, name),
+                ),
+              ),
+            );
+          }
         }
-      } catch (e) {
-        widget.logger.e('Error viewing TXT document: $e');
+      } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error viewing document: $e', style: GoogleFonts.poppins()),
+              content: Text('No internet and no cache available', style: GoogleFonts.poppins()),
             ),
           );
         }
       }
-    } else {
+    } catch (e) {
+      widget.logger.e('Error viewing document: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Viewing for this file type is not implemented yet. Please download.',
-              style: GoogleFonts.poppins(),
-            ),
+            content: Text('Error viewing document: $e', style: GoogleFonts.poppins()),
           ),
         );
       }
@@ -619,15 +708,49 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   Future<void> _downloadDocument(String url, String name) async {
     widget.logger.i('⬇️ DocumentsScreen: Downloading document: $name');
     try {
-      final dir = await getDownloadsDirectory();
-      final filePath = '${dir?.path}/$name';
-      await Dio().download(url, filePath);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Downloaded to $filePath', style: GoogleFonts.poppins()),
-          ),
-        );
+      final response = await Dio().get(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final Uint8List bytes = response.data;
+
+      String? savePath;
+      if (kIsWeb) {
+        // On web, create Blob and trigger download
+        // Convert Uint8List to JSUint8Array and wrap in JSArray
+        final jsUint8Array = bytes.toJS;
+        final jsArray = [jsUint8Array].toJS;
+        final blob = web.Blob(jsArray);
+        final objectUrl = web.URL.createObjectURL(blob);
+        web.HTMLAnchorElement()
+          ..href = objectUrl
+          ..download = name
+          ..click();
+        web.URL.revokeObjectURL(objectUrl);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Download started. Check your browser downloads.', style: GoogleFonts.poppins()),
+            ),
+          );
+        }
+      } else {
+        // On native, prompt for directory
+        final String? selectedDir = await FilePicker.platform.getDirectoryPath();
+        if (selectedDir == null) {
+          widget.logger.d('Download cancelled by user');
+          return;
+        }
+        savePath = path.join(selectedDir, name);
+        final file = File(savePath);
+        await file.writeAsBytes(bytes);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Downloaded to $savePath', style: GoogleFonts.poppins()),
+            ),
+          );
+        }
       }
     } catch (e) {
       widget.logger.e('❌ DocumentsScreen: Error downloading document', error: e);
