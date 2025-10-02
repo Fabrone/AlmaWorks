@@ -329,9 +329,9 @@ class _DrawingsScreenState extends State<DrawingsScreen>
             color: const Color(0xFF0A2E5A).withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(
-            _getDrawingIcon(group.latestRevision?.type ?? ''),
-            color: _getDrawingIconColor(group.latestRevision?.type ?? ''),
+          child: const Icon(
+            Icons.architecture,
+            color: Color(0xFF0A2E5A),
           ),
         ),
         children: group.revisions.map((drawing) => _buildRevisionTile(drawing, group)).toList(),
@@ -1052,24 +1052,34 @@ class _DrawingsScreenState extends State<DrawingsScreen>
     final selected = await showDialog<DrawingModel>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
           'Select New As-Built Drawing',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF0A2E5A)),
         ),
         content: SizedBox(
           width: double.maxFinite,
           height: 300,
-          child: ListView.builder(
+          child: ListView.separated(
             itemCount: groupRevisions.length,
+            separatorBuilder: (context, index) => Divider(color: Colors.grey[300]),
             itemBuilder: (context, index) {
               final rev = groupRevisions[index];
-              return ListTile(
-                title: Text(rev.fileName, style: GoogleFonts.poppins()),
-                subtitle: Text(
-                  'Rev ${rev.revisionNumber} - Uploaded ${_formatDate(rev.uploadedAt)}',
-                  style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+              return Card(
+                elevation: 1,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: ListTile(
+                  leading: Icon(
+                    _getDrawingIcon(rev.type),
+                    color: _getDrawingIconColor(rev.type),
+                  ),
+                  title: Text(rev.fileName, style: GoogleFonts.poppins()),
+                  subtitle: Text(
+                    'Rev ${rev.revisionNumber} - Uploaded ${_formatDate(rev.uploadedAt)}',
+                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+                  ),
+                  onTap: () => Navigator.pop(context, rev),
                 ),
-                onTap: () => Navigator.pop(context, rev),
               );
             },
           ),
@@ -1077,7 +1087,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
+            child: Text('Cancel', style: GoogleFonts.poppins(color: Color(0xFF800000))),
           ),
         ],
       ),
