@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:js_interop';
+import 'dart:math';
 import 'dart:typed_data';
 import 'package:almaworks/models/drawing_model.dart';
 import 'package:almaworks/models/project_model.dart';
@@ -326,12 +327,12 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         leading: Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(
-            color: const Color(0xFF0A2E5A).withValues(alpha: 0.1),
+            color: const Color.fromARGB(255, 100, 157, 122).withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: const Icon(
             Icons.architecture,
-            color: Color(0xFF0A2E5A),
+            color: Color.fromARGB(255, 3, 71, 13),
           ),
         ),
         children: group.revisions.map((drawing) => _buildRevisionTile(drawing, group)).toList(),
@@ -741,26 +742,28 @@ class _DrawingsScreenState extends State<DrawingsScreen>
               style: GoogleFonts.poppins(color: Colors.grey[700]),
             ),
             const SizedBox(height: 16),
-            ListTile(
-              title: Text('New Category Drawing', style: GoogleFonts.poppins(fontWeight: FontWeight.w500, color: Colors.green[800])),
-              subtitle: Text('Create a new drawing category and upload the first revision.', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
-              leading: const Icon(Icons.add, color: Colors.green),
-              onTap: () => Navigator.pop(context, 'new'),
-              contentPadding: EdgeInsets.zero,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              tileColor: Colors.green.withValues(alpha: 0.05),
+            Card(
+              elevation: 1,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: ListTile(
+                title: Text('New Category Drawing', style: GoogleFonts.poppins(fontWeight: FontWeight.w500, color: Colors.green[800])),
+                subtitle: Text('Create a new drawing category and upload the first revision.', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
+                leading: const Icon(Icons.add, color: Colors.green),
+                onTap: () => Navigator.pop(context, 'new'),
+                tileColor: Colors.green.withValues(alpha: 0.05),
+              ),
             ),
             const SizedBox(height: 8),
-            const Divider(color: Color.fromARGB(255, 236, 232, 232)),
-            const SizedBox(height: 8),
-            ListTile(
-              title: Text('Revision Drawing', style: GoogleFonts.poppins(fontWeight: FontWeight.w500, color: const Color(0xFF0A2E5A))),
-              subtitle: Text('Add a revision to an existing drawing category.', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
-              leading: const Icon(Icons.edit, color: Color(0xFF0A2E5A)),
-              onTap: () => Navigator.pop(context, 'revision'),
-              contentPadding: EdgeInsets.zero,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              tileColor: const Color(0xFF0A2E5A).withValues(alpha: 0.05),
+            Card(
+              elevation: 1,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: ListTile(
+                title: Text('Revision Drawing', style: GoogleFonts.poppins(fontWeight: FontWeight.w500, color: const Color(0xFF0A2E5A))),
+                subtitle: Text('Add a revision to an existing drawing category.', style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600])),
+                leading: const Icon(Icons.edit, color: Color(0xFF0A2E5A)),
+                onTap: () => Navigator.pop(context, 'revision'),
+                tileColor: const Color(0xFF0A2E5A).withValues(alpha: 0.05),
+              ),
             ),
           ],
         ),
@@ -801,21 +804,24 @@ class _DrawingsScreenState extends State<DrawingsScreen>
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF0A2E5A)),
         ),
         content: SizedBox(
-          width: MediaQuery.of(context).size.width * 0.6,
+          width: min(400, MediaQuery.of(context).size.width * 0.8),
           height: 300,
           child: ListView.separated(
             itemCount: titles.length,
             separatorBuilder: (context, index) => Divider(color: Colors.grey[300]),
             itemBuilder: (context, index) {
               final title = titles[index];
-              return ListTile(
-                title: Text(title, style: GoogleFonts.poppins(color: Colors.grey[800])),
-                onTap: () {
-                  selectedTitle = title;
-                  Navigator.pop(context);
-                },
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                tileColor: index % 2 == 0 ? Colors.grey.withValues(alpha: 0.02) : null,
+              return Card(
+                elevation: 1,
+                color: index % 2 == 0 ? Colors.white : Colors.grey[50],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                child: ListTile(
+                  title: Text(title, style: GoogleFonts.poppins(color: Colors.grey[800])),
+                  onTap: () {
+                    selectedTitle = title;
+                    Navigator.pop(context);
+                  },
+                ),
               );
             },
           ),
@@ -1058,7 +1064,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
           style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF0A2E5A)),
         ),
         content: SizedBox(
-          width: double.maxFinite,
+          width: min(400, MediaQuery.of(context).size.width * 0.8),
           height: 300,
           child: ListView.separated(
             itemCount: groupRevisions.length,
