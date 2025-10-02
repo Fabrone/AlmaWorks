@@ -162,7 +162,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
 
   Widget _buildRevisionsTab() {
     return StreamBuilder<List<DrawingModel>>(
-      stream: _drawingService.getRevisionDrawings(widget.project.id),
+      stream: _drawingService.getProjectDrawings(widget.project.id),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           widget.logger.e('❌ DrawingsScreen: Error loading revisions', error: snapshot.error);
@@ -341,6 +341,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
 
   Widget _buildRevisionTile(DrawingModel drawing, DrawingGroup group) {
     final isLatest = drawing.revisionNumber == group.latestRevision?.revisionNumber;
+    final isFinal = drawing.isFinal;
     
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
@@ -393,45 +394,63 @@ class _DrawingsScreenState extends State<DrawingsScreen>
             ),
             const SizedBox(width: 8),
           ],
+          if (isFinal) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.blue,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'Final',
+                style: GoogleFonts.poppins(
+                  fontSize: 10,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           PopupMenuButton<String>(
             onSelected: (value) => _handleRevisionAction(value, drawing),
             itemBuilder: (context) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'view',
                 child: Row(
                   children: [
-                    Icon(Icons.visibility, size: 16),
+                    Icon(Icons.visibility, size: 16, color: Colors.blue[600]),
                     SizedBox(width: 8),
                     Text('View'),
                   ],
                 ),
               ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'download',
                 child: Row(
                   children: [
-                    Icon(Icons.download, size: 16),
+                    Icon(Icons.download, size: 16, color: Colors.green[600]),
                     SizedBox(width: 8),
                     Text('Download'),
                   ],
                 ),
               ),
               if (!drawing.isFinal)
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'mark_final',
                   child: Row(
                     children: [
-                      Icon(Icons.check_circle, size: 16),
+                      Icon(Icons.check_circle, size: 16, color: Colors.green[600]),
                       SizedBox(width: 8),
                       Text('Mark as Final'),
                     ],
                   ),
                 ),
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'delete',
                 child: Row(
                   children: [
-                    Icon(Icons.delete, size: 16, color: Colors.red),
+                    Icon(Icons.delete, size: 16, color: Colors.red[600]),
                     SizedBox(width: 8),
                     Text('Delete', style: TextStyle(color: Colors.red)),
                   ],
@@ -479,31 +498,31 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         trailing: PopupMenuButton<String>(
           onSelected: (value) => _handleAsBuiltAction(value, drawing),
           itemBuilder: (context) => [
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'view',
               child: Row(
                 children: [
-                  Icon(Icons.visibility, size: 16),
+                  Icon(Icons.visibility, size: 16, color: Colors.blue[600]),
                   SizedBox(width: 8),
                   Text('View'),
                 ],
               ),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'download',
               child: Row(
                 children: [
-                  Icon(Icons.download, size: 16),
+                  Icon(Icons.download, size: 16, color: Colors.green[600]),
                   SizedBox(width: 8),
                   Text('Download'),
                 ],
               ),
             ),
-            const PopupMenuItem(
+            PopupMenuItem(
               value: 'update',
               child: Row(
                 children: [
-                  Icon(Icons.update, size: 16),
+                  Icon(Icons.update, size: 16, color: Colors.orange[600]),
                   SizedBox(width: 8),
                   Text('Update'),
                 ],
@@ -760,7 +779,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
 
   Future<List<String>> _getUniqueTitles() async {
     try {
-      final drawings = await _drawingService.getRevisionDrawings(widget.project.id).first;
+      final drawings = await _drawingService.getProjectDrawings(widget.project.id).first;
       final titles = drawings.map((d) => d.title).toSet().toList()..sort();
       widget.logger.d('📤 DrawingsScreen: Fetched ${titles.length} unique titles');
       return titles;
@@ -949,7 +968,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
           'Update As-Built from "${existing.fileName}" to "${drawing.fileName}"? This will replace the current As-Built drawing.';
     } else {
       message =
-          'Are you sure you want to mark "${drawing.title} Rev ${drawing.revisionNumber}" as final? This will move it to the As Built section.';
+          'Are you sure you want to mark "${drawing.title} Rev ${drawing.revisionNumber}" as final? This will add it to the As Built section.';
     }
 
     final confirmed = await showDialog<bool>(
@@ -988,7 +1007,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Drawing marked as final and moved to As Built',
+              'Drawing marked as final and added to As Built',
               style: GoogleFonts.poppins(),
             ),
             backgroundColor: Colors.green,
@@ -1010,7 +1029,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
   }
 
   Future<void> _updateAsBuilt(DrawingModel currentAsBuilt) async {
-    final revisions = await _drawingService.getRevisionDrawings(widget.project.id).first;
+    final revisions = await _drawingService.getProjectDrawings(widget.project.id).first;
     if (!mounted) return;
     final groupRevisions = revisions
         .where((d) => d.title == currentAsBuilt.title && !d.isAsBuilt)
