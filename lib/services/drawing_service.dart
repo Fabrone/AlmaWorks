@@ -2,7 +2,7 @@ import 'package:almaworks/models/drawing_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:logger/logger.dart';
-import 'dart:typed_data'; 
+import 'dart:typed_data';
 
 class DrawingService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -11,19 +11,26 @@ class DrawingService {
 
   // Get all drawings for a project
   Stream<List<DrawingModel>> getProjectDrawings(String projectId) {
+    _logger.d('📥 DrawingService: Fetching all drawings for project: $projectId');
     return _firestore
         .collection('Drawings')
         .where('projectId', isEqualTo: projectId)
         .orderBy('title')
         .orderBy('revisionNumber', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => DrawingModel.fromFirestore(doc))
-            .toList());
+        .map((snapshot) {
+      final drawings = snapshot.docs.map((doc) => DrawingModel.fromFirestore(doc)).toList();
+      _logger.d('📥 DrawingService: Fetched ${drawings.length} drawings for project: $projectId');
+      return drawings;
+    }).handleError((e) {
+      _logger.e('❌ DrawingService: Error fetching project drawings', error: e);
+      throw e;
+    });
   }
 
   // Get revision drawings (not as-built)
   Stream<List<DrawingModel>> getRevisionDrawings(String projectId) {
+    _logger.d('📥 DrawingService: Fetching revision drawings for project: $projectId');
     return _firestore
         .collection('Drawings')
         .where('projectId', isEqualTo: projectId)
@@ -31,27 +38,38 @@ class DrawingService {
         .orderBy('title')
         .orderBy('revisionNumber', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => DrawingModel.fromFirestore(doc))
-            .toList());
+        .map((snapshot) {
+      final drawings = snapshot.docs.map((doc) => DrawingModel.fromFirestore(doc)).toList();
+      _logger.d('📥 DrawingService: Fetched ${drawings.length} revision drawings for project: $projectId');
+      return drawings;
+    }).handleError((e) {
+      _logger.e('❌ DrawingService: Error fetching revision drawings', error: e);
+      throw e;
+    });
   }
 
   // Get as-built drawings
   Stream<List<DrawingModel>> getAsBuiltDrawings(String projectId) {
+    _logger.d('📥 DrawingService: Fetching as-built drawings for project: $projectId');
     return _firestore
         .collection('Drawings')
         .where('projectId', isEqualTo: projectId)
         .where('isAsBuilt', isEqualTo: true)
-        .orderBy('title')
         .orderBy('finalizedAt', descending: true)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => DrawingModel.fromFirestore(doc))
-            .toList());
+        .map((snapshot) {
+      final drawings = snapshot.docs.map((doc) => DrawingModel.fromFirestore(doc)).toList();
+      _logger.d('📥 DrawingService: Fetched ${drawings.length} as-built drawings for project: $projectId');
+      return drawings;
+    }).handleError((e) {
+      _logger.e('❌ DrawingService: Error fetching as-built drawings', error: e);
+      throw e;
+    });
   }
 
   // Group drawings by title
   List<DrawingGroup> groupDrawingsByTitle(List<DrawingModel> drawings) {
+    _logger.d('📋 DrawingService: Grouping ${drawings.length} drawings by title');
     final Map<String, List<DrawingModel>> groupedDrawings = {};
     
     for (final drawing in drawings) {
@@ -61,10 +79,13 @@ class DrawingService {
       groupedDrawings[drawing.title]!.add(drawing);
     }
 
-    return groupedDrawings.entries
+    final groups = groupedDrawings.entries
         .map((entry) => DrawingGroup.fromDrawings(entry.key, entry.value))
         .toList()
       ..sort((a, b) => a.title.compareTo(b.title));
+
+    _logger.d('📋 DrawingService: Created ${groups.length} drawing groups');
+    return groups;
   }
 
   // Upload new drawing
@@ -77,27 +98,48 @@ class DrawingService {
     Map<String, dynamic>? metadata,
   }) async {
     try {
-      _logger.i('📤 DrawingService: Starting upload for $fileName');
+      _logger.i('📤 DrawingService: Starting upload for $fileName with title: $title');
 
-      // Get next revision number for this title
+      // Validate title for revision uploads
       final existingDrawings = await _firestore
           .collection('Drawings')
           .where('projectId', isEqualTo: projectId)
           .where('title', isEqualTo: title)
           .get();
 
-      final nextRevision = existingDrawings.docs.isEmpty
+      final isNewCategory = existingDrawings.docs.isEmpty;
+      _logger.d('📤 DrawingService: Is new category? $isNewCategory');
+
+      if (!isNewCategory) {
+        _logger.d('📤 DrawingService: Existing title found, treating as revision');
+      } else {
+        _logger.d('📤 DrawingService: New title, creating new category');
+      }
+
+      // Get next revision number for this title
+      final nextRevision = isNewCategory
           ? 1
           : existingDrawings.docs
                   .map((doc) => (doc.data()['revisionNumber'] as int?) ?? 1)
                   .reduce((a, b) => a > b ? a : b) +
               1;
 
+      _logger.d('📤 DrawingService: Assigned revision number: $nextRevision');
+
+      // Validate file size (e.g., max 100MB)
+      const maxSizeBytes = 100 * 1024 * 1024; // 100MB
+      if (fileBytes.length > maxSizeBytes) {
+        _logger.e('❌ DrawingService: File size exceeds limit (${fileBytes.length} bytes > $maxSizeBytes bytes)');
+        throw Exception('File size exceeds 100MB limit');
+      }
+
       // Upload to Firebase Storage
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storageRef = _storage
           .ref()
           .child('drawings/$projectId/$title/rev_${nextRevision}_${timestamp}_$fileName');
+
+      _logger.d('📤 DrawingService: Uploading to storage path: ${storageRef.fullPath}');
 
       final uploadTask = storageRef.putData(
         Uint8List.fromList(fileBytes),
@@ -114,6 +156,7 @@ class DrawingService {
 
       await uploadTask;
       final downloadUrl = await storageRef.getDownloadURL();
+      _logger.d('📤 DrawingService: File uploaded, download URL: $downloadUrl');
 
       // Create drawing document
       final drawing = DrawingModel(
@@ -133,10 +176,10 @@ class DrawingService {
           .collection('Drawings')
           .add(drawing.toFirestore());
 
-      _logger.i('✅ DrawingService: Upload completed for $fileName');
+      _logger.i('✅ DrawingService: Upload completed for $fileName (ID: ${docRef.id})');
       return drawing.copyWith(id: docRef.id);
     } catch (e) {
-      _logger.e('❌ DrawingService: Upload failed', error: e);
+      _logger.e('❌ DrawingService: Upload failed for $fileName', error: e);
       rethrow;
     }
   }
@@ -152,6 +195,7 @@ class DrawingService {
           .get();
 
       if (!drawingDoc.exists) {
+        _logger.e('❌ DrawingService: Drawing not found: $drawingId');
         throw Exception('Drawing not found');
       }
 
@@ -166,12 +210,14 @@ class DrawingService {
           .get();
 
       if (existingFinal.docs.isNotEmpty) {
+        _logger.d('🏁 DrawingService: Found ${existingFinal.docs.length} existing final revisions for title: ${drawing.title}');
         // Remove final status from existing final revision
         for (final doc in existingFinal.docs) {
           await doc.reference.update({
             'isFinal': false,
             'isAsBuilt': false,
           });
+          _logger.d('🏁 DrawingService: Removed final status from drawing: ${doc.id}');
         }
       }
 
@@ -182,14 +228,14 @@ class DrawingService {
         'finalizedAt': Timestamp.now(),
       });
 
-      _logger.i('✅ DrawingService: Drawing marked as final');
+      _logger.i('✅ DrawingService: Drawing marked as final: $drawingId');
       return drawing.copyWith(
         isFinal: true,
         isAsBuilt: true,
         finalizedAt: DateTime.now(),
       );
     } catch (e) {
-      _logger.e('❌ DrawingService: Failed to mark as final', error: e);
+      _logger.e('❌ DrawingService: Failed to mark as final: $drawingId', error: e);
       rethrow;
     }
   }
@@ -205,6 +251,7 @@ class DrawingService {
           .get();
 
       if (!drawingDoc.exists) {
+        _logger.e('❌ DrawingService: Drawing not found: $drawingId');
         throw Exception('Drawing not found');
       }
 
@@ -213,18 +260,21 @@ class DrawingService {
       // Delete from Storage
       final ref = _storage.refFromURL(drawing.url);
       await ref.delete();
+      _logger.d('🗑️ DrawingService: Deleted file from storage: ${drawing.url}');
 
       // Delete from Firestore
       await _firestore.collection('Drawings').doc(drawingId).delete();
+      _logger.d('🗑️ DrawingService: Deleted document from Firestore: $drawingId');
 
-      _logger.i('✅ DrawingService: Drawing deleted successfully');
+      _logger.i('✅ DrawingService: Drawing deleted successfully: $drawingId');
     } catch (e) {
-      _logger.e('❌ DrawingService: Failed to delete drawing', error: e);
+      _logger.e('❌ DrawingService: Failed to delete drawing: $drawingId', error: e);
       rethrow;
     }
   }
 
   String _getContentType(String extension) {
+    _logger.d('📋 DrawingService: Getting content type for extension: $extension');
     switch (extension.toLowerCase()) {
       case 'pdf':
         return 'application/pdf';
