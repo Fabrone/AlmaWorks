@@ -1,5 +1,4 @@
 import 'dart:io';
-//import 'dart:js_interop';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:almaworks/models/drawing_model.dart';
@@ -16,9 +15,8 @@ import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
 import 'package:open_file/open_file.dart';
-//import 'package:path/path.dart' as path;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
-//import 'package:web/web.dart' as web;
 import 'package:almaworks/helpers/download_helper.dart';
 
 class DrawingsScreen extends StatefulWidget {
@@ -1374,14 +1372,24 @@ class _DrawingsScreenState extends State<DrawingsScreen>
             content: Text(
               kIsWeb 
                 ? result  // Web: "Download started. Check your browser downloads."
-                : 'Downloaded to $result',  // Mobile: Full path
+                : 'Downloaded successfully!\nLocation: $result',  // Mobile: Full path
               style: GoogleFonts.poppins(),
             ),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Open',
+              textColor: Colors.white,
+              onPressed: () async {
+                if (!kIsWeb) {
+                  await OpenFile.open(result);
+                }
+              },
+            ),
           ),
         );
       } else {
-        // User cancelled (mobile only)
+        // User cancelled (shouldn't happen with new implementation)
         widget.logger.d('Download cancelled by user');
       }
     } catch (e) {
@@ -1389,8 +1397,21 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error downloading: $e', style: GoogleFonts.poppins()),
+            content: Text(
+              e.toString().contains('permission')
+                ? 'Storage permission denied. Please enable it in Settings.'
+                : 'Error downloading: $e',
+              style: GoogleFonts.poppins(),
+            ),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+            action: e.toString().contains('permission')
+              ? SnackBarAction(
+                  label: 'Settings',
+                  textColor: Colors.white,
+                  onPressed: () => openAppSettings(),
+                )
+              : null,
           ),
         );
       }

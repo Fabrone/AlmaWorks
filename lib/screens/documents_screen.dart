@@ -1,4 +1,3 @@
-//import 'dart:js_interop';
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +10,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
 import 'package:path/path.dart' as path;
+import 'package:permission_handler/permission_handler.dart';
 import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
@@ -728,14 +728,24 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
             content: Text(
               kIsWeb 
                 ? result  // Web: "Download started. Check your browser downloads."
-                : 'Downloaded to $result',  // Mobile: Full path
+                : 'Downloaded successfully!\nLocation: $result',  // Mobile: Full path
               style: GoogleFonts.poppins(),
             ),
             backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'Open',
+              textColor: Colors.white,
+              onPressed: () async {
+                if (!kIsWeb) {
+                  await OpenFile.open(result);
+                }
+              },
+            ),
           ),
         );
       } else {
-        // User cancelled (mobile only)
+        // User cancelled (shouldn't happen with new implementation)
         widget.logger.d('Download cancelled by user');
       }
     } catch (e) {
@@ -743,8 +753,21 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error downloading: $e', style: GoogleFonts.poppins()),
+            content: Text(
+              e.toString().contains('permission')
+                ? 'Storage permission denied. Please enable it in Settings.'
+                : 'Error downloading: $e',
+              style: GoogleFonts.poppins(),
+            ),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+            action: e.toString().contains('permission')
+              ? SnackBarAction(
+                  label: 'Settings',
+                  textColor: Colors.white,
+                  onPressed: () => openAppSettings(),
+                )
+              : null,
           ),
         );
       }
