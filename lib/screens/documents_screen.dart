@@ -1,4 +1,4 @@
-import 'dart:js_interop';
+//import 'dart:js_interop';
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
@@ -16,7 +16,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:open_file/open_file.dart';
-import 'package:web/web.dart' as web;
+//import 'package:web/web.dart' as web;
+import 'package:almaworks/helpers/download_helper.dart';
 
 class DocumentsScreen extends StatefulWidget {
   final ProjectModel project;
@@ -706,58 +707,44 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   }
 
   Future<void> _downloadDocument(String url, String name) async {
-    widget.logger.i('⬇️ DocumentsScreen: Downloading document: $name');
+    widget.logger.i('⬇️ Downloading: $name');
     try {
+      // Fetch file bytes from URL
       final response = await Dio().get(
         url,
         options: Options(responseType: ResponseType.bytes),
       );
       final Uint8List bytes = response.data;
 
-      String? savePath;
-      if (kIsWeb) {
-        // On web, create Blob and trigger download
-        // Convert Uint8List to JSUint8Array and wrap in JSArray
-        final jsUint8Array = bytes.toJS;
-        final jsArray = [jsUint8Array].toJS;
-        final blob = web.Blob(jsArray);
-        final objectUrl = web.URL.createObjectURL(blob);
-        web.HTMLAnchorElement()
-          ..href = objectUrl
-          ..download = name
-          ..click();
-        web.URL.revokeObjectURL(objectUrl);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Download started. Check your browser downloads.', style: GoogleFonts.poppins()),
+      // Use platform-specific download helper
+      final result = await platformDownloadFile(bytes, name);
+
+      if (!mounted) return;
+
+      if (result != null) {
+        // Success: result is either a path (mobile) or message (web)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              kIsWeb 
+                ? result  // Web: "Download started. Check your browser downloads."
+                : 'Downloaded to $result',  // Mobile: Full path
+              style: GoogleFonts.poppins(),
             ),
-          );
-        }
+            backgroundColor: Colors.green,
+          ),
+        );
       } else {
-        // On native, prompt for directory
-        final String? selectedDir = await FilePicker.platform.getDirectoryPath();
-        if (selectedDir == null) {
-          widget.logger.d('Download cancelled by user');
-          return;
-        }
-        savePath = path.join(selectedDir, name);
-        final file = File(savePath);
-        await file.writeAsBytes(bytes);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Downloaded to $savePath', style: GoogleFonts.poppins()),
-            ),
-          );
-        }
+        // User cancelled (mobile only)
+        widget.logger.d('Download cancelled by user');
       }
     } catch (e) {
-      widget.logger.e('❌ DocumentsScreen: Error downloading document', error: e);
+      widget.logger.e('❌ Error downloading', error: e);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error downloading: $e', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
           ),
         );
       }

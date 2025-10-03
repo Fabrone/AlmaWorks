@@ -1,13 +1,13 @@
 import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/financial_screen.dart';
+import 'package:almaworks/screens/projects/project_summary_screen.dart';
+import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/screens/schedule/schedule_screen.dart';
 import 'package:almaworks/services/project_service.dart';
 import 'package:almaworks/widgets/responsive_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
-import 'projects/projects_main_screen.dart';
-import 'projects/project_summary_screen.dart';
-import 'financial_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   final Logger? logger;
