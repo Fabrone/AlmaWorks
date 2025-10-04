@@ -16,7 +16,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:connectivity_plus/connectivity_plus.dart'; 
 import 'package:open_file/open_file.dart';
-//import 'package:web/web.dart' as web;
 import 'package:almaworks/helpers/download_helper.dart';
 
 class DocumentsScreen extends StatefulWidget {
