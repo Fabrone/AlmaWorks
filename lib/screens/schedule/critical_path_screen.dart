@@ -10,12 +10,14 @@ class CriticalPathScreen extends StatefulWidget {
   final String projectId;
   final String projectName;
   final Logger logger;
+  final ProjectModel project;
 
   const CriticalPathScreen({
     super.key,
     required this.projectId,
     required this.projectName,
-    required this.logger, required ProjectModel project,
+    required this.logger,
+    required this.project,
   });
 
   @override
@@ -25,19 +27,16 @@ class CriticalPathScreen extends StatefulWidget {
 class _CriticalPathScreenState extends State<CriticalPathScreen>
     with SingleTickerProviderStateMixin {
   final DateFormat _dateFormat = DateFormat('MMM dd, yyyy');
-  List<GanttRowData> _tasks = [];
-  List<CriticalPathNode> _criticalPath = [];
-  List<CriticalPathNode> _nonCriticalTasks = [];
-  bool _isLoading = true;
-  double _totalProjectDuration = 0;
-  DateTime? _projectStartDate;
-  DateTime? _projectEndDate;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
-  // Analysis metrics
   int _totalSlackDays = 0;
   double _criticalityRatio = 0.0;
+  double _totalProjectDuration = 0;
+  DateTime? _projectStartDate;
+  DateTime? _projectEndDate;
+  List<CriticalPathNode> _criticalPath = [];
+  List<CriticalPathNode> _nonCriticalTasks = [];
 
   @override
   void initState() {
@@ -49,7 +48,6 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
-    _fetchAndAnalyzeTasks();
   }
 
   @override
@@ -58,60 +56,26 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
     super.dispose();
   }
 
-  Future<void> _fetchAndAnalyzeTasks() async {
-    setState(() => _isLoading = true);
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('Schedule')
-          .where('projectId', isEqualTo: widget.projectId)
-          .orderBy('startDate', descending: false)
-          .get();
-
-      List<GanttRowData> loadedTasks = [];
-      for (var doc in snapshot.docs) {
-        final data = doc.data();
-        final task = GanttRowData.fromFirebaseMap(doc.id, data);
-        if (task.hasData) {
-          loadedTasks.add(task);
-        }
-      }
-
-      _tasks = loadedTasks;
-      _calculateCriticalPath();
-      _animationController.forward();
-
-      widget.logger.i('📊 CriticalPath: Loaded ${_tasks.length} tasks, ${_criticalPath.length} on critical path');
-    } catch (e) {
-      widget.logger.e('❌ CriticalPath: Error loading tasks', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error loading tasks: $e', style: GoogleFonts.poppins()),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+  void _calculateCriticalPath(List<GanttRowData> tasks) {
+    if (tasks.isEmpty) {
+      _projectStartDate = null;
+      _projectEndDate = null;
+      _totalProjectDuration = 0;
+      _totalSlackDays = 0;
+      _criticalityRatio = 0;
+      _criticalPath = [];
+      _nonCriticalTasks = [];
+      return;
     }
-  }
 
-  void _calculateCriticalPath() {
-    if (_tasks.isEmpty) return;
-
-    // Calculate project bounds
-    _projectStartDate = _tasks.map((t) => t.startDate!).reduce((a, b) => a.isBefore(b) ? a : b);
-    _projectEndDate = _tasks.map((t) => t.endDate!).reduce((a, b) => a.isAfter(b) ? a : b);
+    _projectStartDate = tasks.map((t) => t.startDate!).reduce((a, b) => a.isBefore(b) ? a : b);
+    _projectEndDate = tasks.map((t) => t.endDate!).reduce((a, b) => a.isAfter(b) ? a : b);
     _totalProjectDuration = _projectEndDate!.difference(_projectStartDate!).inDays.toDouble() + 1;
 
-    // Build task network and dependencies
     List<CriticalPathNode> nodes = [];
     Map<String, CriticalPathNode> nodeMap = {};
 
-    // Create nodes for each task
-    for (var task in _tasks) {
+    for (var task in tasks) {
       final node = CriticalPathNode(
         task: task,
         earliestStart: task.startDate!,
@@ -127,99 +91,53 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
       nodeMap[task.id] = node;
     }
 
-    // Build dependencies based on task hierarchy and scheduling logic
-    _buildTaskDependencies(nodes, nodeMap);
+    _buildHierarchyDependencies(nodes, nodeMap);
 
-    // Forward pass - calculate earliest start and finish times
     _forwardPass(nodes);
 
-    // Backward pass - calculate latest start and finish times
     _backwardPass(nodes);
 
-    // Calculate float values
     for (var node in nodes) {
       node.totalFloat = node.latestStart.difference(node.earliestStart).inDays.toDouble();
       node.freeFloat = _calculateFreeFloat(node, nodes);
     }
 
-    // Identify critical path
-    _criticalPath = nodes.where((node) => node.isCritical).toList();
-    _nonCriticalTasks = nodes.where((node) => !node.isCritical).toList();
+    _criticalPath = nodes.where((node) => node.isCritical).toList()..sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
+    _nonCriticalTasks = nodes.where((node) => !node.isCritical).toList()..sort((a, b) => b.totalFloat.compareTo(a.totalFloat));
 
-    // Calculate metrics
     _totalSlackDays = _nonCriticalTasks.map((n) => n.totalFloat.toInt()).fold(0, (a, b) => a + b);
-    _criticalityRatio = _tasks.isNotEmpty ? _criticalPath.length / _tasks.length : 0;
+    _criticalityRatio = tasks.isNotEmpty ? _criticalPath.length / tasks.length : 0;
 
-    // Sort critical path by earliest start date
-    _criticalPath.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
+    widget.logger.i('📊 CriticalPath: Analyzed ${tasks.length} tasks, ${_criticalPath.length} on critical path');
   }
 
-  void _buildTaskDependencies(List<CriticalPathNode> nodes, Map<String, CriticalPathNode> nodeMap) {
-    // Group tasks by type and establish logical dependencies
-    var mainTasks = nodes.where((n) => n.task.taskType == TaskType.mainTask).toList();
-    var subTasks = nodes.where((n) => n.task.taskType == TaskType.subTask).toList();
-    var regularTasks = nodes.where((n) => n.task.taskType == TaskType.task).toList();
+  void _buildHierarchyDependencies(List<CriticalPathNode> nodes, Map<String, CriticalPathNode> nodeMap) {
+    for (var node in nodes) {
+      if (node.task.parentId != null) {
+        final parent = nodeMap[node.task.parentId];
+        if (parent != null) {
+          parent.successors.add(node);
+          node.predecessors.add(parent);
+        }
+      }
+      for (var childId in node.task.childIds) {
+        final child = nodeMap[childId];
+        if (child != null) {
+          node.successors.add(child);
+          child.predecessors.add(node);
+        }
+      }
+    }
 
-    // Sort by start date for dependency logic
-    mainTasks.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
-    subTasks.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
-    regularTasks.sort((a, b) => a.earliestStart.compareTo(b.earliestStart));
-
-    // Link main tasks in sequence if they overlap or are sequential
-    for (int i = 0; i < mainTasks.length - 1; i++) {
-      final current = mainTasks[i];
-      final next = mainTasks[i + 1];
-
-      if (next.earliestStart.isBefore(current.earliestFinish) ||
-          next.earliestStart.difference(current.earliestFinish).inDays <= 1) {
+    nodes.sort((a, b) => a.task.displayOrder.compareTo(b.task.displayOrder));
+    for (int i = 0; i < nodes.length - 1; i++) {
+      final current = nodes[i];
+      final next = nodes[i + 1];
+      if (current.task.parentId == next.task.parentId && next.earliestStart.isAfter(current.earliestFinish)) {
         current.successors.add(next);
         next.predecessors.add(current);
       }
     }
-
-    // Link subtasks to their logical main task predecessors
-    for (var subTask in subTasks) {
-      var closestMainTask = _findClosestPredecessorMainTask(subTask, mainTasks);
-      if (closestMainTask != null) {
-        closestMainTask.successors.add(subTask);
-        subTask.predecessors.add(closestMainTask);
-      }
-    }
-
-    // Link regular tasks to their logical predecessors (subtasks or main tasks)
-    for (var task in regularTasks) {
-      var closestPredecessor = _findClosestPredecessor(task, [...subTasks, ...mainTasks]);
-      if (closestPredecessor != null) {
-        closestPredecessor.successors.add(task);
-        task.predecessors.add(closestPredecessor);
-      }
-    }
-  }
-
-  CriticalPathNode? _findClosestPredecessorMainTask(CriticalPathNode subTask, List<CriticalPathNode> mainTasks) {
-    CriticalPathNode? closest;
-    for (var mainTask in mainTasks) {
-      if (mainTask.earliestFinish.isBefore(subTask.earliestStart) ||
-          mainTask.earliestFinish.isAtSameMomentAs(subTask.earliestStart)) {
-        if (closest == null || mainTask.earliestFinish.isAfter(closest.earliestFinish)) {
-          closest = mainTask;
-        }
-      }
-    }
-    return closest;
-  }
-
-  CriticalPathNode? _findClosestPredecessor(CriticalPathNode task, List<CriticalPathNode> candidates) {
-    CriticalPathNode? closest;
-    for (var candidate in candidates) {
-      if (candidate.earliestFinish.isBefore(task.earliestStart) ||
-          candidate.earliestFinish.isAtSameMomentAs(task.earliestStart)) {
-        if (closest == null || candidate.earliestFinish.isAfter(closest.earliestFinish)) {
-          closest = candidate;
-        }
-      }
-    }
-    return closest;
   }
 
   void _forwardPass(List<CriticalPathNode> nodes) {
@@ -227,11 +145,12 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
     var sorted = <CriticalPathNode>[];
 
     void visit(CriticalPathNode node) {
-      if (visited.contains(node.task.id)) return;
+      if (visited.contains(node.task.id)) {
+        return;
+      }
       visited.add(node.task.id);
-
-      for (var predecessor in node.predecessors) {
-        visit(predecessor);
+      for (var pred in node.predecessors) {
+        visit(pred);
       }
       sorted.add(node);
     }
@@ -244,12 +163,11 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
       if (node.predecessors.isEmpty) {
         node.earliestStart = node.task.startDate!;
       } else {
-        var latestPredecessorFinish = node.predecessors
+        var latestPredFinish = node.predecessors
             .map((p) => p.earliestFinish)
             .reduce((a, b) => a.isAfter(b) ? a : b);
-        node.earliestStart = latestPredecessorFinish.add(const Duration(days: 1));
+        node.earliestStart = latestPredFinish.add(const Duration(days: 1));
       }
-
       node.earliestFinish = node.earliestStart.add(Duration(days: (node.task.duration ?? 1) - 1));
     }
   }
@@ -260,11 +178,12 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
     var sorted = <CriticalPathNode>[];
 
     void visit(CriticalPathNode node) {
-      if (visited.contains(node.task.id)) return;
+      if (visited.contains(node.task.id)) {
+        return;
+      }
       visited.add(node.task.id);
-
-      for (var successor in node.successors) {
-        visit(successor);
+      for (var succ in node.successors) {
+        visit(succ);
       }
       sorted.add(node);
     }
@@ -277,64 +196,90 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
       if (node.successors.isEmpty) {
         node.latestFinish = projectEnd;
       } else {
-        var earliestSuccessorStart = node.successors
+        var earliestSuccStart = node.successors
             .map((s) => s.latestStart)
             .reduce((a, b) => a.isBefore(b) ? a : b);
-        node.latestFinish = earliestSuccessorStart.subtract(const Duration(days: 1));
+        node.latestFinish = earliestSuccStart.subtract(const Duration(days: 1));
       }
-
       node.latestStart = node.latestFinish.subtract(Duration(days: (node.task.duration ?? 1) - 1));
     }
   }
 
-  double _calculateFreeFloat(CriticalPathNode node, List<CriticalPathNode> allNodes) {
+  double _calculateFreeFloat(CriticalPathNode node, List<CriticalPathNode> nodes) {
     if (node.successors.isEmpty) return node.totalFloat;
-
-    var minSuccessorEarliestStart = node.successors
+    var minSuccEarliestStart = node.successors
         .map((s) => s.earliestStart)
         .reduce((a, b) => a.isBefore(b) ? a : b);
+    return minSuccEarliestStart.difference(node.earliestFinish).inDays.toDouble() - 1;
+  }
 
-    return minSuccessorEarliestStart.difference(node.earliestFinish).inDays.toDouble() - 1;
+  TaskStatus _getTaskStatus(GanttRowData task) {
+    final now = DateTime.now();
+    if (task.endDate!.isBefore(now)) return TaskStatus.overdue;
+    if (task.startDate!.isBefore(now) || task.startDate == now) return TaskStatus.ongoing;
+    return TaskStatus.upcoming;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('Schedule')
+          .where('projectId', isEqualTo: widget.projectId)
+          .orderBy('displayOrder')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          widget.logger.e('❌ CriticalPath: Error in stream', error: snapshot.error);
+          return Center(child: Text('Error loading data', style: GoogleFonts.poppins(color: Colors.red)));
+        }
 
-    if (_tasks.isEmpty) {
-      return _buildEmptyState();
-    }
-      
-      return RefreshIndicator(
-        onRefresh: _fetchAndAnalyzeTasks,
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          children: [
-            FadeTransition(
-              opacity: _fadeAnimation,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildProjectSummaryCard(),
-                  const SizedBox(height: 16),
-                  _buildAnalyticsCard(),
-                  const SizedBox(height: 16),
-                  _buildCriticalPathSection(),
-                  const SizedBox(height: 16),
-                  _buildNonCriticalTasksSection(),
-                  const SizedBox(height: 16),
-                  _buildCriticalPathVisualization(),
-                  const SizedBox(height: 16),
-                  _buildRecommendationsCard(),
-                  const SizedBox(height: 16),
-                ],
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        List<GanttRowData> tasks = [];
+        for (var doc in snapshot.data!.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          final task = GanttRowData.fromFirebaseMap(doc.id, data);
+          if (task.hasData) tasks.add(task);
+        }
+
+        _calculateCriticalPath(tasks);
+        _animationController.forward();
+
+        if (tasks.isEmpty) return _buildEmptyState();
+
+        return RefreshIndicator(
+          onRefresh: () async {},
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            children: [
+              FadeTransition(
+                opacity: _fadeAnimation,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildProjectSummaryCard(),
+                    const SizedBox(height: 16),
+                    _buildAnalyticsCard(),
+                    const SizedBox(height: 16),
+                    _buildCriticalPathSection(),
+                    const SizedBox(height: 16),
+                    _buildNonCriticalTasksSection(),
+                    const SizedBox(height: 16),
+                    _buildCriticalPathVisualization(),
+                    const SizedBox(height: 16),
+                    _buildRecommendationsCard(tasks),
+                    const SizedBox(height: 16),
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
-      );
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildEmptyState() {
@@ -366,17 +311,6 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
                     color: Colors.grey.shade500,
                   ),
                   textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                ElevatedButton.icon(
-                  onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.arrow_back),
-                  label: Text('Go to Gantt Chart', style: GoogleFonts.poppins()),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue.shade600,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                  ),
                 ),
               ],
             ),
@@ -546,6 +480,51 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildSummaryMetric(String title, String value, IconData icon, Color color, bool isWide) {
+    return Container(
+      padding: EdgeInsets.all(isWide ? 20 : 16),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: isWide ? 22 : 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    color: color.withValues(alpha: 0.9),
+                    fontWeight: FontWeight.w500,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: GoogleFonts.poppins(
+              fontSize: isWide ? 24 : 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
     );
   }
 
@@ -742,51 +721,6 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
     );
   }
 
-  Widget _buildSummaryMetric(String title, String value, IconData icon, Color color, bool isWide) {
-    return Container(
-      padding: EdgeInsets.all(isWide ? 20 : 16),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: color, size: isWide ? 22 : 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: GoogleFonts.poppins(
-                    fontSize: 12,
-                    color: color.withValues(alpha: 0.9),
-                    fontWeight: FontWeight.w500,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: GoogleFonts.poppins(
-              fontSize: isWide ? 24 : 20,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildCriticalPathSection() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -860,8 +794,26 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
 
   Widget _buildCriticalTaskItem(CriticalPathNode node, int index, bool isWide) {
     final task = node.task;
+    final status = _getTaskStatus(task);
     final isMainTask = task.taskType == TaskType.mainTask;
     final isSubTask = task.taskType == TaskType.subTask;
+
+    Color statusColor;
+    String statusText;
+    switch (status) {
+      case TaskStatus.overdue:
+        statusColor = Colors.red;
+        statusText = 'Overdue';
+        break;
+      case TaskStatus.ongoing:
+        statusColor = Colors.orange;
+        statusText = 'Ongoing';
+        break;
+      case TaskStatus.upcoming:
+        statusColor = Colors.green;
+        statusText = 'Upcoming';
+        break;
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -951,6 +903,22 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
                     style: GoogleFonts.poppins(
                       fontSize: isWide ? 12 : 10,
                       color: Colors.grey.shade600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: isWide ? 12 : 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      statusText.toUpperCase(),
+                      style: GoogleFonts.poppins(
+                        fontSize: isWide ? 12 : 10,
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
+                      ),
                     ),
                   ),
                 ],
@@ -1084,8 +1052,7 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
                   ],
                 ),
                 const SizedBox(height: 20),
-                ...(_nonCriticalTasks..sort((a, b) => a.totalFloat.compareTo(b.totalFloat)))
-                    .map((node) => _buildNonCriticalTaskItem(node, isWide)),
+                ..._nonCriticalTasks.map((node) => _buildNonCriticalTaskItem(node, isWide)),
               ],
             ),
           ),
@@ -1096,6 +1063,7 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
 
   Widget _buildNonCriticalTaskItem(CriticalPathNode node, bool isWide) {
     final task = node.task;
+    final status = _getTaskStatus(task);
     final isMainTask = task.taskType == TaskType.mainTask;
     final isSubTask = task.taskType == TaskType.subTask;
     final floatDays = node.totalFloat.toInt();
@@ -1107,6 +1075,23 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
       floatColor = Colors.blue.shade600;
     } else {
       floatColor = Colors.green.shade600;
+    }
+
+    Color statusColor;
+    String statusText;
+    switch (status) {
+      case TaskStatus.overdue:
+        statusColor = Colors.red;
+        statusText = 'Overdue';
+        break;
+      case TaskStatus.ongoing:
+        statusColor = Colors.orange;
+        statusText = 'Ongoing';
+        break;
+      case TaskStatus.upcoming:
+        statusColor = Colors.green;
+        statusText = 'Upcoming';
+        break;
     }
 
     return Container(
@@ -1190,6 +1175,22 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
                       fontSize: isWide ? 10 : 9,
                       color: floatColor,
                       fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    padding: EdgeInsets.symmetric(horizontal: isWide ? 12 : 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      statusText.toUpperCase(),
+                      style: GoogleFonts.poppins(
+                        fontSize: isWide ? 12 : 10,
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
+                      ),
                     ),
                   ),
                 ],
@@ -1364,7 +1365,7 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
     );
   }
 
-  Widget _buildRecommendationsCard() {
+  Widget _buildRecommendationsCard(List<GanttRowData> tasks) {
     List<String> recommendations = [];
 
     if (_criticalityRatio > 0.7) {
@@ -1376,7 +1377,7 @@ class _CriticalPathScreenState extends State<CriticalPathScreen>
       recommendations.add('Low schedule buffer - consider adding contingency time');
     }
 
-    if (_criticalPath.length > _tasks.length * 0.8) {
+    if (_criticalPath.length > tasks.length * 0.8) {
       recommendations.add('Most tasks are critical - review project structure for efficiency');
     }
 
@@ -1531,10 +1532,12 @@ class CriticalPathNode {
     required this.successors,
   });
 
-  bool get isCritical => totalFloat <= 0.5; // Allow for small rounding differences
+  bool get isCritical => totalFloat <= 0.5;
 
   @override
   String toString() {
     return 'CriticalPathNode(${task.taskName}, float: $totalFloat)';
   }
 }
+
+enum TaskStatus { overdue, ongoing, upcoming }
