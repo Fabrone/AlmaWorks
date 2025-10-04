@@ -122,5 +122,10 @@ service cloud.firestore {
     match /SystemLogs/{logId} {
       allow read, write: if true;
     }
+
+    // Rules for PurchaseplanResources collection
+    match /PurchaseplanResources/{resourceId} {
+      allow read, write: if true;
+    }
   }
 }

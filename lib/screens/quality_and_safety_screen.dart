@@ -172,28 +172,10 @@ class _QualityAndSafetyScreenState extends State<QualityAndSafetyScreen> with Si
         }
         final documents = snapshot.data!.docs;
         widget.logger.i('📄 QualityAndSafetyScreen: Loaded ${documents.length} QualityDocuments');
-        widget.logger.d('📄 QualityAndSafetyScreen: Rendering Quality tab with Upload Document button');
+        widget.logger.d('📄 QualityAndSafetyScreen: Rendering Quality tab');
         if (documents.isEmpty) {
           return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text('No documents added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => _uploadDocument('QualityDocuments'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A2E5A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    minimumSize: const Size(100, 40),
-                  ),
-                  child: Text('Upload Document', style: GoogleFonts.poppins(fontSize: 16)),
-                ),
-              ],
-            ),
+            child: Text('No documents added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
           );
         }
         return ListView(
@@ -212,18 +194,6 @@ class _QualityAndSafetyScreenState extends State<QualityAndSafetyScreen> with Si
                       'Quality Documents',
                       style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => _uploadDocument('QualityDocuments'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0A2E5A),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      minimumSize: const Size(100, 40),
-                    ),
-                    child: Text('Upload Document', style: GoogleFonts.poppins(fontSize: 16)),
                   ),
                 ],
               ),
@@ -284,28 +254,10 @@ class _QualityAndSafetyScreenState extends State<QualityAndSafetyScreen> with Si
         }
         final documents = snapshot.data!.docs;
         widget.logger.i('📄 QualityAndSafetyScreen: Loaded ${documents.length} SafetyDocuments');
-        widget.logger.d('📄 QualityAndSafetyScreen: Rendering Safety tab with Upload Document button');
+        widget.logger.d('📄 QualityAndSafetyScreen: Rendering Safety tab');
         if (documents.isEmpty) {
           return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text('No documents added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => _uploadDocument('SafetyDocuments'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A2E5A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    minimumSize: const Size(100, 40),
-                  ),
-                  child: Text('Upload Document', style: GoogleFonts.poppins(fontSize: 16)),
-                ),
-              ],
-            ),
+            child: Text('No documents added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
           );
         }
         return ListView(
@@ -324,18 +276,6 @@ class _QualityAndSafetyScreenState extends State<QualityAndSafetyScreen> with Si
                       'Safety Documents',
                       style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () => _uploadDocument('SafetyDocuments'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0A2E5A),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      minimumSize: const Size(100, 40),
-                    ),
-                    child: Text('Upload Document', style: GoogleFonts.poppins(fontSize: 16)),
                   ),
                 ],
               ),
