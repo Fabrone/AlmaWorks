@@ -172,7 +172,7 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
         // Phone portrait or small phone landscape
         else {
           crossAxisCount = isPortrait ? 2 : 3;
-          childAspectRatio = isPortrait ? 1.15 : 1.2;
+          childAspectRatio = isPortrait ? 1.9 : 1.4;
           spacing = 8;
         }
 
