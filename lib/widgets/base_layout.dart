@@ -6,7 +6,7 @@ import 'package:almaworks/screens/projects/project_summary_screen.dart';
 import 'package:almaworks/screens/documents_screen.dart';
 import 'package:almaworks/screens/drawings_screen.dart';
 import 'package:almaworks/screens/quality_and_safety_screen.dart';
-import 'package:almaworks/screens/reports_screen.dart';
+import 'package:almaworks/screens/reports/reports_screen.dart';
 import 'package:almaworks/screens/schedule/schedule_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
