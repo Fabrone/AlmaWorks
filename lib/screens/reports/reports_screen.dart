@@ -256,35 +256,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         widget.logger.i('📊 ReportsScreen: Loaded ${reports.length} Safety Reports');
         if (reports.isEmpty) {
           return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text('No safety reports added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {
-                    if (mounted) {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => SafetyFormScreen(
-                            project: widget.project,
-                            logger: widget.logger,
-                          ),
-                        ),
-                      );
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A2E5A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                  child: Text('Add Safety Report', style: GoogleFonts.poppins(fontSize: 16)),
-                ),
-              ],
-            ),
+            child: Text('No safety reports added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
           );
         }
         return ListView(
@@ -303,28 +275,6 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
                       'Safety Reports',
                       style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
-                  ),
-                  ElevatedButton(
-                    onPressed: () {
-                      if (mounted) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => SafetyFormScreen(
-                              project: widget.project,
-                              logger: widget.logger,
-                            ),
-                          ),
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0A2E5A),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    ),
-                    child: Text('Add Safety Report', style: GoogleFonts.poppins(fontSize: 16)),
                   ),
                 ],
               ),

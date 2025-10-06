@@ -94,7 +94,7 @@ class _SafetyFormScreenState extends State<SafetyFormScreen> {
           final formData = _processFormData();
           if (formData != null) {
             await _saveSafetyForm(_type, formData);
-            if (mounted) {
+            if (context.mounted) {
               Navigator.pop(context);
             }
           }
