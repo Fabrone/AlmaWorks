@@ -1,5 +1,45 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+class TeamMember {
+  final String name;
+  final String role; // 'subcontractor', 'supplier', 'technician', 'manager'
+  final String? category;
+
+  TeamMember({
+    required this.name,
+    required this.role,
+    this.category,
+  });
+
+  factory TeamMember.fromMap(Map<String, dynamic> map) {
+    return TeamMember(
+      name: map['name'] ?? '',
+      role: map['role'] ?? '',
+      category: map['category'],
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'name': name,
+      'role': role,
+      if (category != null) 'category': category,
+    };
+  }
+
+  TeamMember copyWith({
+    String? name,
+    String? role,
+    String? category,
+  }) {
+    return TeamMember(
+      name: name ?? this.name,
+      role: role ?? this.role,
+      category: category ?? this.category,
+    );
+  }
+}
+
 class ProjectModel {
   final String id;
   final String name;
@@ -10,7 +50,7 @@ class ProjectModel {
   final DateTime startDate;
   final DateTime? endDate;
   final String projectManager;
-  final List<String> teamMembers;
+  final List<TeamMember> teamMembers;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -30,7 +70,25 @@ class ProjectModel {
   });
 
   factory ProjectModel.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    final data = doc.data() as Map<String, dynamic>? ?? <String, dynamic>{};
+    final teamMembersData = data['teamMembers'] as List<dynamic>? ?? <dynamic>[];
+    final List<TeamMember> parsedTeamMembers = <TeamMember>[];
+    for (final item in teamMembersData) {
+      if (item is String) {
+        parsedTeamMembers.add(TeamMember(name: item, role: 'team_member', category: null));
+      } else if (item is Map<String, dynamic>) {
+        try {
+          parsedTeamMembers.add(TeamMember.fromMap(item));
+        } catch (e) {
+          // Skip invalid map
+          continue;
+        }
+      } else {
+        // Skip invalid item
+        continue;
+      }
+    }
+    final teamMembers = List<TeamMember>.from(parsedTeamMembers);
     return ProjectModel(
       id: doc.id,
       name: data['name'] ?? '',
@@ -41,7 +99,7 @@ class ProjectModel {
       startDate: (data['startDate'] as Timestamp).toDate(),
       endDate: data['endDate'] != null ? (data['endDate'] as Timestamp).toDate() : null,
       projectManager: data['projectManager'] ?? '',
-      teamMembers: List<String>.from(data['teamMembers'] ?? []),
+      teamMembers: teamMembers,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
       updatedAt: (data['updatedAt'] as Timestamp).toDate(),
     );
@@ -57,7 +115,7 @@ class ProjectModel {
       'startDate': Timestamp.fromDate(startDate),
       'endDate': endDate != null ? Timestamp.fromDate(endDate!) : null,
       'projectManager': projectManager,
-      'teamMembers': teamMembers,
+      'teamMembers': teamMembers.map((m) => m.toMap()).toList(),
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
     };
@@ -72,7 +130,7 @@ class ProjectModel {
     DateTime? startDate,
     DateTime? endDate,
     String? projectManager,
-    List<String>? teamMembers,
+    List<TeamMember>? teamMembers,
     DateTime? updatedAt,
   }) {
     return ProjectModel(

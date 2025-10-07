@@ -30,8 +30,10 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
   String? _selectedStatus;
   DateTime _startDate = DateTime.now();
   DateTime? _endDate;
-  final List<String> _teamMembers = [];
+  final List<TeamMember> _teamMembers = [];
   final TextEditingController _teamMemberController = TextEditingController();
+  final TextEditingController _categoryController = TextEditingController();
+  String? _selectedRole;
   
   late final ProjectService _projectService;
   late final Logger _logger;
@@ -330,30 +332,62 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _teamMemberController,
-                    decoration: const InputDecoration(
-                      labelText: 'Add Team Member',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person_add),
-                    ),
-                    onFieldSubmitted: (_) => _addTeamMember(),
-                  ),
+            DropdownButtonFormField<String>(
+              initialValue: _selectedRole,
+              decoration: const InputDecoration(
+                labelText: 'Role *',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.work),
+              ),
+              items: const [
+                DropdownMenuItem<String>(
+                  value: 'subcontractor',
+                  child: Text('Subcontractor'),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: _addTeamMember,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Add'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A2E5A),
-                    foregroundColor: Colors.white,
-                  ),
+                DropdownMenuItem<String>(
+                  value: 'supplier',
+                  child: Text('Supplier'),
+                ),
+                DropdownMenuItem<String>(
+                  value: 'technician',
+                  child: Text('Technician'),
                 ),
               ],
+              onChanged: (value) {
+                setState(() {
+                  _selectedRole = value;
+                });
+                _logger.d('📝 EditProjectScreen: Role selected: $_selectedRole');
+              },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _teamMemberController,
+              decoration: const InputDecoration(
+                labelText: 'Team Member Name *',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.person_add),
+              ),
+              onFieldSubmitted: (_) => _addTeamMember(),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _categoryController,
+              decoration: const InputDecoration(
+                labelText: 'Category (Optional)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.category),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: _addTeamMember,
+              icon: const Icon(Icons.add),
+              label: const Text('Add'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A2E5A),
+                foregroundColor: Colors.white,
+              ),
             ),
             const SizedBox(height: 16),
             if (_teamMembers.isNotEmpty) ...[
@@ -370,7 +404,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                     avatar: CircleAvatar(
                       backgroundColor: const Color(0xFF0A2E5A),
                       child: Text(
-                        member.substring(0, 1).toUpperCase(),
+                        member.name.substring(0, 1).toUpperCase(),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -378,7 +412,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                         ),
                       ),
                     ),
-                    label: Text(member),
+                    label: Text('${member.name} (${member.role.capitalize()}${member.category != null ? ' - ${member.category}' : ''})'),
                     onDeleted: () => _removeTeamMember(member),
                     deleteIcon: const Icon(Icons.close, size: 18),
                   );
@@ -509,30 +543,42 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
   }
 
   void _addTeamMember() {
-    if (_teamMemberController.text.isNotEmpty) {
-      final newMember = _teamMemberController.text.trim();
-      if (!_teamMembers.contains(newMember)) {
-        setState(() {
-          _teamMembers.add(newMember);
-          _teamMemberController.clear();
-        });
-        _logger.i('👥 EditProjectScreen: Team member added. Total: ${_teamMembers.length}');
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Team member already exists'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
+    if (_selectedRole == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a role')),
+      );
+      return;
     }
+    if (_teamMemberController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a team member name')),
+      );
+      return;
+    }
+    final name = _teamMemberController.text.trim();
+    final category = _categoryController.text.trim().isNotEmpty ? _categoryController.text.trim() : null;
+    if (_teamMembers.any((m) => m.name == name)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Team member already exists'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _teamMembers.add(TeamMember(name: name, role: _selectedRole!, category: category));
+      _teamMemberController.clear();
+      _categoryController.clear();
+    });
+    _logger.i('👥 EditProjectScreen: Team member added. Total: ${_teamMembers.length}');
   }
 
-  void _removeTeamMember(String member) {
+  void _removeTeamMember(TeamMember member) {
     setState(() {
       _teamMembers.remove(member);
     });
-    _logger.i('👥 EditProjectScreen: Team member removed: $member');
+    _logger.i('👥 EditProjectScreen: Team member removed: ${member.name}');
   }
 
   void _updateProject() async {
@@ -545,11 +591,6 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
       try {
         _logger.d('🏗️ EditProjectScreen: Creating updated project model');
         
-        List<String> allTeamMembers = List.from(_teamMembers);
-        if (!allTeamMembers.contains(_projectManagerController.text.trim())) {
-          allTeamMembers.insert(0, _projectManagerController.text.trim());
-        }
-
         final updatedProject = ProjectModel(
           id: widget.project.id,
           name: _nameController.text.trim(),
@@ -562,7 +603,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
           startDate: _startDate,
           endDate: _endDate,
           projectManager: _projectManagerController.text.trim(),
-          teamMembers: allTeamMembers,
+          teamMembers: _teamMembers,
           createdAt: widget.project.createdAt,
           updatedAt: DateTime.now(),
         );
@@ -621,6 +662,13 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     _budgetController.dispose();
     _projectManagerController.dispose();
     _teamMemberController.dispose();
+    _categoryController.dispose();
     super.dispose();
+  }
+}
+
+extension StringExtension on String {
+  String capitalize() {
+    return "${this[0].toUpperCase()}${substring(1)}";
   }
 }

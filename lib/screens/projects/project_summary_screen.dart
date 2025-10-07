@@ -464,16 +464,17 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
               itemCount: widget.project.teamMembers.length,
               itemBuilder: (context, index) {
                 final member = widget.project.teamMembers[index];
-                final isManager = member == widget.project.projectManager;
+                final isManager = member.name == widget.project.projectManager;
 
                 return ListTile(
                   leading: CircleAvatar(
-                    child: Text(member.substring(0, 1).toUpperCase()),
+                    child: Text(member.name.substring(0, 1).toUpperCase()),
                   ),
-                  title: Text(member, style: GoogleFonts.poppins()),
-                  subtitle: isManager
-                      ? Text('Project Manager', style: GoogleFonts.poppins())
-                      : null,
+                  title: Text(member.name, style: GoogleFonts.poppins()),
+                  subtitle: Text(
+                    '${StringExtension(member.role).capitalize()}${member.category != null ? ' - ${member.category}' : ''}${isManager ? ' (Project Manager)' : ''}',
+                    style: GoogleFonts.poppins(),
+                  ),
                   trailing: isManager
                       ? const Icon(Icons.star, color: Colors.amber)
                       : null,
@@ -646,5 +647,11 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   String _formatDate(DateTime date) {
     return '${date.day}/${date.month}/${date.year}';
+  }
+}
+
+extension StringExtension on String {
+  String capitalize() {
+    return "${this[0].toUpperCase()}${substring(1)}";
   }
 }
