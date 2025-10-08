@@ -393,9 +393,13 @@
       ]
     },
     {
-      "collectionGroup": "documents",
+      "collectionGroup": "ProjectDocuments",
       "queryScope": "COLLECTION",
       "fields": [
+        {
+          "fieldPath": "projectId",
+          "order": "ASCENDING"
+        },
         {
           "fieldPath": "role",
           "order": "ASCENDING"
@@ -411,9 +415,13 @@
       ]
     },
     {
-      "collectionGroup": "documents",
+      "collectionGroup": "ProjectDocuments",
       "queryScope": "COLLECTION",
       "fields": [
+        {
+          "fieldPath": "projectId",
+          "order": "ASCENDING"
+        },
         {
           "fieldPath": "role",
           "order": "ASCENDING"

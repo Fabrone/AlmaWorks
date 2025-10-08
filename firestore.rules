@@ -20,10 +20,6 @@ service cloud.firestore {
         allow read, write: if true;
       }
 
-      match /documents/{documentId} {
-        allow read, write: if true;
-      }
-
       match /photos/{photoId} {
         allow read, write: if true;
       }
@@ -125,6 +121,11 @@ service cloud.firestore {
 
     // Rules for PurchaseplanResources collection
     match /PurchaseplanResources/{resourceId} {
+      allow read, write: if true;
+    }
+
+    // Rules for ProjectDocuments collection (top-level)
+    match /ProjectDocuments/{docId} {
       allow read, write: if true;
     }
   }

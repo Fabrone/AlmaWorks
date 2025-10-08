@@ -312,9 +312,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
 
   Widget _buildDocumentList(String role, String section, {String? memberName}) {
     Query query = FirebaseFirestore.instance
-        .collection('projects')
-        .doc(_currentProject.id)
-        .collection('documents')
+        .collection('ProjectDocuments')
+        .where('projectId', isEqualTo: _currentProject.id)
         .where('role', isEqualTo: role)
         .where('section', isEqualTo: section)
         .orderBy('uploadedAt', descending: true);
@@ -357,12 +356,11 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                 final fileName = docData['fileName'] as String;
                 final url = docData['url'] as String;
                 final type = docData['type'] as String;
-                final teamMemberName = docData['teamMemberName'] as String?;
                 return ListTile(
                   leading: Icon(_getDocumentIcon(type), color: _getFileIconColor(type)),
                   title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
                   subtitle: Text(
-                    '$fileName${teamMemberName != null ? ' - For: $teamMemberName' : ''} - Uploaded: ${_formatDate(docData['uploadedAt'] as Timestamp)}',
+                    '$fileName - Uploaded: ${_formatDate(docData['uploadedAt'] as Timestamp)}',
                     style: GoogleFonts.poppins(color: Colors.grey[600]),
                   ),
                   trailing: PopupMenuButton<String>(
@@ -625,10 +623,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       widget.logger.d('📤 DocumentsScreen: Upload complete, URL obtained');
 
       await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(_currentProject.id)
-          .collection('documents')
+          .collection('ProjectDocuments')
           .add({
+        'projectId': _currentProject.id,
         'title': title,
         'fileName': fileName,
         'url': url,
@@ -959,9 +956,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       await ref.delete();
       widget.logger.d('🗑️ DocumentsScreen: Deleting from Firestore');
       await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(_currentProject.id)
-          .collection('documents')
+          .collection('ProjectDocuments')
           .doc(docId)
           .delete();
       if (mounted) {
