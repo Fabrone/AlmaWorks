@@ -1,4 +1,5 @@
 import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/screens/projects/edit_project_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -39,6 +40,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   late TabController _supplierSubTabController;
   bool _isLoading = false;
   double? _uploadProgress;
+  late ProjectModel _currentProject;
+  String? _selectedSubcontractor;
+  String? _selectedSupplier;
 
   final List<String> _mainTabs = ['Client', 'Sub-Contractor', 'Supplier'];
   final List<String> _subSections = ['Contract', 'Communication'];
@@ -46,11 +50,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   @override
   void initState() {
     super.initState();
+    _currentProject = widget.project;
     _mainTabController = TabController(length: _mainTabs.length, vsync: this);
     _clientSubTabController = TabController(length: _subSections.length, vsync: this);
     _subContractorSubTabController = TabController(length: _subSections.length, vsync: this);
     _supplierSubTabController = TabController(length: _subSections.length, vsync: this);
-    widget.logger.i('📂 DocumentsScreen: Initialized for project: ${widget.project.name}');
+    widget.logger.i('📂 DocumentsScreen: Initialized for project: ${_currentProject.name}');
   }
 
   @override
@@ -62,13 +67,34 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     super.dispose();
   }
 
+  void _navigateToEditProject() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => EditProjectScreen(
+          project: _currentProject,
+          logger: widget.logger,
+        ),
+      ),
+    ).then((_) async {
+      final doc = await FirebaseFirestore.instance.collection('projects').doc(_currentProject.id).get();
+      if (doc.exists) {
+        setState(() {
+          _currentProject = ProjectModel.fromFirestore(doc);
+          _selectedSubcontractor = null;
+          _selectedSupplier = null;
+        });
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     widget.logger.d('🎨 DocumentsScreen: Building UI');
 
     return BaseLayout(
-      title: '${widget.project.name} - Documents',
-      project: widget.project,
+      title: '${_currentProject.name} - Documents',
+      project: _currentProject,
       logger: widget.logger,
       selectedMenuItem: 'Documents',
       onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
@@ -102,9 +128,9 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                         child: TabBarView(
                           controller: _mainTabController,
                           children: [
-                            _buildRoleSection('Client', _clientSubTabController),
-                            _buildRoleSection('Sub-Contractor', _subContractorSubTabController),
-                            _buildRoleSection('Supplier', _supplierSubTabController),
+                            _buildRoleSection('Client', _clientSubTabController, memberName: null),
+                            _buildSubcontractorContent(),
+                            _buildSupplierContent(),
                           ],
                         ),
                       ),
@@ -138,7 +164,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     );
   }
 
-  Widget _buildRoleSection(String role, TabController subTabController) {
+  Widget _buildRoleSection(String role, TabController subTabController, {String? memberName}) {
     return Column(
       children: [
         TabBar(
@@ -151,23 +177,152 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         Expanded(
           child: TabBarView(
             controller: subTabController,
-            children: _subSections.map((section) => _buildDocumentList(role, section)).toList(),
+            children: _subSections.map((section) => _buildDocumentList(role, section, memberName: memberName)).toList(),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildDocumentList(String role, String section) {
+  Widget _buildSubcontractorContent() {
+    final subs = _currentProject.teamMembers.where((m) => m.role == 'subcontractor').toList();
+    if (subs.isEmpty) {
+      return Center(
+        child: _buildEmptyMemberSection('Subcontractors', _navigateToEditProject),
+      );
+    }
+    if (_selectedSubcontractor == null) {
+      return _buildMembersList(subs, (name) => setState(() => _selectedSubcontractor = name));
+    } else {
+      return _buildSelectedMemberSection(
+        'Sub-Contractor',
+        _subContractorSubTabController,
+        _selectedSubcontractor!,
+        () => setState(() => _selectedSubcontractor = null),
+      );
+    }
+  }
+
+  Widget _buildSupplierContent() {
+    final suppliers = _currentProject.teamMembers.where((m) => m.role == 'supplier').toList();
+    if (suppliers.isEmpty) {
+      return Center(
+        child: _buildEmptyMemberSection('Suppliers', _navigateToEditProject),
+      );
+    }
+    if (_selectedSupplier == null) {
+      return _buildMembersList(suppliers, (name) => setState(() => _selectedSupplier = name));
+    } else {
+      return _buildSelectedMemberSection(
+        'Supplier',
+        _supplierSubTabController,
+        _selectedSupplier!,
+        () => setState(() => _selectedSupplier = null),
+      );
+    }
+  }
+
+  Widget _buildMembersList(List<TeamMember> members, Function(String) onSelected) {
+    return ListView.separated(
+      itemCount: members.length,
+      separatorBuilder: (context, index) => const Divider(height: 1),
+      itemBuilder: (context, index) {
+        final member = members[index];
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: const Color(0xFF0A2E5A),
+            child: Text(
+              member.name.isNotEmpty ? member.name[0].toUpperCase() : '?',
+              style: const TextStyle(color: Colors.white),
+            ),
+          ),
+          title: Text(member.name, style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+          subtitle: Text(
+            '${member.role.capitalize()}${member.category != null ? ' - ${member.category}' : ''}',
+            style: GoogleFonts.poppins(color: Colors.grey[600]),
+          ),
+          trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+          onTap: () => onSelected(member.name),
+        );
+      },
+    );
+  }
+
+  Widget _buildSelectedMemberSection(String role, TabController subController, String memberName, VoidCallback onBack) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          color: Colors.grey[100],
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: onBack,
+              ),
+              Expanded(
+                child: Text(
+                  'Documents for $memberName',
+                  style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: _buildRoleSection(role, subController, memberName: memberName),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyMemberSection(String title, VoidCallback onEdit) {
+    return Padding(
+      padding: const EdgeInsets.all(32.0),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.people_outline, size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            'No $title added to this project yet',
+            style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w500),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Add team members via the Edit Project section.',
+            style: GoogleFonts.poppins(color: Colors.grey[600]),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: onEdit,
+            icon: const Icon(Icons.edit),
+            label: Text('Go to Edit Project'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A2E5A),
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDocumentList(String role, String section, {String? memberName}) {
+    Query query = FirebaseFirestore.instance
+        .collection('projects')
+        .doc(_currentProject.id)
+        .collection('documents')
+        .where('role', isEqualTo: role)
+        .where('section', isEqualTo: section)
+        .orderBy('uploadedAt', descending: true);
+    if (memberName != null) {
+      query = query.where('teamMemberName', isEqualTo: memberName);
+    }
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('documents')
-          .where('role', isEqualTo: role)
-          .where('section', isEqualTo: section)
-          .orderBy('uploadedAt', descending: true)
-          .snapshots(),
+      stream: query.snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           widget.logger.e('Firestore error: ${snapshot.error}');
@@ -202,11 +357,12 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                 final fileName = docData['fileName'] as String;
                 final url = docData['url'] as String;
                 final type = docData['type'] as String;
+                final teamMemberName = docData['teamMemberName'] as String?;
                 return ListTile(
                   leading: Icon(_getDocumentIcon(type), color: _getFileIconColor(type)),
                   title: Text(title, style: GoogleFonts.poppins(fontWeight: FontWeight.w500)),
                   subtitle: Text(
-                    '$fileName - Uploaded: ${_formatDate(docData['uploadedAt'] as Timestamp)}',
+                    '$fileName${teamMemberName != null ? ' - For: $teamMemberName' : ''} - Uploaded: ${_formatDate(docData['uploadedAt'] as Timestamp)}',
                     style: GoogleFonts.poppins(color: Colors.grey[600]),
                   ),
                   trailing: PopupMenuButton<String>(
@@ -263,17 +419,37 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   Future<void> _addDocument() async {
     final roleIndex = _mainTabController.index;
     final role = _mainTabs[roleIndex];
+    String? teamMemberName;
     late int subIndex;
-    if (roleIndex == 0) {
+    if (role == 'Client') {
       subIndex = _clientSubTabController.index;
-    } else if (roleIndex == 1) {
+      teamMemberName = null;
+    } else if (role == 'Sub-Contractor') {
+      if (_selectedSubcontractor == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please select a subcontractor first')),
+          );
+        }
+        return;
+      }
       subIndex = _subContractorSubTabController.index;
-    } else {
+      teamMemberName = _selectedSubcontractor;
+    } else { // Supplier
+      if (_selectedSupplier == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Please select a supplier first')),
+          );
+        }
+        return;
+      }
       subIndex = _supplierSubTabController.index;
+      teamMemberName = _selectedSupplier;
     }
     final section = _subSections[subIndex];
 
-    widget.logger.i('📤 DocumentsScreen: Initiating add document to $role - $section');
+    widget.logger.i('📤 DocumentsScreen: Initiating add document to $role${teamMemberName != null ? ' - $teamMemberName' : ''} - $section');
 
     widget.logger.d('📤 DocumentsScreen: Picking file...');
     final result = await FilePicker.platform.pickFiles(
@@ -410,15 +586,16 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storageRef = FirebaseStorage.instance
           .ref()
-          .child('projects/${widget.project.id}/documents/${timestamp}_$fileName');
+          .child('projects/${_currentProject.id}/documents/${timestamp}_$fileName');
 
       final metadata = SettableMetadata(
         contentType: _getContentType(extension),
         customMetadata: {
-          'projectId': widget.project.id,
+          'projectId': _currentProject.id,
           'role': role,
           'section': section,
           'title': title,
+          'teamMemberName': teamMemberName ?? '',
           'platform': kIsWeb ? 'web' : Platform.operatingSystem,
         },
       );
@@ -449,7 +626,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
 
       await FirebaseFirestore.instance
           .collection('projects')
-          .doc(widget.project.id)
+          .doc(_currentProject.id)
           .collection('documents')
           .add({
         'title': title,
@@ -458,6 +635,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         'type': extension,
         'role': role,
         'section': section,
+        'teamMemberName': teamMemberName ?? '',
         'uploadedAt': Timestamp.now(),
       });
 
@@ -782,7 +960,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       widget.logger.d('🗑️ DocumentsScreen: Deleting from Firestore');
       await FirebaseFirestore.instance
           .collection('projects')
-          .doc(widget.project.id)
+          .doc(_currentProject.id)
           .collection('documents')
           .doc(docId)
           .delete();
