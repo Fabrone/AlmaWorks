@@ -506,13 +506,13 @@ class _MainDashboardState extends State<MainDashboard> {
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     const double widgetHeight = 400.0;
 
-    widget.logger.d('🏗️ MainDashboard: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
+    widget.logger.d('🗳️ MainDashboard: Building content section, isMobile: $isMobile, availableWidth: $availableWidth');
 
     final widgets = [
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: const TodoWidget(),
+        child: const TodoWidget(showAllProjects: true),
       ),
       SizedBox(
         width: availableWidth,
@@ -547,7 +547,6 @@ class _MainDashboardState extends State<MainDashboard> {
                   child: widgets[index],
                 );
               },
-              // Improve responsiveness with faster transitions
               physics: const BouncingScrollPhysics(),
               pageSnapping: true,
               scrollBehavior: const ScrollBehavior().copyWith(
@@ -556,15 +555,14 @@ class _MainDashboardState extends State<MainDashboard> {
               ),
             ),
           ),
-          // Previous Button
           Positioned(
             left: 0,
             child: _currentPage > 0
                 ? FloatingActionButton(
                     onPressed: () {
                       _pageController.previousPage(
-                        duration: const Duration(milliseconds: 200), // Faster transition
-                        curve: Curves.easeInOutCubic, // Smoother curve
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeInOutCubic,
                       );
                     },
                     mini: true,
@@ -573,12 +571,11 @@ class _MainDashboardState extends State<MainDashboard> {
                       Icons.arrow_left,
                       color: Colors.white,
                       size: 30,
-                      weight: 800, // Bold arrow
+                      weight: 800,
                     ),
                   )
                 : const SizedBox.shrink(),
           ),
-          // Next Button
           Positioned(
             right: 0,
             child: _currentPage < widgets.length - 1
@@ -600,7 +597,6 @@ class _MainDashboardState extends State<MainDashboard> {
                   )
                 : const SizedBox.shrink(),
           ),
-          // Page indicators
           Positioned(
             bottom: 8,
             child: Row(

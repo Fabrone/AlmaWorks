@@ -512,7 +512,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: const TodoWidget(),
+        child: TodoWidget(
+          projectId: widget.project.id,
+          project: widget.project,
+          logger: widget.logger,
+          showAllProjects: false,
+        ),
       ),
       SizedBox(
         width: availableWidth,

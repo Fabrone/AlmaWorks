@@ -1,7 +1,7 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/screens/schedule/critical_path_screen.dart';
 import 'package:almaworks/screens/schedule/msproject_gantt_screen.dart';
-import 'package:almaworks/screens/schedule/purchasing_plan_screen.dart'; // New import for PurchasingPlanScreen
+import 'package:almaworks/screens/schedule/purchasing_plan_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';

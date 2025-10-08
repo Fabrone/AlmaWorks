@@ -10,7 +10,11 @@ class GanttRowData {
   DateTime? startDate;
   DateTime? endDate;
   TaskType taskType;
-  bool isUnsaved; // NEW: Track unsaved status
+  bool isUnsaved;
+  
+  // NEW: Project information fields
+  String? projectId;
+  String? projectName;
   
   String? parentId;
   int hierarchyLevel;
@@ -25,7 +29,9 @@ class GanttRowData {
     this.startDate,
     this.endDate,
     this.taskType = TaskType.task,
-    this.isUnsaved = false, // NEW: Default to false for existing rows
+    this.isUnsaved = false,
+    this.projectId,
+    this.projectName,
     this.parentId,
     this.hierarchyLevel = 0,
     this.displayOrder = 0,
@@ -41,11 +47,13 @@ class GanttRowData {
       startDate: other.startDate,
       endDate: other.endDate,
       taskType: other.taskType,
-      isUnsaved: other.isUnsaved, // NEW: Copy unsaved status
+      isUnsaved: other.isUnsaved,
+      projectId: other.projectId,
+      projectName: other.projectName,
       parentId: other.parentId,
       hierarchyLevel: other.hierarchyLevel,
       displayOrder: other.displayOrder,
-      childIds: List<String>.from(other.childIds), // Create new mutable list
+      childIds: List<String>.from(other.childIds),
     );
   }
 
@@ -83,11 +91,13 @@ class GanttRowData {
       startDate: (data['startDate'] as Timestamp?)?.toDate(),
       endDate: (data['endDate'] as Timestamp?)?.toDate(),
       taskType: taskType,
-      isUnsaved: false, // NEW: Rows from Firebase are already saved
+      isUnsaved: false,
+      projectId: data['projectId'] as String?,
+      projectName: data['projectName'] as String?,
       parentId: data['parentId'] as String?,
       hierarchyLevel: data['hierarchyLevel'] as int? ?? 0,
       displayOrder: data['displayOrder'] as int? ?? 0,
-      childIds: childIdsList, // Use the mutable list
+      childIds: childIdsList,
     );
   }
 
@@ -136,7 +146,9 @@ class GanttRowData {
     DateTime? startDate,
     DateTime? endDate,
     TaskType? taskType,
-    bool? isUnsaved, // NEW: Allow copying unsaved status
+    bool? isUnsaved,
+    String? projectId,
+    String? projectName,
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -146,7 +158,9 @@ class GanttRowData {
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       taskType: taskType ?? this.taskType,
-      isUnsaved: isUnsaved ?? this.isUnsaved, // NEW: Copy unsaved status
+      isUnsaved: isUnsaved ?? this.isUnsaved,
+      projectId: projectId ?? this.projectId,
+      projectName: projectName ?? this.projectName,
       parentId: parentId,
       hierarchyLevel: hierarchyLevel,
       displayOrder: displayOrder,
@@ -156,7 +170,7 @@ class GanttRowData {
 
   @override
   String toString() {
-    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved)';
+    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName)';
   }
 
   @override
@@ -170,7 +184,9 @@ class GanttRowData {
         other.startDate == startDate &&
         other.endDate == endDate &&
         other.taskType == taskType &&
-        other.isUnsaved == isUnsaved; // NEW: Include in equality check
+        other.isUnsaved == isUnsaved &&
+        other.projectId == projectId &&
+        other.projectName == projectName;
   }
 
   @override
@@ -182,7 +198,9 @@ class GanttRowData {
         startDate.hashCode ^
         endDate.hashCode ^
         taskType.hashCode ^
-        isUnsaved.hashCode; // NEW: Include in hash
+        isUnsaved.hashCode ^
+        projectId.hashCode ^
+        projectName.hashCode;
   }
 
   String get taskTypeDisplayText {
