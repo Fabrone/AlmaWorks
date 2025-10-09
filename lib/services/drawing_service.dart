@@ -16,6 +16,7 @@ class DrawingService {
         .collection('Drawings')
         .where('projectId', isEqualTo: projectId)
         .where('isContract', isEqualTo: false) // Exclude contract drawings
+        .where('isAsBuilt', isEqualTo: false)  // Exclude as-built drawings
         .orderBy('title')
         .orderBy('revisionNumber', descending: true)
         .snapshots()
@@ -108,6 +109,7 @@ class DrawingService {
           .where('projectId', isEqualTo: projectId)
           .where('title', isEqualTo: title)
           .where('isContract', isEqualTo: false) // Only check non-contract drawings
+          .where('isAsBuilt', isEqualTo: false)  // Only check non-as-built drawings
           .get();
 
       final isNewCategory = existingDrawings.docs.isEmpty;
@@ -153,6 +155,7 @@ class DrawingService {
             'title': title,
             'revisionNumber': nextRevision.toString(),
             'isContract': 'false',
+            'isAsBuilt': 'false', // Explicitly set to false
             ...?metadata,
           },
         ),
@@ -173,6 +176,8 @@ class DrawingService {
         revisionNumber: nextRevision,
         uploadedAt: DateTime.now(),
         isContract: false, // Explicitly set to false for revision drawings
+        isAsBuilt: false,  // Explicitly set to false for revision drawings
+        isFinal: false,    // Explicitly set to false for revision drawings
         metadata: metadata,
       );
 
@@ -185,6 +190,80 @@ class DrawingService {
       return drawing.copyWith(id: docRef.id);
     } catch (e) {
       _logger.e('❌ DrawingService: Upload failed for $fileName', error: e);
+      rethrow;
+    }
+  }
+
+  // Add to drawing_service.dart
+  Future<DrawingModel> uploadAsBuiltDrawing({
+    required String projectId,
+    required String title,
+    required String fileName,
+    required List<int> fileBytes,
+    required String fileExtension,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      _logger.i('📤 DrawingService: Starting as-built drawing upload for $fileName with title: $title');
+
+      // Validate file size (e.g., max 100MB)
+      const maxSizeBytes = 100 * 1024 * 1024; // 100MB
+      if (fileBytes.length > maxSizeBytes) {
+        _logger.e('❌ DrawingService: File size exceeds limit (${fileBytes.length} bytes > $maxSizeBytes bytes)');
+        throw Exception('File size exceeds 100MB limit');
+      }
+
+      // Upload to Firebase Storage
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final storageRef = _storage
+          .ref()
+          .child('drawings/$projectId/as-built/${timestamp}_$fileName');
+
+      _logger.d('📤 DrawingService: Uploading to storage path: ${storageRef.fullPath}');
+
+      final uploadTask = storageRef.putData(
+        Uint8List.fromList(fileBytes),
+        SettableMetadata(
+          contentType: _getContentType(fileExtension),
+          customMetadata: {
+            'projectId': projectId,
+            'title': title,
+            'isAsBuilt': 'true',
+            ...?metadata,
+          },
+        ),
+      );
+
+      await uploadTask;
+      final downloadUrl = await storageRef.getDownloadURL();
+      _logger.d('📤 DrawingService: File uploaded, download URL: $downloadUrl');
+
+      // Create drawing document
+      final drawing = DrawingModel(
+        id: '', // Will be set by Firestore
+        projectId: projectId,
+        title: title,
+        fileName: fileName,
+        url: downloadUrl,
+        type: fileExtension,
+        revisionNumber: 0, // As-Built drawings don't have revisions
+        uploadedAt: DateTime.now(),
+        isAsBuilt: true, // Mark as as-built drawing
+        isFinal: true, // Mark as final
+        isContract: false,
+        finalizedAt: DateTime.now(),
+        metadata: metadata,
+      );
+
+      // Save to Firestore
+      final docRef = await _firestore
+          .collection('Drawings')
+          .add(drawing.toFirestore());
+
+      _logger.i('✅ DrawingService: As-Built drawing upload completed for $fileName (ID: ${docRef.id})');
+      return drawing.copyWith(id: docRef.id);
+    } catch (e) {
+      _logger.e('❌ DrawingService: As-Built drawing upload failed for $fileName', error: e);
       rethrow;
     }
   }

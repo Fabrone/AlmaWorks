@@ -609,6 +609,32 @@
       ]
     },
     {
+      "collectionGroup": "Drawings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "isAsBuilt",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isContract",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "projectId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "title",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "revisionNumber",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "QualityDocuments",
       "queryScope": "COLLECTION",
       "fields": [

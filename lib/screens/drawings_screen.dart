@@ -60,29 +60,29 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       logger: widget.logger,
       selectedMenuItem: 'Drawings',
       onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
-      floatingActionButton: (_tabController.index == 0 || _tabController.index == 1)
-          ? FloatingActionButton(
-              onPressed: _isUploading ? null : () {
-                if (_tabController.index == 0) {
-                  _uploadContractDrawing();
-                } else {
-                  _uploadDrawing();
-                }
-              },
-              backgroundColor: const Color(0xFF0A2E5A),
-              foregroundColor: Colors.white,
-              child: _isUploading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                  : const Icon(Icons.upload_file),
-            )
-          : null,
+          floatingActionButton: FloatingActionButton(
+            onPressed: _isUploading ? null : () {
+              if (_tabController.index == 0) {
+                _uploadContractDrawing();
+              } else if (_tabController.index == 1) {
+                _uploadDrawing();
+              } else if (_tabController.index == 2) {
+                _uploadAsBuiltDrawing();
+              }
+            },
+            backgroundColor: const Color(0xFF0A2E5A),
+            foregroundColor: Colors.white,
+            child: _isUploading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.upload_file),
+          ),
       child: LayoutBuilder(
         builder: (context, constraints) {
           return SingleChildScrollView(
@@ -651,7 +651,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Mark revisions as final to move them here',
+                  'Tap the upload button to add as-built drawings', 
                   style: GoogleFonts.poppins(
                     fontSize: 14,
                     color: Colors.grey[500],
@@ -806,17 +806,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                   ],
                 ),
               ),
-              if (!drawing.isFinal)
-                PopupMenuItem(
-                  value: 'mark_final',
-                  child: Row(
-                    children: [
-                      Icon(Icons.check_circle, size: 16, color: Colors.green[600]),
-                      SizedBox(width: 8),
-                      Text('Mark as Final'),
-                    ],
-                  ),
-                ),
+              // REMOVED "Mark as Final" option
               PopupMenuItem(
                 value: 'delete',
                 child: Row(
@@ -853,14 +843,14 @@ class _DrawingsScreenState extends State<DrawingsScreen>
           ),
         ),
         title: Text(
-          drawing.title, // Category name
+          drawing.title,
           style: GoogleFonts.poppins(
             fontWeight: FontWeight.w600,
             fontSize: 16,
           ),
         ),
         subtitle: Text(
-          '${drawing.fileName} • Marked final on ${_formatDate(drawing.finalizedAt ?? DateTime.now())}',
+          '${drawing.fileName} • Uploaded ${_formatDate(drawing.uploadedAt)}',
           style: GoogleFonts.poppins(
             fontSize: 12,
             color: Colors.grey[600],
@@ -889,13 +879,14 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                 ],
               ),
             ),
+            // REMOVED "Update" option
             PopupMenuItem(
-              value: 'update',
+              value: 'delete',
               child: Row(
                 children: [
-                  Icon(Icons.update, size: 16, color: Colors.orange[600]),
+                  Icon(Icons.delete, size: 16, color: Colors.red[600]),
                   SizedBox(width: 8),
-                  Text('Update'),
+                  Text('Delete', style: TextStyle(color: Colors.red)),
                 ],
               ),
             ),
@@ -903,6 +894,208 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         ),
       ),
     );
+  }
+
+  // New method: Upload As-Built Drawing 
+  Future<void> _uploadAsBuiltDrawing() async {
+    try {
+      // Step 1: Pick file first
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'dwg', 'dxf', 'jpg', 'jpeg', 'png'],
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        widget.logger.d('📤 DrawingsScreen: File selection cancelled');
+        return;
+      }
+
+      final pickedFile = result.files.first;
+      final originalFileName = pickedFile.name;
+      final fileExtension = originalFileName.split('.').last.toLowerCase();
+      widget.logger.i('📤 DrawingsScreen: As-Built file selected: $originalFileName');
+
+      // Step 2: Input drawing title (prefilled with file name without extension)
+      final drawingTitle = await _showTextInputDialog(
+        dialogTitle: 'Enter As-Built Drawing Title',
+        contentText: 'Enter a title for this as-built drawing:',
+        hintText: 'e.g., Final Construction Drawing',
+        prefill: originalFileName.split('.').first,
+        fileName: originalFileName,
+        showFileName: true,
+      );
+
+      if (drawingTitle == null || drawingTitle.trim().isEmpty) {
+        widget.logger.d('📤 DrawingsScreen: Drawing title input cancelled');
+        return;
+      }
+
+      final finalFileName = '$drawingTitle.$fileExtension';
+      widget.logger.i('📤 DrawingsScreen: Final as-built file name: $finalFileName');
+
+      // Step 3: Get file bytes
+      List<int> fileBytes;
+      if (kIsWeb) {
+        fileBytes = pickedFile.bytes!;
+      } else {
+        fileBytes = await File(pickedFile.path!).readAsBytes();
+      }
+
+      widget.logger.i('📤 DrawingsScreen: File bytes loaded (size: ${fileBytes.length})');
+
+      setState(() {
+        _isUploading = true;
+      });
+
+      // Step 4: Show upload progress dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text(
+              'Uploading As-Built Drawing',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Uploading $finalFileName...',
+                  style: GoogleFonts.poppins(),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      // Step 5: Upload as-built drawing
+      _drawingService.uploadAsBuiltDrawing(
+        projectId: widget.project.id,
+        title: drawingTitle.trim(),
+        fileName: finalFileName,
+        fileBytes: fileBytes,
+        fileExtension: fileExtension,
+      ).then((_) {
+        if (mounted) {
+          Navigator.pop(context); // Close progress dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'As-Built drawing "$drawingTitle" uploaded successfully!',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        widget.logger.i('✅ DrawingsScreen: As-Built drawing uploaded successfully: $drawingTitle');
+      }).catchError((e) {
+        widget.logger.e('❌ DrawingsScreen: As-Built upload failed', error: e);
+        if (mounted) {
+          if (Navigator.canPop(context)) {
+            Navigator.pop(context); // Close progress dialog if open
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Upload failed: ${e.toString()}',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      });
+
+    } catch (e) {
+      widget.logger.e('❌ DrawingsScreen: As-Built upload failed', error: e);
+      
+      if (mounted) {
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context); // Close progress dialog if open
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Upload failed: ${e.toString()}',
+              style: GoogleFonts.poppins(),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _deleteAsBuiltDrawing(DrawingModel drawing) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Delete As-Built Drawing',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          'Are you sure you want to delete "${drawing.title}"? This action cannot be undone.',
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Delete', style: GoogleFonts.poppins()),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    if (confirmed == true) {
+      try {
+        await _drawingService.deleteDrawing(drawing.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'As-Built drawing deleted successfully',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Failed to delete: ${e.toString()}',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   Future<void> _uploadDrawing() async {
@@ -1298,12 +1491,10 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       case 'download':
         await _downloadDrawing(drawing.url, drawing.fileName);
         break;
-      case 'mark_final':
-        await _markDrawingAsFinal(drawing);
-        break;
       case 'delete':
         await _deleteDrawing(drawing);
         break;
+      // REMOVED 'mark_final' case
     }
   }
 
@@ -1315,217 +1506,10 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       case 'download':
         await _downloadDrawing(drawing.url, drawing.fileName);
         break;
-      case 'update':
-        await _updateAsBuilt(drawing);
+      case 'delete':
+        await _deleteAsBuiltDrawing(drawing);
         break;
-    }
-  }
-
-  Future<void> _markDrawingAsFinal(DrawingModel drawing) async {
-    final asBuilts = await _drawingService.getAsBuiltDrawings(widget.project.id).first;
-    if (!mounted) return;
-    final existing = asBuilts.firstWhere(
-      (d) => d.title == drawing.title,
-      orElse: () => DrawingModel(
-        id: '',
-        projectId: '',
-        title: '',
-        fileName: '',
-        url: '',
-        type: '',
-        revisionNumber: 0,
-        uploadedAt: DateTime.now(),
-      ),
-    );
-
-    String message;
-    if (existing.id.isNotEmpty) {
-      message =
-          'Update As-Built from "${existing.fileName}" to "${drawing.fileName}"? This will replace the current As-Built drawing.';
-    } else {
-      message =
-          'Are you sure you want to mark "${drawing.title} Rev ${drawing.revisionNumber}" as final? This will add it to the As Built section.';
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Mark as Final',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-        content: Text(
-          message,
-          style: GoogleFonts.poppins(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: Text('Confirm', style: GoogleFonts.poppins()),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-    if (confirmed == true) {
-      try {
-        await _drawingService.markAsFinal(drawing.id);
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Drawing marked as final and added to As Built',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to mark as final: ${e.toString()}',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _updateAsBuilt(DrawingModel currentAsBuilt) async {
-    final revisions = await _drawingService.getProjectDrawings(widget.project.id).first;
-    if (!mounted) return;
-    final groupRevisions = revisions
-        .where((d) => d.title == currentAsBuilt.title && !d.isAsBuilt)
-        .toList()
-      ..sort((a, b) => b.revisionNumber.compareTo(a.revisionNumber));
-
-    if (groupRevisions.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'No other revisions available for this category.',
-            style: GoogleFonts.poppins(),
-          ),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
-
-    final selected = await showDialog<DrawingModel>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          'Select New As-Built Drawing',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF0A2E5A)),
-        ),
-        content: SizedBox(
-          width: min(400, MediaQuery.of(context).size.width * 0.8),
-          height: 300,
-          child: ListView.separated(
-            itemCount: groupRevisions.length,
-            separatorBuilder: (context, index) => Divider(color: Colors.grey[300]),
-            itemBuilder: (context, index) {
-              final rev = groupRevisions[index];
-              return Card(
-                elevation: 1,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: ListTile(
-                  leading: Icon(
-                    _getDrawingIcon(rev.type),
-                    color: _getDrawingIconColor(rev.type),
-                  ),
-                  title: Text(rev.fileName, style: GoogleFonts.poppins()),
-                  subtitle: Text(
-                    'Rev ${rev.revisionNumber} - Uploaded ${_formatDate(rev.uploadedAt)}',
-                    style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
-                  ),
-                  onTap: () => Navigator.pop(context, rev),
-                ),
-              );
-            },
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: GoogleFonts.poppins(color: Color(0xFF800000))),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-    if (selected != null) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(
-            'Update As-Built',
-            style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-          ),
-          content: Text(
-            'Update As-Built from "${currentAsBuilt.fileName}" to "${selected.fileName}"?',
-            style: GoogleFonts.poppins(),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-              ),
-              child: Text('Update', style: GoogleFonts.poppins()),
-            ),
-          ],
-        ),
-      );
-
-      if (!mounted) return;
-      if (confirmed == true) {
-        try {
-          await _drawingService.markAsFinal(selected.id);
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'As-Built drawing updated successfully',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
-        } catch (e) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Failed to update: ${e.toString()}',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
+      // REMOVED 'update' case
     }
   }
 
