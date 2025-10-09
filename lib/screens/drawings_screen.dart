@@ -279,16 +279,6 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                 ],
               ),
             ),
-            PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, size: 16, color: Colors.red[600]),
-                  SizedBox(width: 8),
-                  Text('Delete', style: TextStyle(color: Colors.red)),
-                ],
-              ),
-            ),
           ],
         ),
       ),
@@ -446,70 +436,6 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       case 'download':
         await _downloadDrawing(drawing.url, drawing.fileName);
         break;
-      case 'delete':
-        await _deleteContractDrawing(drawing);
-        break;
-    }
-  }
-
-  // New method: Delete Contract Drawing
-  Future<void> _deleteContractDrawing(DrawingModel drawing) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Delete Contract Drawing',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-        content: Text(
-          'Are you sure you want to delete "${drawing.title}"? This action cannot be undone.',
-          style: GoogleFonts.poppins(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: Text('Delete', style: GoogleFonts.poppins()),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted) return;
-    if (confirmed == true) {
-      try {
-        await _drawingService.deleteDrawing(drawing.id);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Contract drawing deleted successfully',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Failed to delete: ${e.toString()}',
-                style: GoogleFonts.poppins(),
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
     }
   }
 
@@ -806,7 +732,6 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                   ],
                 ),
               ),
-              // REMOVED "Mark as Final" option
               PopupMenuItem(
                 value: 'delete',
                 child: Row(
