@@ -11,16 +11,17 @@ class DrawingService {
 
   // Get all drawings for a project
   Stream<List<DrawingModel>> getProjectDrawings(String projectId) {
-    _logger.d('📥 DrawingService: Fetching all drawings for project: $projectId');
+    _logger.d('🔥 DrawingService: Fetching all drawings for project: $projectId');
     return _firestore
         .collection('Drawings')
         .where('projectId', isEqualTo: projectId)
+        .where('isContract', isEqualTo: false) // Exclude contract drawings
         .orderBy('title')
         .orderBy('revisionNumber', descending: true)
         .snapshots()
         .map((snapshot) {
       final drawings = snapshot.docs.map((doc) => DrawingModel.fromFirestore(doc)).toList();
-      _logger.d('📥 DrawingService: Fetched ${drawings.length} drawings for project: $projectId');
+      _logger.d('🔥 DrawingService: Fetched ${drawings.length} drawings for project: $projectId');
       return drawings;
     }).handleError((e) {
       _logger.e('❌ DrawingService: Error fetching project drawings', error: e);
@@ -30,17 +31,18 @@ class DrawingService {
 
   // Get revision drawings (not as-built)
   Stream<List<DrawingModel>> getRevisionDrawings(String projectId) {
-    _logger.d('📥 DrawingService: Fetching revision drawings for project: $projectId');
+    _logger.d('🔥 DrawingService: Fetching revision drawings for project: $projectId');
     return _firestore
         .collection('Drawings')
         .where('projectId', isEqualTo: projectId)
         .where('isAsBuilt', isEqualTo: false)
+        .where('isContract', isEqualTo: false) // Exclude contract drawings
         .orderBy('title')
         .orderBy('revisionNumber', descending: true)
         .snapshots()
         .map((snapshot) {
       final drawings = snapshot.docs.map((doc) => DrawingModel.fromFirestore(doc)).toList();
-      _logger.d('📥 DrawingService: Fetched ${drawings.length} revision drawings for project: $projectId');
+      _logger.d('🔥 DrawingService: Fetched ${drawings.length} revision drawings for project: $projectId');
       return drawings;
     }).handleError((e) {
       _logger.e('❌ DrawingService: Error fetching revision drawings', error: e);
@@ -105,6 +107,7 @@ class DrawingService {
           .collection('Drawings')
           .where('projectId', isEqualTo: projectId)
           .where('title', isEqualTo: title)
+          .where('isContract', isEqualTo: false) // Only check non-contract drawings
           .get();
 
       final isNewCategory = existingDrawings.docs.isEmpty;
@@ -149,6 +152,7 @@ class DrawingService {
             'projectId': projectId,
             'title': title,
             'revisionNumber': nextRevision.toString(),
+            'isContract': 'false',
             ...?metadata,
           },
         ),
@@ -168,6 +172,7 @@ class DrawingService {
         type: fileExtension,
         revisionNumber: nextRevision,
         uploadedAt: DateTime.now(),
+        isContract: false, // Explicitly set to false for revision drawings
         metadata: metadata,
       );
 
@@ -269,6 +274,94 @@ class DrawingService {
       _logger.i('✅ DrawingService: Drawing deleted successfully: $drawingId');
     } catch (e) {
       _logger.e('❌ DrawingService: Failed to delete drawing: $drawingId', error: e);
+      rethrow;
+    }
+  }
+
+  Stream<List<DrawingModel>> getContractDrawings(String projectId) {
+    _logger.d('🔥 DrawingService: Fetching contract drawings for project: $projectId');
+    return _firestore
+        .collection('Drawings')
+        .where('projectId', isEqualTo: projectId)
+        .where('isContract', isEqualTo: true)
+        .orderBy('uploadedAt', descending: true)
+        .snapshots()
+        .map((snapshot) {
+      final drawings = snapshot.docs.map((doc) => DrawingModel.fromFirestore(doc)).toList();
+      _logger.d('🔥 DrawingService: Fetched ${drawings.length} contract drawings for project: $projectId');
+      return drawings;
+    }).handleError((e) {
+      _logger.e('❌ DrawingService: Error fetching contract drawings', error: e);
+      throw e;
+    });
+  }
+
+  Future<DrawingModel> uploadContractDrawing({
+    required String projectId,
+    required String title,
+    required String fileName,
+    required List<int> fileBytes,
+    required String fileExtension,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      _logger.i('📤 DrawingService: Starting contract drawing upload for $fileName with title: $title');
+
+      // Validate file size (e.g., max 100MB)
+      const maxSizeBytes = 100 * 1024 * 1024; // 100MB
+      if (fileBytes.length > maxSizeBytes) {
+        _logger.e('❌ DrawingService: File size exceeds limit (${fileBytes.length} bytes > $maxSizeBytes bytes)');
+        throw Exception('File size exceeds 100MB limit');
+      }
+
+      // Upload to Firebase Storage
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final storageRef = _storage
+          .ref()
+          .child('drawings/$projectId/contract/${timestamp}_$fileName');
+
+      _logger.d('📤 DrawingService: Uploading to storage path: ${storageRef.fullPath}');
+
+      final uploadTask = storageRef.putData(
+        Uint8List.fromList(fileBytes),
+        SettableMetadata(
+          contentType: _getContentType(fileExtension),
+          customMetadata: {
+            'projectId': projectId,
+            'title': title,
+            'isContract': 'true',
+            ...?metadata,
+          },
+        ),
+      );
+
+      await uploadTask;
+      final downloadUrl = await storageRef.getDownloadURL();
+      _logger.d('📤 DrawingService: File uploaded, download URL: $downloadUrl');
+
+      // Create drawing document
+      final drawing = DrawingModel(
+        id: '', // Will be set by Firestore
+        projectId: projectId,
+        title: title,
+        fileName: fileName,
+        url: downloadUrl,
+        type: fileExtension,
+        revisionNumber: 0, // Contract drawings don't have revisions
+        uploadedAt: DateTime.now(),
+        isContract: true, // Mark as contract drawing
+        metadata: metadata,
+      );
+
+      // Save to Firestore
+      final docRef = await _firestore
+          .collection('Drawings')
+          .add(drawing.toFirestore());
+
+      _logger.i('✅ DrawingService: Contract drawing upload completed for $fileName (ID: ${docRef.id})');
+      return drawing.copyWith(id: docRef.id);
+    } catch (e) {
+      _logger.e('❌ DrawingService: Contract drawing upload failed for $fileName', error: e);
       rethrow;
     }
   }

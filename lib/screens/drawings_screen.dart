@@ -42,7 +42,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this); // Changed from 2 to 3
     widget.logger.i('🏗️ DrawingsScreen: Initialized for project: ${widget.project.name}');
   }
 
@@ -60,9 +60,15 @@ class _DrawingsScreenState extends State<DrawingsScreen>
       logger: widget.logger,
       selectedMenuItem: 'Drawings',
       onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
-      floatingActionButton: _tabController.index == 0
+      floatingActionButton: (_tabController.index == 0 || _tabController.index == 1)
           ? FloatingActionButton(
-              onPressed: _isUploading ? null : _uploadDrawing,
+              onPressed: _isUploading ? null : () {
+                if (_tabController.index == 0) {
+                  _uploadContractDrawing();
+                } else {
+                  _uploadDrawing();
+                }
+              },
               backgroundColor: const Color(0xFF0A2E5A),
               foregroundColor: Colors.white,
               child: _isUploading
@@ -115,6 +121,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                             fontSize: 16,
                           ),
                           tabs: const [
+                            Tab(text: 'Contract Drawing'),
                             Tab(text: 'Revisions'),
                             Tab(text: 'As Built'),
                           ],
@@ -125,6 +132,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                         child: TabBarView(
                           controller: _tabController,
                           children: [
+                            _buildContractDrawingTab(),
                             _buildRevisionsTab(),
                             _buildAsBuiltTab(),
                           ],
@@ -140,6 +148,369 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         },
       ),
     );
+  }
+
+  // New method: Build Contract Drawing tab
+  Widget _buildContractDrawingTab() {
+    return StreamBuilder<List<DrawingModel>>(
+      stream: _drawingService.getContractDrawings(widget.project.id),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          widget.logger.e('❌ DrawingsScreen: Error loading contract drawings', error: snapshot.error);
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 64, color: Colors.red[400]),
+                const SizedBox(height: 16),
+                Text(
+                  'Error loading contract drawings',
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    color: Colors.red[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final drawings = snapshot.data!;
+        drawings.sort((a, b) => b.uploadedAt.compareTo(a.uploadedAt));
+
+        if (drawings.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.description, size: 64, color: Colors.grey[400]),
+                const SizedBox(height: 16),
+                Text(
+                  'No contract drawings uploaded yet',
+                  style: GoogleFonts.poppins(
+                    fontSize: 18,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Tap the upload button to add contract drawings',
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16),
+          itemCount: drawings.length,
+          itemBuilder: (context, index) {
+            final drawing = drawings[index];
+            return _buildContractDrawingCard(drawing);
+          },
+        );
+      },
+    );
+  }
+
+  // New method: Build Contract Drawing card
+  Widget _buildContractDrawingCard(DrawingModel drawing) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0A2E5A).withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(
+            _getDrawingIcon(drawing.type),
+            color: _getDrawingIconColor(drawing.type),
+          ),
+        ),
+        title: Text(
+          drawing.title,
+          style: GoogleFonts.poppins(
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
+        ),
+        subtitle: Text(
+          '${drawing.fileName} • Uploaded ${_formatDate(drawing.uploadedAt)}',
+          style: GoogleFonts.poppins(
+            fontSize: 12,
+            color: Colors.grey[600],
+          ),
+        ),
+        trailing: PopupMenuButton<String>(
+          onSelected: (value) => _handleContractDrawingAction(value, drawing),
+          itemBuilder: (context) => [
+            PopupMenuItem(
+              value: 'view',
+              child: Row(
+                children: [
+                  Icon(Icons.visibility, size: 16, color: Colors.blue[600]),
+                  SizedBox(width: 8),
+                  Text('View'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'download',
+              child: Row(
+                children: [
+                  Icon(Icons.download, size: 16, color: Colors.green[600]),
+                  SizedBox(width: 8),
+                  Text('Download'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Row(
+                children: [
+                  Icon(Icons.delete, size: 16, color: Colors.red[600]),
+                  SizedBox(width: 8),
+                  Text('Delete', style: TextStyle(color: Colors.red)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // New method: Upload Contract Drawing
+  Future<void> _uploadContractDrawing() async {
+    try {
+      // Step 1: Pick file first
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'dwg', 'dxf', 'jpg', 'jpeg', 'png'],
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        widget.logger.d('📤 DrawingsScreen: File selection cancelled');
+        return;
+      }
+
+      final pickedFile = result.files.first;
+      final originalFileName = pickedFile.name;
+      final fileExtension = originalFileName.split('.').last.toLowerCase();
+      widget.logger.i('📤 DrawingsScreen: Contract file selected: $originalFileName');
+
+      // Step 2: Input drawing title (prefilled with file name without extension)
+      final drawingTitle = await _showTextInputDialog(
+        dialogTitle: 'Enter Drawing Title',
+        contentText: 'Enter a title for this contract drawing:',
+        hintText: 'e.g., Main Contract Drawing',
+        prefill: originalFileName.split('.').first,
+        fileName: originalFileName,
+        showFileName: true,
+      );
+
+      if (drawingTitle == null || drawingTitle.trim().isEmpty) {
+        widget.logger.d('📤 DrawingsScreen: Drawing title input cancelled');
+        return;
+      }
+
+      final finalFileName = '$drawingTitle.$fileExtension';
+      widget.logger.i('📤 DrawingsScreen: Final contract file name: $finalFileName');
+
+      // Step 3: Get file bytes
+      List<int> fileBytes;
+      if (kIsWeb) {
+        fileBytes = pickedFile.bytes!;
+      } else {
+        fileBytes = await File(pickedFile.path!).readAsBytes();
+      }
+
+      widget.logger.i('📤 DrawingsScreen: File bytes loaded (size: ${fileBytes.length})');
+
+      setState(() {
+        _isUploading = true;
+      });
+
+      // Step 4: Show upload progress dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text(
+              'Uploading Contract Drawing',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Uploading $finalFileName...',
+                  style: GoogleFonts.poppins(),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      // Step 5: Upload contract drawing
+      _drawingService.uploadContractDrawing(
+        projectId: widget.project.id,
+        title: drawingTitle.trim(),
+        fileName: finalFileName,
+        fileBytes: fileBytes,
+        fileExtension: fileExtension,
+      ).then((_) {
+        if (mounted) {
+          Navigator.pop(context); // Close progress dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Contract drawing "$drawingTitle" uploaded successfully!',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+        widget.logger.i('✅ DrawingsScreen: Contract drawing uploaded successfully: $drawingTitle');
+      }).catchError((e) {
+        widget.logger.e('❌ DrawingsScreen: Contract upload failed', error: e);
+        if (mounted) {
+          if (Navigator.canPop(context)) {
+            Navigator.pop(context); // Close progress dialog if open
+          }
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Upload failed: ${e.toString()}',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      });
+
+    } catch (e) {
+      widget.logger.e('❌ DrawingsScreen: Contract upload failed', error: e);
+      
+      if (mounted) {
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context); // Close progress dialog if open
+        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Upload failed: ${e.toString()}',
+              style: GoogleFonts.poppins(),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+        });
+      }
+    }
+  }
+
+  // New method: Handle Contract Drawing actions
+  void _handleContractDrawingAction(String action, DrawingModel drawing) async {
+    switch (action) {
+      case 'view':
+        await _viewDrawing(drawing.url, drawing.type, drawing.fileName);
+        break;
+      case 'download':
+        await _downloadDrawing(drawing.url, drawing.fileName);
+        break;
+      case 'delete':
+        await _deleteContractDrawing(drawing);
+        break;
+    }
+  }
+
+  // New method: Delete Contract Drawing
+  Future<void> _deleteContractDrawing(DrawingModel drawing) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Delete Contract Drawing',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          'Are you sure you want to delete "${drawing.title}"? This action cannot be undone.',
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Delete', style: GoogleFonts.poppins()),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    if (confirmed == true) {
+      try {
+        await _drawingService.deleteDrawing(drawing.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Contract drawing deleted successfully',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Failed to delete: ${e.toString()}',
+                style: GoogleFonts.poppins(),
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
   }
 
   Widget _buildFooter(BuildContext context) {

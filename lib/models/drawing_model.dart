@@ -10,6 +10,7 @@ class DrawingModel {
   final int revisionNumber;
   final bool isFinal;
   final bool isAsBuilt;
+  final bool isContract; // NEW FIELD ADDED
   final DateTime uploadedAt;
   final DateTime? finalizedAt;
   final Map<String, dynamic>? metadata;
@@ -24,6 +25,7 @@ class DrawingModel {
     required this.revisionNumber,
     this.isFinal = false,
     this.isAsBuilt = false,
+    this.isContract = false, // DEFAULT TO FALSE
     required this.uploadedAt,
     this.finalizedAt,
     this.metadata,
@@ -41,6 +43,7 @@ class DrawingModel {
       revisionNumber: data['revisionNumber'] ?? 1,
       isFinal: data['isFinal'] ?? false,
       isAsBuilt: data['isAsBuilt'] ?? false,
+      isContract: data['isContract'] ?? false, // READ FROM FIRESTORE
       uploadedAt: (data['uploadedAt'] as Timestamp).toDate(),
       finalizedAt: data['finalizedAt'] != null 
           ? (data['finalizedAt'] as Timestamp).toDate() 
@@ -59,6 +62,7 @@ class DrawingModel {
       'revisionNumber': revisionNumber,
       'isFinal': isFinal,
       'isAsBuilt': isAsBuilt,
+      'isContract': isContract, // SAVE TO FIRESTORE
       'uploadedAt': Timestamp.fromDate(uploadedAt),
       'finalizedAt': finalizedAt != null ? Timestamp.fromDate(finalizedAt!) : null,
       'metadata': metadata,
@@ -75,6 +79,7 @@ class DrawingModel {
     int? revisionNumber,
     bool? isFinal,
     bool? isAsBuilt,
+    bool? isContract, // ADDED TO COPYWITH
     DateTime? uploadedAt,
     DateTime? finalizedAt,
     Map<String, dynamic>? metadata,
@@ -89,6 +94,7 @@ class DrawingModel {
       revisionNumber: revisionNumber ?? this.revisionNumber,
       isFinal: isFinal ?? this.isFinal,
       isAsBuilt: isAsBuilt ?? this.isAsBuilt,
+      isContract: isContract ?? this.isContract, // ADDED TO COPYWITH
       uploadedAt: uploadedAt ?? this.uploadedAt,
       finalizedAt: finalizedAt ?? this.finalizedAt,
       metadata: metadata ?? this.metadata,
