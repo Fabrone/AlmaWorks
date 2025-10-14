@@ -63,30 +63,20 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
       onMenuItemSelected: (_) {},
       floatingActionButton: FloatingActionButton(
         onPressed: _isLoading ? null : () {
-          if (_tabController.index == 2) {
-            if (mounted) {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => SafetyFormScreen(
-                    project: widget.project,
-                    logger: widget.logger,
-                  ),
-                ),
-              );
-            }
-          } else {
-            final type = _tabController.index == 0
-                ? 'Weekly'
-                : _tabController.index == 1
-                    ? 'Monthly'
-                    : 'Quality';
-            _showUploadDialog(type);
-          }
+          _handleUploadAction();
         },
         backgroundColor: const Color(0xFF0A2E5A),
         foregroundColor: Colors.white,
-        child: const Icon(Icons.add),
+        child: _isLoading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              )
+            : const Icon(Icons.upload_file),
       ),
       child: Column(
         children: [
@@ -235,7 +225,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
       stream: FirebaseFirestore.instance
           .collection('Reports')
           .where('projectId', isEqualTo: widget.project.id)
-          .where('type', whereIn: ['SafetyWeekly', 'SafetyMonthly'])
+          .where('type', whereIn: ['SafetyWeekly', 'SafetyMonthly', 'Safety'])
           .orderBy('uploadedAt', descending: true)
           .snapshots(),
       builder: (context, snapshot) {
@@ -365,113 +355,151 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     );
   }
 
-  Future<void> _showUploadDialog(String type) async {
-    final TextEditingController titleController = TextEditingController();
-    final BuildContext dialogContext = context;
-    final result = await showDialog<Map<String, dynamic>>(
-      context: dialogContext,
-      builder: (context) => AlertDialog(
-        title: Text('Upload $type Report', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: titleController,
-              decoration: InputDecoration(
-                labelText: 'Report Title',
-                border: const OutlineInputBorder(),
-                hintText: 'Enter report title',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (titleController.text.isNotEmpty) {
-                Navigator.pop(context, {'title': titleController.text});
-              } else {
-                if (mounted && dialogContext.mounted) {
-                  ScaffoldMessenger.of(dialogContext).showSnackBar(
-                    SnackBar(content: Text('Please enter a title', style: GoogleFonts.poppins())),
-                  );
-                }
+  void _handleUploadAction() {
+    final type = _tabController.index == 0
+        ? 'Weekly'
+        : _tabController.index == 1
+            ? 'Monthly'
+            : _tabController.index == 3
+                ? 'Quality'
+                : 'Safety';
+    if (type == 'Safety') {
+      _showSafetyOptions();
+    } else {
+      _uploadReport(type);
+    }
+  }
+
+  void _showSafetyOptions() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.edit),
+            title: Text('Fill Safety Form', style: GoogleFonts.poppins()),
+            onTap: () {
+              Navigator.pop(context);
+              if (mounted) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => SafetyFormScreen(
+                      project: widget.project,
+                      logger: widget.logger,
+                    ),
+                  ),
+                );
               }
             },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0A2E5A),
-              foregroundColor: Colors.white,
-            ),
-            child: Text('Select File', style: GoogleFonts.poppins()),
+          ),
+          ListTile(
+            leading: const Icon(Icons.upload_file),
+            title: Text('Upload Safety File', style: GoogleFonts.poppins()),
+            onTap: () {
+              Navigator.pop(context);
+              _uploadReport('Safety');
+            },
           ),
         ],
       ),
     );
-
-    titleController.dispose();
-    if (result != null && mounted) {
-      await _uploadDocument(type, result['title']);
-    }
   }
 
-  Future<void> _uploadDocument(String type, String title) async {
-    widget.logger.d('📊 ReportsScreen: Opening file picker for $type report');
+  Future<void> _uploadReport(String type) async {
     try {
+      // Step 1: Pick file first
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'txt'],
+      );
+
+      if (result == null || result.files.isEmpty) {
+        widget.logger.d('📤 ReportsScreen: File selection cancelled');
+        return;
+      }
+
+      final pickedFile = result.files.first;
+      final originalFileName = pickedFile.name;
+      final extension = originalFileName.split('.').last.toLowerCase();
+      widget.logger.i('📤 ReportsScreen: File selected: $originalFileName');
+
+      // Step 2: Input report title (prefilled with file name without extension)
+      final title = await _showTextInputDialog(
+        dialogTitle: 'Enter Report Title',
+        contentText: 'Enter a title for this report:',
+        hintText: 'Enter report title',
+        prefill: originalFileName.split('.').first,
+        fileName: originalFileName,
+        showFileName: true,
+      );
+
+      if (title == null || title.trim().isEmpty) {
+        widget.logger.d('📤 ReportsScreen: Title input cancelled');
+        return;
+      }
+
+      final finalFileName = '$title.$extension';
+      widget.logger.i('📤 ReportsScreen: Final file name: $finalFileName');
+
+      // Step 3: Get file bytes
+      Uint8List fileBytes;
+      if (kIsWeb) {
+        fileBytes = pickedFile.bytes!;
+      } else {
+        fileBytes = await File(pickedFile.path!).readAsBytes();
+      }
+
+      widget.logger.i('📤 ReportsScreen: File bytes loaded (size: ${fileBytes.length})');
+
       setState(() {
         _isLoading = true;
       });
 
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['pdf', 'docx', 'pptx', 'txt', 'doc', 'ppt'],
-        withData: true,
-      );
-      if (result == null || result.files.isEmpty) {
-        widget.logger.d('📊 ReportsScreen: File picker cancelled');
-        return;
+      // Step 4: Show upload progress dialog
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text(
+              'Uploading Report',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(
+                  'Uploading $finalFileName...',
+                  style: GoogleFonts.poppins(),
+                ),
+              ],
+            ),
+          ),
+        );
       }
 
-      final platformFile = result.files.single;
-      final fileName = platformFile.name;
-      final extension = fileName.split('.').last.toLowerCase();
-      Uint8List? fileBytes;
-
-      if (platformFile.bytes != null) {
-        fileBytes = platformFile.bytes!;
-        widget.logger.d('📊 ReportsScreen: File bytes available (web)');
-      } else if (platformFile.path != null) {
-        final file = File(platformFile.path!);
-        fileBytes = await file.readAsBytes();
-        widget.logger.d('📊 ReportsScreen: File read from path (mobile/desktop)');
-      }
-
-      if (fileBytes == null) {
-        throw Exception('Could not read file data');
-      }
-
-      widget.logger.d('📊 ReportsScreen: Uploading $fileName to Firebase Storage ($type)');
+      // Step 5: Upload to Firebase Storage
       final storageRef = FirebaseStorage.instance
           .ref()
           .child(widget.project.id)
           .child('Reports')
-          .child(fileName);
-
+          .child(finalFileName);
       final uploadTask = storageRef.putData(
         fileBytes,
         SettableMetadata(contentType: _getContentType(extension)),
       );
 
-      await uploadTask.whenComplete(() => null);
+      final snapshot = await uploadTask.whenComplete(() {});
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+      widget.logger.d('📤 ReportsScreen: Uploaded to storage: $downloadUrl');
 
-      final downloadUrl = await storageRef.getDownloadURL();
-
-      widget.logger.d('📊 ReportsScreen: Saving report metadata to Firestore: $title');
+      // Step 6: Save metadata to Firestore
       final docRef = await FirebaseFirestore.instance.collection('Reports').add({
-        'name': title,
+        'name': title.trim(),
         'url': downloadUrl,
         'projectId': widget.project.id,
         'projectName': widget.project.name,
@@ -483,15 +511,25 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
 
       widget.logger.i('✅ ReportsScreen: Report uploaded successfully: $title');
       if (mounted) {
+        Navigator.pop(context); // Close progress dialog
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Report uploaded successfully', style: GoogleFonts.poppins())),
+          SnackBar(
+            content: Text('Report uploaded successfully', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e, stackTrace) {
       widget.logger.e('❌ ReportsScreen: Error uploading report', error: e, stackTrace: stackTrace);
       if (mounted) {
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context); // Close progress dialog if open
+        }
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error uploading report: $e', style: GoogleFonts.poppins())),
+          SnackBar(
+            content: Text('Error uploading report: $e', style: GoogleFonts.poppins()),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -501,6 +539,92 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         });
       }
     }
+  }
+
+  Future<String?> _showTextInputDialog({
+    required String dialogTitle,
+    required String contentText,
+    required String hintText,
+    String? prefill,
+    String? fileName,
+    bool showFileName = true,
+  }) async {
+    final controller = TextEditingController(text: prefill ?? '');
+
+    return showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          dialogTitle,
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF0A2E5A)),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              contentText,
+              style: GoogleFonts.poppins(color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                hintText: hintText,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: const BorderSide(color: Color(0xFF0A2E5A)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              style: GoogleFonts.poppins(),
+              autofocus: true,
+            ),
+            if (showFileName && fileName != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'File: $fileName',
+                style: GoogleFonts.poppins(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(color: Color(0xFF800000)),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (controller.text.trim().isNotEmpty) {
+                Navigator.pop(context, controller.text.trim());
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Title cannot be empty', style: GoogleFonts.poppins())),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A2E5A),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            child: Text(
+              'Confirm',
+              style: GoogleFonts.poppins(),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   String _getContentType(String extension) {
