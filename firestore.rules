@@ -124,6 +124,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Rules for PhotoGallery collection (top-level)
+    match /PhotoGallery/{photoId} {
+      allow read, write: if true;
+    }
+
     // Rules for ProjectDocuments collection (top-level)
     match /ProjectDocuments/{docId} {
       allow read, write: if true;

@@ -1,3 +1,4 @@
+import 'package:almaworks/models/photo_model.dart';
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
@@ -13,50 +14,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
-import 'package:image/image.dart' as img;
-
-class PhotoModel {
-  final String id;
-  final String name;
-  final String url;
-  final String category;
-  final String phase;
-  final DateTime uploadedAt;
-  final bool isDeleted;
-
-  PhotoModel({
-    required this.id,
-    required this.name,
-    required this.url,
-    required this.category,
-    required this.phase,
-    required this.uploadedAt,
-    this.isDeleted = false,
-  });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'name': name,
-      'url': url,
-      'category': category,
-      'phase': phase,
-      'uploadedAt': Timestamp.fromDate(uploadedAt),
-      'isDeleted': isDeleted,
-    };
-  }
-
-  static PhotoModel fromMap(String id, Map<String, dynamic> data) {
-    return PhotoModel(
-      id: id,
-      name: data['name'],
-      url: data['url'],
-      category: data['category'],
-      phase: data['phase'],
-      uploadedAt: (data['uploadedAt'] as Timestamp).toDate(),
-      isDeleted: data['isDeleted'] ?? false,
-    );
-  }
-}
+import 'package:cached_network_image/cached_network_image.dart';
 
 class PhotoGalleryScreen extends StatefulWidget {
   final ProjectModel project;
@@ -170,9 +128,8 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     widget.logger.d('📸 Building photo gallery stream for project: ${widget.project.id}');
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('photos')
+          .collection('PhotoGallery')
+          .where('projectId', isEqualTo: widget.project.id)
           .where('isDeleted', isEqualTo: false)
           .orderBy('uploadedAt', descending: true)
           .snapshots(),
@@ -268,17 +225,49 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
                       itemCount: groupPhotos.length,
                       itemBuilder: (context, idx) {
                         final photo = groupPhotos[idx];
-                        return FutureBuilder<Widget>(
-                          future: _buildPhotoTile(photo),
-                          builder: (context, snapshot) {
-                            if (snapshot.connectionState == ConnectionState.waiting) {
-                              return const Center(child: CircularProgressIndicator());
-                            } else if (snapshot.hasError) {
-                              return _buildErrorWidget();
+                        return GestureDetector(
+                          onTap: () {
+                            if (_multiSelectMode) {
+                              _toggleSelection(photo.id);
                             } else {
-                              return snapshot.data!;
+                              _viewPhotoFullScreen(photo);
                             }
                           },
+                          onLongPress: () => _startMultiSelect(photo.id),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              CachedNetworkImage(
+                                imageUrl: photo.url,
+                                fit: BoxFit.cover,
+                                placeholder: (context, url) => Center(child: CircularProgressIndicator()),
+                                errorWidget: (context, url, error) => _buildErrorWidget(error),
+                              ),
+                              Positioned(
+                                bottom: 0,
+                                left: 0,
+                                right: 0,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  color: Colors.black.withValues(alpha: 0.5),
+                                  child: Text(
+                                    '${photo.category} - ${photo.phase}',
+                                    style: GoogleFonts.poppins(color: Colors.white, fontSize: 12),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                              if (_multiSelectMode)
+                                Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: Checkbox(
+                                    value: _selectedPhotoIds.contains(photo.id),
+                                    onChanged: (value) => _toggleSelection(photo.id),
+                                  ),
+                                ),
+                            ],
+                          ),
                         );
                       },
                     );
@@ -292,104 +281,29 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     );
   }
 
-  Future<Widget> _buildPhotoTile(PhotoModel photo) async {
-    final isSelected = _selectedPhotoIds.contains(photo.id);
-    widget.logger.d('🖼️ Building photo tile for ID: ${photo.id}, URL: ${photo.url}, Selected: $isSelected');
-    return GestureDetector(
-      onTap: _multiSelectMode ? () => _toggleSelection(photo.id) : () => _viewPhotoFullScreen(photo),
-      onLongPress: () => _startMultiSelect(photo.id),
-      child: Stack(
+  Widget _buildErrorWidget(dynamic error) {
+    widget.logger.e('🖼️ Image load error: $error');
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            decoration: BoxDecoration(
-              border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: await _buildUnifiedImage(photo.url, photo.id, photo),
-            ),
-          ),
-          if (_multiSelectMode)
-            Positioned(
-              top: 8,
-              right: 8,
-              child: Checkbox(
-                value: isSelected,
-                onChanged: (_) => _toggleSelection(photo.id),
-              ),
-            ),
+          Icon(Icons.error, color: Colors.red),
+          Text('Error loading image', style: GoogleFonts.poppins(color: Colors.red)),
         ],
       ),
     );
   }
 
-  Future<Widget> _buildUnifiedImage(String imageUrl, String photoId, PhotoModel photo) async {
-    widget.logger.d('🖼️ Initializing image load for ID: $photoId, URL: $imageUrl');
-    
-    try {
-      // Use Firebase Storage reference instead of direct HTTP
-      final ref = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-          .refFromURL(imageUrl);
-      
-      return FutureBuilder<String>(
-        future: ref.getDownloadURL(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          } else if (snapshot.hasError) {
-            widget.logger.e('⛔ Failed to get download URL for ID: $photoId, Error: ${snapshot.error}');
-            return _buildErrorWidget();
-          } else {
-            final downloadUrl = snapshot.data!;
-            return Image.network(
-              downloadUrl,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-              loadingBuilder: (context, child, loadingProgress) {
-                if (loadingProgress == null) return child;
-                return const Center(child: CircularProgressIndicator());
-              },
-              errorBuilder: (context, error, stackTrace) {
-                widget.logger.e('⛔ Image display FAILED for ID: $photoId, URL: $downloadUrl, Error: $error');
-                return _buildErrorWidget();
-              },
-            );
-          }
-        },
-      );
-    } catch (e, stackTrace) {
-      widget.logger.e('⛔ Error creating storage reference for ID: $photoId, Error: $e', stackTrace: stackTrace);
-      return _buildErrorWidget();
-    }
-  }
-
-  Widget _buildErrorWidget() {
-    return Container(
-      color: Colors.grey[300],
-      child: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.error, color: Colors.red),
-            Text('Load Error', style: TextStyle(fontSize: 12)),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _startMultiSelect(String photoId) {
-    if (!_multiSelectMode) {
-      widget.logger.i('🔄 Starting multi-select mode with initial photo: $photoId');
-      setState(() {
-        _multiSelectMode = true;
-        _selectedPhotoIds.add(photoId);
-      });
-    }
+    widget.logger.i('🖼️ Starting multi-select mode with photo $photoId');
+    setState(() {
+      _multiSelectMode = true;
+      _selectedPhotoIds.add(photoId);
+    });
   }
 
   void _toggleSelection(String photoId) {
+    widget.logger.d('🖼️ Toggling selection for photo $photoId');
     setState(() {
       if (_selectedPhotoIds.contains(photoId)) {
         _selectedPhotoIds.remove(photoId);
@@ -400,432 +314,102 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         _selectedPhotoIds.add(photoId);
       }
     });
-    widget.logger.i('✅ Selection toggled for photo: $photoId, Selected IDs: ${_selectedPhotoIds.join(', ')}, Multi-select: $_multiSelectMode');
-  }
-
-  Future<void> _handleMultiDelete() async {
-    if (_selectedPhotoIds.isEmpty) {
-      widget.logger.w('🗑️ Multi-delete attempted but no photos selected');
-      return;
-    }
-
-    widget.logger.i('🗑️ Multi-delete requested for ${_selectedPhotoIds.length} photos: ${_selectedPhotoIds.join(', ')}');
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Delete Selected Photos?', style: GoogleFonts.poppins()),
-        content: Text('This will remove ${_selectedPhotoIds.length} photos from view but can be restored later.', style: GoogleFonts.poppins()),
-        actions: [
-          TextButton(
-            onPressed: () {
-              widget.logger.d('🗑️ Multi-delete cancelled');
-              Navigator.pop(context, false);
-            },
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          TextButton(
-            onPressed: () {
-              widget.logger.d('🗑️ Multi-delete confirmed');
-              Navigator.pop(context, true);
-            },
-            child: Text('Delete', style: GoogleFonts.poppins()),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true || !mounted) {
-      widget.logger.d('🗑️ Multi-delete aborted [Confirm: $confirm, Mounted: $mounted]');
-      return;
-    }
-
-    try {
-      final batch = FirebaseFirestore.instance.batch();
-      for (final id in _selectedPhotoIds) {
-        final ref = FirebaseFirestore.instance
-            .collection('projects')
-            .doc(widget.project.id)
-            .collection('photos')
-            .doc(id);
-        batch.update(ref, {'isDeleted': true});
-        widget.logger.d('🗑️ Added photo $id to batch delete');
-      }
-      await batch.commit();
-      widget.logger.i('🗑️ Multi-delete committed for ${_selectedPhotoIds.length} photos');
-      if (mounted) {
-        setState(() {
-          _multiSelectMode = false;
-          _selectedPhotoIds.clear();
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Selected photos deleted', style: GoogleFonts.poppins())),
-        );
-      }
-    } catch (e, stackTrace) {
-      widget.logger.e('🗑️ Error during multi-delete: $e', stackTrace: stackTrace);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting photos: $e', style: GoogleFonts.poppins())),
-        );
-      }
-    }
   }
 
   Future<void> _handleMultiShare() async {
-    if (_selectedPhotoIds.isEmpty) {
-      widget.logger.w('📤 Multi-share attempted but no photos selected');
-      return;
+    widget.logger.i('📤 Starting multi-share for ${_selectedPhotoIds.length} photos');
+    List<XFile> files = [];
+    for (var id in _selectedPhotoIds) {
+      final doc = await FirebaseFirestore.instance.collection('PhotoGallery').doc(id).get();
+      if (doc.exists) {
+        final photo = PhotoModel.fromMap(id, doc.data()!);
+        final tempDir = await getTemporaryDirectory();
+        final path = '${tempDir.path}/${photo.name}';
+        await FirebaseStorage.instance.refFromURL(photo.url).writeToFile(File(path));
+        files.add(XFile(path));
+        widget.logger.d('📤 Added photo $id to share list: $path');
+      }
     }
-
-    widget.logger.i('📤 Multi-share requested for ${_selectedPhotoIds.length} photos: ${_selectedPhotoIds.join(', ')}');
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('photos')
-          .where(FieldPath.documentId, whereIn: _selectedPhotoIds.toList())
-          .get();
-      if (!mounted) return;
-
-      final photos = snapshot.docs.map((doc) => PhotoModel.fromMap(doc.id, doc.data())).toList();
-      widget.logger.i('📤 Fetched ${photos.length} photos for sharing: ${photos.map((p) => p.id).join(', ')}');
-
-      List<XFile> xFiles = [];
-      final dir = await getTemporaryDirectory();
-      widget.logger.d('📤 Temporary directory for sharing: ${dir.path}');
-
-      for (final photo in photos) {
-        try {
-          final path = '${dir.path}/${photo.name}';
-          widget.logger.d('📤 Downloading photo ${photo.id} from URL: ${photo.url}');
-          
-          // Use Firebase Storage to download the file
-          final ref = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-              .refFromURL(photo.url);
-          final file = File(path);
-          await ref.writeToFile(file);
-          
-          xFiles.add(XFile(file.path));
-          widget.logger.i('📤 Successfully downloaded photo ${photo.id} to $path');
-        } catch (e, stackTrace) {
-          widget.logger.e('📤 Error downloading photo ${photo.id} for share: $e', stackTrace: stackTrace);
-        }
-      }
-
-      if (!mounted) return;
-
-      if (xFiles.isEmpty) {
-        widget.logger.w('📤 No files available for sharing');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No photos could be shared', style: GoogleFonts.poppins())),
-        );
-        return;
-      }
-
-      widget.logger.d('📤 Initiating share with ${xFiles.length} files');
-      final params = ShareParams(files: xFiles);
+    if (files.isNotEmpty && mounted) {
+      widget.logger.d('📤 Initiating multi-share');
+      final params = ShareParams(files: files);
       await SharePlus.instance.share(params);
-      widget.logger.i('✅ Multi-share completed for ${xFiles.length} photos');
+      widget.logger.i('✅ Multi-share completed');
+    }
+    setState(() {
+      _multiSelectMode = false;
+      _selectedPhotoIds.clear();
+    });
+  }
 
-      if (mounted) {
-        setState(() {
-          _multiSelectMode = false;
-          _selectedPhotoIds.clear();
-        });
+  Future<void> _handleMultiDelete() async {
+    widget.logger.i('🗑️ Starting multi-delete for ${_selectedPhotoIds.length} photos');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Photos', style: GoogleFonts.poppins()),
+        content: Text('Delete ${_selectedPhotoIds.length} selected photos?', style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      for (var id in _selectedPhotoIds) {
+        await FirebaseFirestore.instance.collection('PhotoGallery').doc(id).update({'isDeleted': true});
+        widget.logger.i('🗑️ Marked photo $id as deleted');
       }
-    } catch (e, stackTrace) {
-      widget.logger.e('📤 Error during multi-share: $e', stackTrace: stackTrace);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sharing photos: $e', style: GoogleFonts.poppins())),
+          SnackBar(content: Text('Photos deleted', style: GoogleFonts.poppins())),
         );
       }
     }
+    setState(() {
+      _multiSelectMode = false;
+      _selectedPhotoIds.clear();
+    });
   }
 
   void _viewPhotoFullScreen(PhotoModel photo) {
-    widget.logger.i('🔍 Opening fullscreen view for photo: ${photo.id}, URL: ${photo.url}, Category: ${photo.category}, Phase: ${photo.phase}');
-    
-    // Get fresh download URL for the fullscreen view
-    Future<String> getFreshDownloadUrl() async {
-      try {
-        final ref = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-            .refFromURL(photo.url);
-        return await ref.getDownloadURL();
-      } catch (e) {
-        widget.logger.e('🔍 Error getting fresh download URL: $e');
-        return photo.url; // Fallback to original URL
-      }
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => Dialog.fullscreen(
-        child: FutureBuilder<String>(
-          future: getFreshDownloadUrl(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            
-            final imageUrl = snapshot.data ?? photo.url;
-            
-            return Stack(
-              children: [
-                Center(
-                  child: PhotoView(
-                    imageProvider: NetworkImage(imageUrl),
-                    minScale: PhotoViewComputedScale.contained,
-                    maxScale: PhotoViewComputedScale.covered * 3,
-                    loadingBuilder: (context, event) {
-                      final progress = event?.expectedTotalBytes != null
-                          ? (event!.cumulativeBytesLoaded / event.expectedTotalBytes! * 100).toStringAsFixed(1)
-                          : 'unknown';
-                      widget.logger.d('🔍 Fullscreen image loading for ${photo.id}: $progress% [${event?.cumulativeBytesLoaded ?? 0}/${event?.expectedTotalBytes ?? 'unknown'} bytes]');
-                      return const Center(child: CircularProgressIndicator());
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      widget.logger.e('⛔ Fullscreen image load FAILED for ${photo.id}, URL: $imageUrl, Error: $error, StackTrace: $stackTrace');
-                      return const Center(child: Icon(Icons.error, color: Colors.red));
-                    },
-                  ),
-                ),
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    color: const Color.fromRGBO(0, 0, 0, 0.7),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.info, color: Colors.white),
-                          onPressed: () => _showPhotoDetails(photo),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.rotate_right, color: Colors.white),
-                          onPressed: () => _rotatePhoto(photo),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.white),
-                          onPressed: () => _deletePhoto(photo),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.share, color: Colors.white),
-                          onPressed: () => _sharePhoto(photo),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.edit, color: Colors.white),
-                          onPressed: () {
-                            widget.logger.d('✏️ Edit button pressed for photo: ${photo.id} [Not implemented]');
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Editing features coming soon', style: GoogleFonts.poppins())),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 16,
-                  right: 16,
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () {
-                      widget.logger.d('🔍 Closing fullscreen view for photo: ${photo.id}');
-                      Navigator.pop(context);
-                    },
-                  ),
-                ),
-              ],
-            );
-          },
+    widget.logger.i('🖼️ Viewing full screen: ${photo.id} - ${photo.url}');
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => Scaffold(
+          appBar: AppBar(
+            title: Text(photo.name, style: GoogleFonts.poppins()),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.share),
+                onPressed: () => _sharePhoto(photo),
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: () => _deletePhoto(photo),
+              ),
+            ],
+          ),
+          body: PhotoView(
+            imageProvider: CachedNetworkImageProvider(photo.url),
+          ),
         ),
       ),
     );
-  }
-
-  void _showPhotoDetails(PhotoModel photo) {
-    widget.logger.i('ℹ️ Showing details for photo: ${photo.id}, Name: ${photo.name}, Category: ${photo.category}, Phase: ${photo.phase}, Uploaded: ${_formatDate(photo.uploadedAt)}');
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Photo Details', style: GoogleFonts.poppins()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Name: ${photo.name}', style: GoogleFonts.poppins()),
-            Text('Category: ${photo.category}', style: GoogleFonts.poppins()),
-            Text('Phase: ${photo.phase}', style: GoogleFonts.poppins()),
-            Text('Uploaded: ${_formatDate(photo.uploadedAt)}', style: GoogleFonts.poppins()),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              widget.logger.d('ℹ️ Closing photo details dialog for photo: ${photo.id}');
-              Navigator.pop(context);
-            },
-            child: Text('Close', style: GoogleFonts.poppins()),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _rotatePhoto(PhotoModel photo) async {
-    widget.logger.i('🔄 Initiating rotation for photo: ${photo.id}, URL: ${photo.url}, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
-    try {
-      widget.logger.d('🔄 Downloading image for rotation: ${photo.url}');
-      
-      // Use Firebase Storage to download the file
-      final ref = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-          .refFromURL(photo.url);
-      final bytes = await ref.getData();
-      
-      if (!mounted) {
-        widget.logger.w('🔄 Rotation aborted: Widget not mounted');
-        return;
-      }
-      
-      if (bytes == null) {
-        throw Exception('Failed to download image bytes');
-      }
-      
-      widget.logger.d('🔄 Downloaded ${bytes.length} bytes for rotation');
-      img.Image image = img.decodeImage(Uint8List.fromList(bytes))!;
-      image = img.copyRotate(image, angle: 90);
-      final newBytes = img.encodeJpg(image);
-      widget.logger.d('🔄 Image rotated and encoded, new size: ${newBytes.length} bytes');
-
-      widget.logger.d('🗑️ Deleting old image: ${photo.url}');
-      await FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-          .refFromURL(photo.url)
-          .delete();
-      widget.logger.i('🗑️ Old image deleted successfully');
-      if (!mounted) {
-        widget.logger.w('🔄 Rotation aborted post-deletion: Widget not mounted');
-        return;
-      }
-
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final newRef = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-          .ref()
-          .child('projects/${widget.project.id}/photos/${timestamp}_${photo.name}');
-      widget.logger.d('📤 Uploading rotated image to: projects/${widget.project.id}/photos/${timestamp}_${photo.name}');
-      final uploadTask = newRef.putData(newBytes, SettableMetadata(contentType: 'image/jpeg'));
-      uploadTask.snapshotEvents.listen((snapshot) {
-        final progress = (snapshot.bytesTransferred / snapshot.totalBytes * 100).toStringAsFixed(1);
-        widget.logger.d('📤 Rotation upload progress for ${photo.id}: $progress% [${snapshot.bytesTransferred}/${snapshot.totalBytes} bytes]');
-      });
-      await uploadTask;
-      if (!mounted) {
-        widget.logger.w('🔄 Rotation aborted post-upload: Widget not mounted');
-        return;
-      }
-      final newUrl = await newRef.getDownloadURL();
-      widget.logger.i('📤 Rotated image uploaded, new URL: $newUrl');
-      if (!mounted) return;
-
-      await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('photos')
-          .doc(photo.id)
-          .update({'url': newUrl});
-      widget.logger.i('✅ Firestore updated with new URL for photo: ${photo.id}');
-      if (!mounted) return;
-
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Photo rotated successfully', style: GoogleFonts.poppins())),
-      );
-    } catch (e, stackTrace) {
-      widget.logger.e('🔄 Error rotating photo ${photo.id}: $e', stackTrace: stackTrace);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error rotating photo: $e', style: GoogleFonts.poppins())),
-        );
-      }
-    }
-  }
-
-  Future<void> _deletePhoto(PhotoModel photo) async {
-    widget.logger.i('🗑️ Initiating delete for photo: ${photo.id}, URL: ${photo.url}, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Delete Photo?', style: GoogleFonts.poppins()),
-        content: Text('This will remove ${photo.name} from view but can be restored later.', style: GoogleFonts.poppins()),
-        actions: [
-          TextButton(
-            onPressed: () {
-              widget.logger.d('🗑️ Delete cancelled for photo: ${photo.id}');
-              Navigator.pop(context, false);
-            },
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          TextButton(
-            onPressed: () {
-              widget.logger.d('🗑️ Delete confirmed for photo: ${photo.id}');
-              Navigator.pop(context, true);
-            },
-            child: Text('Delete', style: GoogleFonts.poppins()),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm != true || !mounted) {
-      widget.logger.d('🗑️ Delete aborted for photo: ${photo.id} [Confirm: $confirm, Mounted: $mounted]');
-      return;
-    }
-
-    try {
-      await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('photos')
-          .doc(photo.id)
-          .update({'isDeleted': true});
-      widget.logger.i('✅ Photo ${photo.id} marked as deleted in Firestore');
-      if (!mounted) return;
-
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Photo deleted', style: GoogleFonts.poppins())),
-      );
-    } catch (e, stackTrace) {
-      widget.logger.e('🗑️ Error deleting photo ${photo.id}: $e, StackTrace: $stackTrace');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error deleting photo: $e', style: GoogleFonts.poppins())),
-        );
-      }
-    }
   }
 
   Future<void> _sharePhoto(PhotoModel photo) async {
-    widget.logger.i('📤 Initiating single photo share for: ${photo.id}, URL: ${photo.url}, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
+    widget.logger.i('📤 Starting single share for photo ${photo.id}');
     try {
-      final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/${photo.name}';
-      widget.logger.d('📤 Downloading photo ${photo.id} to $path');
-      
-      // Use Firebase Storage to download the file
-      final ref = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
-          .refFromURL(photo.url);
-      final file = File(path);
-      await ref.writeToFile(file);
-      
+      final tempDir = await getTemporaryDirectory();
+      final path = '${tempDir.path}/${photo.name}';
+      await FirebaseStorage.instance.refFromURL(photo.url).writeToFile(File(path));
       widget.logger.i('📤 Downloaded photo ${photo.id} to $path');
       if (!mounted) return;
 
       widget.logger.d('📤 Initiating share for photo ${photo.id}');
-      final params = ShareParams(files: [XFile(file.path)]);
+      final params = ShareParams(files: [XFile(path)]);
       await SharePlus.instance.share(params);
       widget.logger.i('✅ Single photo share completed for ${photo.id}');
     } catch (e, stackTrace) {
@@ -838,8 +422,33 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     }
   }
 
+  Future<void> _deletePhoto(PhotoModel photo) async {
+    widget.logger.i('🗑️ Starting delete for photo ${photo.id}');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Delete Photo', style: GoogleFonts.poppins()),
+        content: Text('Delete this photo?', style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await FirebaseFirestore.instance.collection('PhotoGallery').doc(photo.id).update({'isDeleted': true});
+      widget.logger.i('🗑️ Marked photo ${photo.id} as deleted');
+      if (mounted) {
+        Navigator.pop(context); // Close viewer
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Photo deleted', style: GoogleFonts.poppins())),
+        );
+      }
+    }
+  }
+
   Future<void> _startAddPhotoFlow() async {
-    widget.logger.i('📸 Starting add photo flow for project: ${widget.project.id}, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
+    widget.logger.i('📸 Starting add photo flow for project: ${widget.project.id}');
     final source = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => Column(
@@ -1011,10 +620,12 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     try {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final fileName = 'photo_$timestamp.jpg';
-      final storageRef = FirebaseStorage.instanceFor(bucket: 'gs://almaworks-b9a2e.firebasestorage.app')
+      final storageRef = FirebaseStorage.instance
           .ref()
-          .child('projects/${widget.project.id}/photos/$fileName');
-      widget.logger.i('📤 Initiating upload to Storage: projects/${widget.project.id}/photos/$fileName, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
+          .child(widget.project.id)
+          .child('PhotoGallery')
+          .child(fileName);
+      widget.logger.i('📤 Initiating upload to Storage: ${widget.project.id}/PhotoGallery/$fileName, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
 
       final uploadTask = storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
 
@@ -1037,9 +648,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       if (!mounted) return;
 
       final photoDoc = await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('photos')
+          .collection('PhotoGallery')
           .add(PhotoModel(
             id: '', // Will be set by Firestore
             name: fileName,
@@ -1047,6 +656,7 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
             category: category!,
             phase: phase!,
             uploadedAt: DateTime.now(),
+            projectId: widget.project.id,
           ).toMap());
       widget.logger.i('✅ Photo saved to Firestore with ID: ${photoDoc.id}');
 
