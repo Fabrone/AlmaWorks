@@ -212,64 +212,70 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
                   builder: (context, constraints) {
                     final width = constraints.maxWidth;
                     int crossAxisCount = width < 600 ? 2 : width < 1200 ? 4 : 6;
-                    widget.logger.d('🖼️ Building grid with crossAxisCount: $crossAxisCount, width: $width');
-                    return GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: crossAxisCount,
-                        childAspectRatio: 1,
-                        crossAxisSpacing: 4,
-                        mainAxisSpacing: 4,
-                      ),
-                      itemCount: groupPhotos.length,
-                      itemBuilder: (context, idx) {
-                        final photo = groupPhotos[idx];
-                        return GestureDetector(
-                          onTap: () {
-                            if (_multiSelectMode) {
-                              _toggleSelection(photo.id);
-                            } else {
-                              _viewPhotoFullScreen(photo);
-                            }
-                          },
-                          onLongPress: () => _startMultiSelect(photo.id),
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              CachedNetworkImage(
-                                imageUrl: photo.url,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) => Center(child: CircularProgressIndicator()),
-                                errorWidget: (context, url, error) => _buildErrorWidget(error),
-                              ),
-                              Positioned(
-                                bottom: 0,
-                                left: 0,
-                                right: 0,
-                                child: Container(
-                                  padding: const EdgeInsets.all(4),
-                                  color: Colors.black.withValues(alpha: 0.5),
-                                  child: Text(
-                                    '${photo.category} - ${photo.phase}',
-                                    style: GoogleFonts.poppins(color: Colors.white, fontSize: 12),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
+                    double spacing = width < 600 ? 8.0 : 16.0;
+                    widget.logger.d('🖼️ Building grid with crossAxisCount: $crossAxisCount, width: $width, spacing: $spacing');
+                    return Padding(
+                      padding: EdgeInsets.symmetric(horizontal: spacing),
+                      child: GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: crossAxisCount,
+                          childAspectRatio: 1,
+                          crossAxisSpacing: spacing,
+                          mainAxisSpacing: spacing,
+                        ),
+                        itemCount: groupPhotos.length,
+                        itemBuilder: (context, idx) {
+                          final photo = groupPhotos[idx];
+                          return GestureDetector(
+                            onTap: () {
+                              if (_multiSelectMode) {
+                                _toggleSelection(photo.id);
+                              } else {
+                                _viewPhotoFullScreen(photo);
+                              }
+                            },
+                            onLongPress: () => _startMultiSelect(photo.id),
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                CachedNetworkImage(
+                                  imageUrl: photo.url,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Center(child: CircularProgressIndicator()),
+                                  errorWidget: (context, url, error) => _buildErrorWidget(error),
+                                  fadeInDuration: const Duration(milliseconds: 300),
+                                  fadeOutDuration: const Duration(milliseconds: 300),
                                 ),
-                              ),
-                              if (_multiSelectMode)
                                 Positioned(
-                                  top: 8,
-                                  right: 8,
-                                  child: Checkbox(
-                                    value: _selectedPhotoIds.contains(photo.id),
-                                    onChanged: (value) => _toggleSelection(photo.id),
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    color: Colors.black.withValues(alpha: 0.5),
+                                    child: Text(
+                                      '${photo.category} - ${photo.phase}',
+                                      style: GoogleFonts.poppins(color: Colors.white, fontSize: 12),
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
                                   ),
                                 ),
-                            ],
-                          ),
-                        );
-                      },
+                                if (_multiSelectMode)
+                                  Positioned(
+                                    top: 8,
+                                    right: 8,
+                                    child: Checkbox(
+                                      value: _selectedPhotoIds.contains(photo.id),
+                                      onChanged: (value) => _toggleSelection(photo.id),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                     );
                   },
                 ),
@@ -382,6 +388,10 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
             title: Text(photo.name, style: GoogleFonts.poppins()),
             actions: [
               IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () => _editPhotoDetails(photo),
+              ),
+              IconButton(
                 icon: const Icon(Icons.share),
                 onPressed: () => _sharePhoto(photo),
               ),
@@ -397,6 +407,71 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _editPhotoDetails(PhotoModel photo) async {
+    final titleController = TextEditingController(text: photo.name);
+    final categoryController = TextEditingController(text: photo.category);
+    final phaseController = TextEditingController(text: photo.phase);
+
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Edit Photo Details', style: GoogleFonts.poppins()),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: titleController,
+              decoration: InputDecoration(labelText: 'Title'),
+            ),
+            TextField(
+              controller: categoryController,
+              decoration: InputDecoration(labelText: 'Category'),
+            ),
+            TextField(
+              controller: phaseController,
+              decoration: InputDecoration(labelText: 'Phase'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final newTitle = titleController.text.trim();
+              final newCategory = categoryController.text.trim();
+              final newPhase = phaseController.text.trim();
+              if (newTitle.isNotEmpty || newCategory.isNotEmpty || newPhase.isNotEmpty) {
+                Navigator.pop(ctx, true);
+              } else {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  SnackBar(content: Text('At least one field must be filled')),
+                );
+              }
+            },
+            child: Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (updated == true && mounted) {
+      await FirebaseFirestore.instance.collection('PhotoGallery').doc(photo.id).update({
+        if (titleController.text.trim().isNotEmpty) 'name': titleController.text.trim(),
+        if (categoryController.text.trim().isNotEmpty) 'category': categoryController.text.trim(),
+        if (phaseController.text.trim().isNotEmpty) 'phase': phaseController.text.trim(),
+      });
+      widget.logger.i('Updated photo details for ${photo.id}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Photo details updated')),
+        );
+      }
+    }
   }
 
   Future<void> _sharePhoto(PhotoModel photo) async {
@@ -449,146 +524,166 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
 
   Future<void> _startAddPhotoFlow() async {
     widget.logger.i('📸 Starting add photo flow for project: ${widget.project.id}');
-    final source = await showModalBottomSheet<String>(
+    final uploadType = await showDialog<String>(
       context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.camera_alt),
-            title: Text('Camera', style: GoogleFonts.poppins()),
-            onTap: () {
-              widget.logger.d('📸 Selected camera as source');
-              Navigator.pop(context, 'camera');
-            },
+      builder: (context) => AlertDialog(
+        title: Text('Upload Photos', style: GoogleFonts.poppins()),
+        content: Text('Select upload type', style: GoogleFonts.poppins()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'single'),
+            child: Text('Single Photo'),
           ),
-          ListTile(
-            leading: const Icon(Icons.photo_library),
-            title: Text('Gallery', style: GoogleFonts.poppins()),
-            onTap: () {
-              widget.logger.d('📸 Selected gallery as source');
-              Navigator.pop(context, 'gallery');
-            },
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'multiple'),
+            child: Text('Multiple Photos'),
           ),
         ],
       ),
     );
 
-    if (source == null || !mounted) {
-      widget.logger.d('📸 Add photo flow cancelled: Source = $source, Mounted = $mounted');
+    if (uploadType == null || !mounted) {
+      widget.logger.d('📸 Add photo flow cancelled');
       return;
     }
 
-    String? category;
-    String? phase;
-    widget.logger.d('📸 Prompting for photo details');
-    final detailsConfirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) {
-        final TextEditingController categoryController = TextEditingController();
-        final TextEditingController phaseController = TextEditingController();
-        return StatefulBuilder(
-          builder: (ctx, setState) => AlertDialog(
-            title: Text('Photo Details', style: GoogleFonts.poppins()),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: categoryController,
-                  decoration: InputDecoration(labelText: 'Category', labelStyle: GoogleFonts.poppins()),
-                ),
-                TextField(
-                  controller: phaseController,
-                  decoration: InputDecoration(labelText: 'Phase', labelStyle: GoogleFonts.poppins()),
-                ),
-              ],
+    List<XFile> selectedFiles = [];
+    if (uploadType == 'single') {
+      final source = await showModalBottomSheet<String>(
+        context: context,
+        builder: (context) => Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera_alt),
+              title: Text('Camera', style: GoogleFonts.poppins()),
+              onTap: () => Navigator.pop(context, 'camera'),
             ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  widget.logger.d('📸 Photo details input cancelled');
-                  Navigator.pop(ctx, false);
-                },
-                child: Text('Cancel', style: GoogleFonts.poppins()),
-              ),
-              TextButton(
-                onPressed: () {
-                  category = categoryController.text.trim();
-                  phase = phaseController.text.trim();
-                  if (category != null && category!.isNotEmpty && phase != null && phase!.isNotEmpty) {
-                    widget.logger.d('📸 Photo details confirmed: Category = $category, Phase = $phase');
-                    Navigator.pop(ctx, true);
-                  } else {
-                    widget.logger.w('📸 Invalid photo details: Category = $category, Phase = $phase');
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      SnackBar(content: Text('Please fill all fields', style: GoogleFonts.poppins())),
-                    );
-                  }
-                },
-                child: Text('OK', style: GoogleFonts.poppins()),
-              ),
-            ],
-          ),
-        );
-      },
-    );
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: Text('Gallery', style: GoogleFonts.poppins()),
+              onTap: () => Navigator.pop(context, 'gallery'),
+            ),
+          ],
+        ),
+      );
 
-    if (detailsConfirmed != true || !mounted) {
-      widget.logger.d('📸 Add photo flow aborted: DetailsConfirmed = $detailsConfirmed, Mounted = $mounted');
+      if (source == null) return;
+
+      final picker = ImagePicker();
+      final XFile? file = await picker.pickImage(
+        source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+      );
+      if (file != null) {
+        selectedFiles.add(file);
+      }
+    } else { // multiple
+      final picker = ImagePicker();
+      selectedFiles = await picker.pickMultiImage();
+    }
+
+    if (selectedFiles.isEmpty || !mounted) {
+      widget.logger.d('📸 No photos selected');
       return;
     }
 
-    widget.logger.d('📸 Picking image from source: $source');
-    final picker = ImagePicker();
-    final XFile? imageFile = await picker.pickImage(
-      source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
-    );
-
-    if (imageFile == null || !mounted) {
-      widget.logger.d('📸 Image picking cancelled or failed: ImageFile = $imageFile, Mounted = $mounted');
-      return;
-    }
-
-    Uint8List? bytes;
-    if (!kIsWeb) {
-      bytes = await File(imageFile.path).readAsBytes();
-    } else {
-      bytes = await imageFile.readAsBytes();
-    }
-    widget.logger.i('📸 Image picked: ${bytes.length} bytes, Name: ${imageFile.name}');
-
-    if (!mounted) {
-      widget.logger.w('📸 Upload aborted: Widget not mounted');
-      return;
-    }
-
-    widget.logger.d('📸 Prompting for upload confirmation');
+    // Confirm upload
     final confirmUpload = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Confirm Upload', style: GoogleFonts.poppins()),
-        content: Text('Upload photo?', style: GoogleFonts.poppins()),
+        content: Text('Upload ${selectedFiles.length} photo${selectedFiles.length > 1 ? 's' : ''}?', style: GoogleFonts.poppins()),
         actions: [
           TextButton(
-            onPressed: () {
-              widget.logger.d('📸 Upload cancelled');
-              Navigator.pop(context, false);
-            },
+            onPressed: () => Navigator.pop(context, false),
             child: Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              widget.logger.d('📸 Upload confirmed');
-              Navigator.pop(context, true);
-            },
-            child: Text('Upload'),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Confirm'),
           ),
         ],
       ),
     );
 
     if (confirmUpload != true || !mounted) {
-      widget.logger.d('📸 Upload aborted: ConfirmUpload = $confirmUpload, Mounted = $mounted');
+      widget.logger.d('📸 Upload cancelled');
+      return;
+    }
+
+    // Edit titles and enter details
+    List<String> titles = selectedFiles.map((file) => file.name).toList();
+    String category = '';
+    String phase = '';
+
+    final detailsConfirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: Text('Photo Details', style: GoogleFonts.poppins()),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selectedFiles.length > 1)
+                  ...List.generate(selectedFiles.length, (index) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: TextField(
+                      onChanged: (value) {
+                        titles[index] = value.trim().isEmpty ? selectedFiles[index].name : value.trim();
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Title for Photo ${index + 1} (optional)',
+                        hintText: selectedFiles[index].name,
+                      ),
+                    ),
+                  )),
+                if (selectedFiles.length == 1)
+                  TextField(
+                    onChanged: (value) {
+                      titles[0] = value.trim().isEmpty ? selectedFiles[0].name : value.trim();
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'Title (optional)',
+                      hintText: selectedFiles[0].name,
+                    ),
+                  ),
+                TextField(
+                  onChanged: (value) => category = value.trim(),
+                  decoration: InputDecoration(labelText: 'Category (optional)'),
+                ),
+                TextField(
+                  onChanged: (value) => phase = value.trim(),
+                  decoration: InputDecoration(labelText: 'Phase (optional)'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text('Cancel', style: GoogleFonts.poppins()),
+            ),
+            TextButton(
+              onPressed: () {
+                // Check if at least one detail is provided
+                if (category.isNotEmpty || phase.isNotEmpty || titles.any((t) => t != selectedFiles[titles.indexOf(t)].name)) {
+                  Navigator.pop(ctx, true);
+                } else {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('At least one detail must be provided')),
+                  );
+                }
+              },
+              child: Text('OK', style: GoogleFonts.poppins()),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (detailsConfirmed != true || !mounted) {
+      widget.logger.d('📸 Details input cancelled');
       return;
     }
 
@@ -597,7 +692,6 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       _uploadProgress = 0.0;
     });
 
-    widget.logger.d('📸 Showing upload progress dialog');
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -618,56 +712,58 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     );
 
     try {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final fileName = 'photo_$timestamp.jpg';
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child(widget.project.id)
-          .child('PhotoGallery')
-          .child(fileName);
-      widget.logger.i('📤 Initiating upload to Storage: ${widget.project.id}/PhotoGallery/$fileName, Bucket: gs://almaworks-b9a2e.firebasestorage.app');
-
-      final uploadTask = storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
-
-      uploadTask.snapshotEvents.listen((snapshot) {
-        if (mounted) {
-          setState(() {
-            _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
-          });
-          widget.logger.d('📤 Upload progress for $fileName: ${(snapshot.bytesTransferred / snapshot.totalBytes * 100).toStringAsFixed(1)}% [${snapshot.bytesTransferred}/${snapshot.totalBytes} bytes]');
+      for (int i = 0; i < selectedFiles.length; i++) {
+        final file = selectedFiles[i];
+        final title = titles[i];
+        Uint8List? bytes;
+        if (!kIsWeb) {
+          bytes = await File(file.path).readAsBytes();
+        } else {
+          bytes = await file.readAsBytes();
         }
-      });
 
-      await uploadTask;
-      if (!mounted) {
-        widget.logger.w('📤 Upload aborted post-task: Widget not mounted');
-        return;
+        final timestamp = DateTime.now().millisecondsSinceEpoch + i; // Unique for each
+        final fileName = title.endsWith('.jpg') ? title : '${title.split('.').first}_$timestamp.jpg';
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child(widget.project.id)
+            .child('PhotoGallery')
+            .child(fileName);
+
+        final uploadTask = storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+
+        uploadTask.snapshotEvents.listen((snapshot) {
+          if (mounted) {
+            setState(() {
+              _uploadProgress = (i / selectedFiles.length) + (snapshot.bytesTransferred / snapshot.totalBytes / selectedFiles.length);
+            });
+          }
+        });
+
+        await uploadTask;
+        final url = await storageRef.getDownloadURL();
+
+        await FirebaseFirestore.instance
+            .collection('PhotoGallery')
+            .add(PhotoModel(
+              id: '',
+              name: fileName,
+              url: url,
+              category: category,
+              phase: phase,
+              uploadedAt: DateTime.now(),
+              projectId: widget.project.id,
+            ).toMap());
       }
-      final url = await storageRef.getDownloadURL();
-      widget.logger.i('📤 Upload complete, URL: $url');
-      if (!mounted) return;
-
-      final photoDoc = await FirebaseFirestore.instance
-          .collection('PhotoGallery')
-          .add(PhotoModel(
-            id: '', // Will be set by Firestore
-            name: fileName,
-            url: url,
-            category: category!,
-            phase: phase!,
-            uploadedAt: DateTime.now(),
-            projectId: widget.project.id,
-          ).toMap());
-      widget.logger.i('✅ Photo saved to Firestore with ID: ${photoDoc.id}');
 
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photo uploaded successfully!', style: GoogleFonts.poppins())),
+          SnackBar(content: Text('Photos uploaded successfully!', style: GoogleFonts.poppins())),
         );
       }
     } catch (e, stackTrace) {
-      widget.logger.e('📤 Error uploading photo: $e, StackTrace: $stackTrace');
+      widget.logger.e('📤 Error uploading photos: $e', stackTrace: stackTrace);
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -680,7 +776,6 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           _isLoading = false;
           _uploadProgress = null;
         });
-        widget.logger.d('📸 Upload process completed, reset loading state');
       }
     }
   }
