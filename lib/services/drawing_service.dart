@@ -142,7 +142,7 @@ class DrawingService {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storageRef = _storage
           .ref()
-          .child('drawings/$projectId/$title/rev_${nextRevision}_${timestamp}_$fileName');
+          .child('$projectId/Drawings/$title/rev_${nextRevision}_${timestamp}_$fileName');
 
       _logger.d('📤 DrawingService: Uploading to storage path: ${storageRef.fullPath}');
 
@@ -217,7 +217,7 @@ class DrawingService {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storageRef = _storage
           .ref()
-          .child('drawings/$projectId/as-built/${timestamp}_$fileName');
+          .child('$projectId/Drawings/as-built/${timestamp}_$fileName');
 
       _logger.d('📤 DrawingService: Uploading to storage path: ${storageRef.fullPath}');
 
@@ -397,7 +397,7 @@ class DrawingService {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final storageRef = _storage
           .ref()
-          .child('drawings/$projectId/contract/${timestamp}_$fileName');
+          .child('$projectId/Drawings/contract/${timestamp}_$fileName');
 
       _logger.d('📤 DrawingService: Uploading to storage path: ${storageRef.fullPath}');
 

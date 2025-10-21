@@ -223,7 +223,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
     );
   }
 
-  // New method: Build Contract Drawing card
+  // Updated method: Build Contract Drawing card (Fixed deprecated withOpacity)
   Widget _buildContractDrawingCard(DrawingModel drawing) {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -276,6 +276,16 @@ class _DrawingsScreenState extends State<DrawingsScreen>
                   Icon(Icons.download, size: 16, color: Colors.green[600]),
                   SizedBox(width: 8),
                   Text('Download'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Row(
+                children: [
+                  Icon(Icons.delete, size: 16, color: Colors.red[600]),
+                  SizedBox(width: 8),
+                  Text('Delete', style: TextStyle(color: Colors.red)),
                 ],
               ),
             ),
@@ -427,7 +437,7 @@ class _DrawingsScreenState extends State<DrawingsScreen>
     }
   }
 
-  // New method: Handle Contract Drawing actions
+  // Updated method: Handle Contract Drawing actions
   void _handleContractDrawingAction(String action, DrawingModel drawing) async {
     switch (action) {
       case 'view':
@@ -435,6 +445,9 @@ class _DrawingsScreenState extends State<DrawingsScreen>
         break;
       case 'download':
         await _downloadDrawing(drawing.url, drawing.fileName);
+        break;
+      case 'delete':
+        await _deleteDrawing(drawing);
         break;
     }
   }
