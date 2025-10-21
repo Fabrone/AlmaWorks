@@ -12,7 +12,7 @@ class PurchaseResourceModel {
   final String name;
   final ResourceType type;
   final String quantity; // e.g., "500 kg", "5 units", "8 workers"
-  final String status; // e.g., "Available", "In Use", "Ordered", "To Purchase", "Unavailable"
+  final String status; // e.g., "On site", "Not Ordered", "Ordered", "Not Available", "In storage"
   final String projectId;
   final String projectName;
   final DateTime updatedAt;
@@ -34,7 +34,7 @@ class PurchaseResourceModel {
       name: data['name'] as String? ?? '',
       type: parseResourceType(data['type'] as String? ?? 'other'),
       quantity: data['quantity'] as String? ?? '',
-      status: data['status'] as String? ?? 'Available',
+      status: data['status'] as String? ?? 'On site',
       projectId: data['projectId'] as String? ?? '',
       projectName: data['projectName'] as String? ?? '',
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),

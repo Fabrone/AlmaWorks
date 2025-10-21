@@ -25,10 +25,11 @@ class PurchasingPlanScreen extends StatefulWidget {
 
 class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
   int _totalResources = 0;
-  int _availableCount = 0;
-  int _toPurchaseCount = 0;
-  int _inUseCount = 0;
+  int _onSiteCount = 0;
+  int _inStorageCount = 0;
   int _orderedCount = 0;
+  int _notOrderedCount = 0;
+  int _notAvailableCount = 0;
 
   @override
   void initState() {
@@ -40,10 +41,11 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
 
   void _updateSummary(List<PurchaseResourceModel> resources) {
     _totalResources = resources.length;
-    _availableCount = resources.where((r) => r.status == 'Available').length;
-    _toPurchaseCount = resources.where((r) => r.status == 'To Purchase').length;
-    _inUseCount = resources.where((r) => r.status == 'In Use').length;
+    _onSiteCount = resources.where((r) => r.status == 'On site').length;
+    _inStorageCount = resources.where((r) => r.status == 'In storage').length;
+    _notOrderedCount = resources.where((r) => r.status == 'Not Ordered').length;
     _orderedCount = resources.where((r) => r.status == 'Ordered').length;
+    _notAvailableCount = resources.where((r) => r.status == 'Not Available').length;
   }
 
   @override
@@ -124,7 +126,7 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
             icon: const Icon(Icons.add),
             label: Text('Add First Resource', style: GoogleFonts.poppins()),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blue.shade600,
+              backgroundColor: const Color(0xFF0A2E5A),
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
@@ -147,25 +149,25 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
         
         // Desktop (wide screens)
         if (width > 1200) {
-          crossAxisCount = 5;
-          childAspectRatio = 1.4;
+          crossAxisCount = 6;
+          childAspectRatio = 1.2;
           spacing = 16;
         }
         // Tablet landscape or medium desktop
         else if (width > 900) {
-          crossAxisCount = 5;
-          childAspectRatio = 1.3;
+          crossAxisCount = 6;
+          childAspectRatio = 1.1;
           spacing = 12;
         }
         // Tablet portrait or small desktop
         else if (width > 600) {
-          crossAxisCount = isPortrait ? 3 : 5;
-          childAspectRatio = isPortrait ? 1.2 : 1.3;
+          crossAxisCount = isPortrait ? 3 : 6;
+          childAspectRatio = isPortrait ? 1.2 : 1.1;
           spacing = 12;
         }
         // Large phone landscape
         else if (width > 500 && !isPortrait) {
-          crossAxisCount = 5;
+          crossAxisCount = 4;
           childAspectRatio = 1.1;
           spacing = 8;
         }
@@ -185,10 +187,11 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
           childAspectRatio: childAspectRatio,
           children: [
             _buildSummaryCard('Total', _totalResources, Icons.list, Colors.blue, width),
-            _buildSummaryCard('Available', _availableCount, Icons.check_circle, Colors.green, width),
-            _buildSummaryCard('To Purchase', _toPurchaseCount, Icons.shopping_cart_checkout, Colors.orange, width),
-            _buildSummaryCard('In Use', _inUseCount, Icons.build, Colors.purple, width),
+            _buildSummaryCard('On Site', _onSiteCount, Icons.location_on, Colors.green, width),
+            _buildSummaryCard('In Storage', _inStorageCount, Icons.warehouse, Colors.blueGrey, width),
+            _buildSummaryCard('Not Ordered', _notOrderedCount, Icons.shopping_cart, Colors.orange, width),
             _buildSummaryCard('Ordered', _orderedCount, Icons.local_shipping, Colors.teal, width),
+            _buildSummaryCard('Not Available', _notAvailableCount, Icons.block, Colors.red, width),
           ],
         );
       },
@@ -283,7 +286,7 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
             style: GoogleFonts.poppins(fontSize: isWide ? 16 : 14),
           ),
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue.shade600,
+            backgroundColor: const Color(0xFF0A2E5A),
             foregroundColor: Colors.white,
             padding: EdgeInsets.symmetric(vertical: isWide ? 16 : 12),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -312,20 +315,20 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
 
     Color statusColor;
     switch (resource.status) {
-      case 'Available':
+      case 'On site':
         statusColor = Colors.green;
         break;
-      case 'To Purchase':
+      case 'Not Ordered':
         statusColor = Colors.orange;
-        break;
-      case 'In Use':
-        statusColor = Colors.purple;
         break;
       case 'Ordered':
         statusColor = Colors.teal;
         break;
-      case 'Unavailable':
+      case 'Not Available':
         statusColor = Colors.red;
+        break;
+      case 'In storage':
+        statusColor = Colors.blueGrey;
         break;
       default:
         statusColor = Colors.grey;
@@ -424,10 +427,10 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
     final nameController = TextEditingController();
     final quantityController = TextEditingController();
     String selectedType = 'material';
-    String selectedStatus = 'Available';
+    String selectedStatus = 'On site';
 
     final typeOptions = ['material', 'equipment', 'labor', 'other'];
-    final statusOptions = ['Available', 'To Purchase', 'In Use', 'Ordered', 'Unavailable'];
+    final statusOptions = ['On site', 'Not Ordered', 'Ordered', 'Not Available', 'In storage'];
 
     final result = await showDialog<bool>(
       context: context,
@@ -520,7 +523,7 @@ class _PurchasingPlanScreenState extends State<PurchasingPlanScreen> {
       String selectedStatus = resource.status;
 
       final typeOptions = ['material', 'equipment', 'labor', 'other'];
-      final statusOptions = ['Available', 'To Purchase', 'In Use', 'Ordered', 'Unavailable'];
+      final statusOptions = ['On site', 'Not Ordered', 'Ordered', 'Not Available', 'In storage'];
 
       final result = await showDialog<bool>(
         context: context,
