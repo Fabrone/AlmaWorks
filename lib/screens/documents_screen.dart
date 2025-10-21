@@ -10,7 +10,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:dio/dio.dart';
-import 'package:path/path.dart' as path;
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:typed_data';
 import 'package:url_launcher/url_launcher.dart';
@@ -99,7 +98,37 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       selectedMenuItem: 'Documents',
       onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
       floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _addDocument,
+        onPressed: _isLoading ? null : () {
+          String role = _mainTabs[_mainTabController.index];
+          TabController subController;
+          String? memberName;
+          switch (role) {
+            case 'Client':
+              subController = _clientSubTabController;
+              memberName = null;
+              break;
+            case 'Sub-Contractor':
+              subController = _subContractorSubTabController;
+              memberName = _selectedSubcontractor;
+              break;
+            case 'Supplier':
+              subController = _supplierSubTabController;
+              memberName = _selectedSupplier;
+              break;
+            default:
+              return;
+          }
+          if ((role == 'Sub-Contractor' || role == 'Supplier') && memberName == null) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Please select a $role first', style: GoogleFonts.poppins()),
+              ),
+            );
+            return;
+          }
+          String section = _subSections[subController.index];
+          _addDocument(role, section, teamMemberName: memberName);
+        },
         backgroundColor: const Color(0xFF0A2E5A),
         foregroundColor: Colors.white,
         child: const Icon(Icons.file_upload),
@@ -414,142 +443,55 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
     );
   }
 
-  Future<void> _addDocument() async {
-    final roleIndex = _mainTabController.index;
-    final role = _mainTabs[roleIndex];
-    String? teamMemberName;
-    late int subIndex;
-    if (role == 'Client') {
-      subIndex = _clientSubTabController.index;
-      teamMemberName = null;
-    } else if (role == 'Sub-Contractor') {
-      if (_selectedSubcontractor == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please select a subcontractor first')),
-          );
-        }
+  // Updated _addDocument method (fixed List<int> to Uint8List)
+  Future<void> _addDocument(String role, String section, {String? teamMemberName}) async {
+    widget.logger.i('📤 DocumentsScreen: Starting document upload for $role - $section${teamMemberName != null ? ' ($teamMemberName)' : ''}');
+
+    try {
+      setState(() => _isLoading = true);
+
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'txt'],
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        widget.logger.d('📤 DocumentsScreen: File selection cancelled');
         return;
       }
-      subIndex = _subContractorSubTabController.index;
-      teamMemberName = _selectedSubcontractor;
-    } else { // Supplier
-      if (_selectedSupplier == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please select a supplier first')),
-          );
-        }
+
+      final pickedFile = result.files.first;
+      final fileName = pickedFile.name;
+      final extension = fileName.split('.').last.toLowerCase();
+      widget.logger.d('📤 DocumentsScreen: Picked file: $fileName');
+
+      final title = await _getDocumentTitle(fileName.split('.').first);
+      if (title == null) {
+        widget.logger.d('📤 DocumentsScreen: Title input cancelled');
         return;
       }
-      subIndex = _supplierSubTabController.index;
-      teamMemberName = _selectedSupplier;
-    }
-    final section = _subSections[subIndex];
 
-    widget.logger.i('📤 DocumentsScreen: Initiating add document to $role${teamMemberName != null ? ' - $teamMemberName' : ''} - $section');
+      Uint8List fileBytes;
+      if (kIsWeb) {
+        fileBytes = pickedFile.bytes!;
+      } else {
+        fileBytes = await File(pickedFile.path!).readAsBytes();
+      }
 
-    widget.logger.d('📤 DocumentsScreen: Picking file...');
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf', 'docx', 'pptx', 'txt', 'doc', 'ppt'],
-      withData: true,
-    );
+      UploadTask? uploadTask;
 
-    if (result == null || result.files.isEmpty) {
-      widget.logger.w('📤 DocumentsScreen: No document selected');
-      return;
-    }
-
-    final platformFile = result.files.single;
-    final fileName = platformFile.name;
-    final extension = path.extension(fileName).substring(1).toLowerCase();
-    Uint8List? fileBytes;
-
-    if (platformFile.bytes != null) {
-      fileBytes = platformFile.bytes!;
-      widget.logger.d('📤 DocumentsScreen: File bytes available (web)');
-    } else if (!kIsWeb && platformFile.path != null) {
-      final file = File(platformFile.path!);
-      fileBytes = await file.readAsBytes();
-      widget.logger.d('📤 DocumentsScreen: File read from path (mobile/desktop)');
-    }
-
-    if (fileBytes == null) {
-      throw Exception('Could not read file data');
-    }
-
-    final title = await _getDocumentTitle(fileName);
-    if (title == null) {
-      widget.logger.d('📤 DocumentsScreen: Add document cancelled - no title provided');
-      return;
-    }
-
-    if (!mounted) return;
-    final bool? confirmUpload = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Confirm Upload', style: GoogleFonts.poppins()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              _getDocumentIcon(extension),
-              size: 48,
-              color: _getFileIconColor(extension),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Upload: $fileName?',
-              style: GoogleFonts.poppins(),
-              textAlign: TextAlign.center,
-            ),
-            Text(
-              'Size: ${(fileBytes!.length / 1024 / 1024).toStringAsFixed(2)} MB',
-              style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text('Upload', style: GoogleFonts.poppins()),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmUpload != true) {
-      widget.logger.d('📤 DocumentsScreen: Upload cancelled by user');
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _isLoading = true;
-    });
-
-    UploadTask? uploadTask;
-    final GlobalKey<State> dialogKey = GlobalKey<State>();
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        key: dialogKey,
-        title: Text('Uploading $fileName', style: GoogleFonts.poppins()),
-        content: StatefulBuilder(
-          builder: (context, setDialogState) {
-            return Column(
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Text('Uploading Document', style: GoogleFonts.poppins()),
+            content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 LinearProgressIndicator(
                   value: _uploadProgress,
-                  backgroundColor: Colors.grey[300],
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.blueGrey),
                 ),
                 const SizedBox(height: 16),
@@ -560,128 +502,133 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                   style: GoogleFonts.poppins(),
                 ),
               ],
-            );
-          },
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              if (uploadTask != null) {
-                await uploadTask.cancel();
-                widget.logger.d('📤 DocumentsScreen: Upload cancelled by user');
-              }
-              if (context.mounted) {
-                Navigator.pop(context);
-              }
-            },
-            child: Text('Cancel', style: GoogleFonts.poppins(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    try {
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final storageRef = FirebaseStorage.instance
-          .ref()
-          .child('projects/${_currentProject.id}/documents/${timestamp}_$fileName');
-
-      final metadata = SettableMetadata(
-        contentType: _getContentType(extension),
-        customMetadata: {
-          'projectId': _currentProject.id,
-          'role': role,
-          'section': section,
-          'title': title,
-          'teamMemberName': teamMemberName ?? '',
-          'platform': kIsWeb ? 'web' : Platform.operatingSystem,
-        },
-      );
-
-      uploadTask = storageRef.putData(fileBytes, metadata);
-
-      uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
-        if (mounted) {
-          setState(() {
-            _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
-          });
-        }
-      }, onError: (e) {
-        widget.logger.e('Upload progress error: $e');
-        if (mounted) {
-          Navigator.pop(context);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Upload failed: ${e.toString()}', style: GoogleFonts.poppins()),
             ),
-          );
-        }
-      });
-
-      await uploadTask;
-      final url = await storageRef.getDownloadURL();
-      widget.logger.d('📤 DocumentsScreen: Upload complete, URL obtained');
-
-      await FirebaseFirestore.instance
-          .collection('ProjectDocuments')
-          .add({
-        'projectId': _currentProject.id,
-        'title': title,
-        'fileName': fileName,
-        'url': url,
-        'type': extension,
-        'role': role,
-        'section': section,
-        'teamMemberName': teamMemberName ?? '',
-        'uploadedAt': Timestamp.now(),
-      });
-
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Document "$title" added successfully!', style: GoogleFonts.poppins()),
+            actions: [
+              TextButton(
+                onPressed: () async {
+                  if (uploadTask != null) {
+                    await uploadTask.cancel();
+                    widget.logger.d('📤 DocumentsScreen: Upload cancelled by user');
+                  }
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
+                },
+                child: Text('Cancel', style: GoogleFonts.poppins(color: Colors.red)),
+              ),
+            ],
           ),
         );
-        widget.logger.i('✅ DocumentsScreen: Document uploaded successfully: $fileName with title $title');
       }
-    } on FirebaseException catch (e) {
-      if (e.code == 'canceled') {
+
+      try {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
+        final storageRef = FirebaseStorage.instance
+            .ref()
+            .child('${_currentProject.id}/Documents/${timestamp}_$fileName');
+
+        final metadata = SettableMetadata(
+          contentType: _getContentType(extension),
+          customMetadata: {
+            'projectId': _currentProject.id,
+            'role': role,
+            'section': section,
+            'title': title,
+            'teamMemberName': teamMemberName ?? '',
+            'platform': kIsWeb ? 'web' : Platform.operatingSystem,
+          },
+        );
+
+        uploadTask = storageRef.putData(fileBytes, metadata);
+
+        uploadTask.snapshotEvents.listen((TaskSnapshot snapshot) {
+          if (mounted) {
+            setState(() {
+              _uploadProgress = snapshot.bytesTransferred / snapshot.totalBytes;
+            });
+          }
+        }, onError: (e) {
+          widget.logger.e('Upload progress error: $e');
+          if (mounted) {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Upload failed: ${e.toString()}', style: GoogleFonts.poppins()),
+              ),
+            );
+          }
+        });
+
+        await uploadTask;
+        final url = await storageRef.getDownloadURL();
+        widget.logger.d('📤 DocumentsScreen: Upload complete, URL obtained');
+
+        await FirebaseFirestore.instance
+            .collection('ProjectDocuments')
+            .add({
+          'projectId': _currentProject.id,
+          'title': title,
+          'fileName': fileName,
+          'url': url,
+          'type': extension,
+          'role': role,
+          'section': section,
+          'teamMemberName': teamMemberName ?? '',
+          'uploadedAt': Timestamp.now(),
+        });
+
         if (mounted) {
           Navigator.pop(context);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Upload cancelled', style: GoogleFonts.poppins()),
+              content: Text('Document "$title" added successfully!', style: GoogleFonts.poppins()),
             ),
           );
+          widget.logger.i('✅ DocumentsScreen: Document uploaded successfully: $fileName with title $title');
         }
-      } else {
+      } on FirebaseException catch (e) {
+        if (e.code == 'canceled') {
+          if (mounted) {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Upload cancelled', style: GoogleFonts.poppins()),
+              ),
+            );
+          }
+        } else {
+          widget.logger.e('❌ DocumentsScreen: Error adding document', error: e);
+          if (mounted) {
+            Navigator.pop(context);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error adding document: ${e.message}', style: GoogleFonts.poppins()),
+              ),
+            );
+          }
+        }
+      } catch (e) {
         widget.logger.e('❌ DocumentsScreen: Error adding document', error: e);
         if (mounted) {
           Navigator.pop(context);
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Error adding document: ${e.message}', style: GoogleFonts.poppins()),
+              content: Text('Error adding document: ${e.toString()}', style: GoogleFonts.poppins()),
             ),
           );
         }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _uploadProgress = null;
+          });
+        }
       }
     } catch (e) {
-      widget.logger.e('❌ DocumentsScreen: Error adding document', error: e);
+      widget.logger.e('❌ DocumentsScreen: Unexpected error in _addDocument', error: e);
       if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error adding document: ${e.toString()}', style: GoogleFonts.poppins()),
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _uploadProgress = null;
-        });
+        setState(() => _isLoading = false);
       }
     }
   }
