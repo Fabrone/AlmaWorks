@@ -43,6 +43,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   double _durationColumnWidth = 90.0;
   double _startColumnWidth = 120.0;
   double _finishColumnWidth = 120.0;
+  double _resourcesColumnWidth = 120.0;
+  double _actualDatesColumnWidth = 120.0;
 
   List<GanttRowData> _rows = [];
   static const int defaultRowCount = 6;
@@ -1581,8 +1583,17 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     }
     maxCellWidth += 48;
     _finishColumnWidth = math.max(headerWidth, maxCellWidth);
+
+    // Compute width for Resources column
+    headerWidth = _measureText('Resources', headerStyle) + 24;
+    _resourcesColumnWidth = math.max(headerWidth, 120.0);
+
+    // Compute width for Actual Dates column
+    headerWidth = _measureText('Actual Dates', headerStyle) + 24;
+    _actualDatesColumnWidth = math.max(headerWidth, 120.0);
+
     widget.logger.d(
-      '📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth',
+      '📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth, resources=$_resourcesColumnWidth, actualDates=$_actualDatesColumnWidth',
     );
   }
 
@@ -1889,7 +1900,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         _taskColumnWidth +
         _durationColumnWidth +
         _startColumnWidth +
-        _finishColumnWidth;
+        _finishColumnWidth +
+        _resourcesColumnWidth +
+        _actualDatesColumnWidth;
 
     return SingleChildScrollView(
       controller: _horizontalScrollController,
@@ -1907,6 +1920,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                   _buildHeaderCell('Duration', _durationColumnWidth),
                   _buildHeaderCell('Start', _startColumnWidth),
                   _buildHeaderCell('Finish', _finishColumnWidth),
+                  _buildHeaderCell('Resources', _resourcesColumnWidth),
+                  _buildHeaderCell('Actual Dates', _actualDatesColumnWidth),
                   Container(
                     width: ganttWidth,
                     decoration: BoxDecoration(
@@ -1965,7 +1980,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return EdgeInsets.only(left: leftPadding, right: 8, top: 4, bottom: 4);
   }
 
-  // Updated _buildRow method to pass row data to date cells
   Widget _buildRow(int index, double ganttWidth) {
     final row = _editedRows[index] ?? _rows[index];
     final canDelete = row.isUnsaved; // Only show delete button for unsaved rows
@@ -2140,6 +2154,26 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
               onDateSelected: (date) => _updateRowData(index, endDate: date),
               rowData: row, // Pass row data for validation context
             ),
+          ),
+          Container(
+            width: _resourcesColumnWidth,
+            height: rowHeight,
+            decoration: BoxDecoration(
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
+            ),
+            child: Container(), // Empty for now
+          ),
+          Container(
+            width: _actualDatesColumnWidth,
+            height: rowHeight,
+            decoration: BoxDecoration(
+              border: Border(
+                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+              ),
+            ),
+            child: Container(), // Empty for now
           ),
           Container(
             width: ganttWidth,
