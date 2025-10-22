@@ -21,6 +21,9 @@ class GanttRowData {
   int displayOrder;
   List<String> childIds;
 
+  // New: Resource assignment field
+  String? resourceId;
+
   GanttRowData({
     required this.id,
     this.firestoreId,
@@ -36,6 +39,7 @@ class GanttRowData {
     this.hierarchyLevel = 0,
     this.displayOrder = 0,
     List<String>? childIds,
+    this.resourceId,
   }) : childIds = childIds ?? <String>[];
 
   factory GanttRowData.from(GanttRowData other) {
@@ -54,6 +58,7 @@ class GanttRowData {
       hierarchyLevel: other.hierarchyLevel,
       displayOrder: other.displayOrder,
       childIds: List<String>.from(other.childIds),
+      resourceId: other.resourceId,
     );
   }
 
@@ -98,6 +103,7 @@ class GanttRowData {
       hierarchyLevel: data['hierarchyLevel'] as int? ?? 0,
       displayOrder: data['displayOrder'] as int? ?? 0,
       childIds: childIdsList,
+      resourceId: data['resourceId'] as String?,
     );
   }
 
@@ -134,6 +140,7 @@ class GanttRowData {
       'hierarchyLevel': hierarchyLevel,
       'displayOrder': displayOrder,
       'childIds': childIds,
+      'resourceId': resourceId,
       // NOTE: isUnsaved is not saved to Firebase as it's a local tracking field
     };
   }
@@ -149,6 +156,7 @@ class GanttRowData {
     bool? isUnsaved,
     String? projectId,
     String? projectName,
+    String? resourceId,
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -165,12 +173,13 @@ class GanttRowData {
       hierarchyLevel: hierarchyLevel,
       displayOrder: displayOrder,
       childIds: List.from(childIds),
+      resourceId: resourceId ?? this.resourceId,
     );
   }
 
   @override
   String toString() {
-    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName)';
+    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName, resourceId: $resourceId)';
   }
 
   @override
@@ -186,7 +195,8 @@ class GanttRowData {
         other.taskType == taskType &&
         other.isUnsaved == isUnsaved &&
         other.projectId == projectId &&
-        other.projectName == projectName;
+        other.projectName == projectName &&
+        other.resourceId == resourceId;
   }
 
   @override
@@ -200,7 +210,8 @@ class GanttRowData {
         taskType.hashCode ^
         isUnsaved.hashCode ^
         projectId.hashCode ^
-        projectName.hashCode;
+        projectName.hashCode ^
+        resourceId.hashCode;
   }
 
   String get taskTypeDisplayText {
