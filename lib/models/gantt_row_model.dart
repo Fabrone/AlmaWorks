@@ -11,6 +11,7 @@ class GanttRowData {
   DateTime? endDate;
   TaskType taskType;
   bool isUnsaved;
+  String? resourceQuantity;
   
   // NEW: Project information fields
   String? projectId;
@@ -40,6 +41,7 @@ class GanttRowData {
     this.displayOrder = 0,
     List<String>? childIds,
     this.resourceId,
+    this.resourceQuantity,
   }) : childIds = childIds ?? <String>[];
 
   factory GanttRowData.from(GanttRowData other) {
@@ -59,6 +61,7 @@ class GanttRowData {
       displayOrder: other.displayOrder,
       childIds: List<String>.from(other.childIds),
       resourceId: other.resourceId,
+      resourceQuantity: other.resourceQuantity,
     );
   }
 
@@ -104,6 +107,7 @@ class GanttRowData {
       displayOrder: data['displayOrder'] as int? ?? 0,
       childIds: childIdsList,
       resourceId: data['resourceId'] as String?,
+      resourceQuantity: data['resourceQuantity'] as String?,
     );
   }
 
@@ -141,7 +145,7 @@ class GanttRowData {
       'displayOrder': displayOrder,
       'childIds': childIds,
       'resourceId': resourceId,
-      // NOTE: isUnsaved is not saved to Firebase as it's a local tracking field
+      'resourceQuantity': resourceQuantity,
     };
   }
 
@@ -157,6 +161,7 @@ class GanttRowData {
     String? projectId,
     String? projectName,
     String? resourceId,
+    String? resourceQuantity,
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -174,6 +179,7 @@ class GanttRowData {
       displayOrder: displayOrder,
       childIds: List.from(childIds),
       resourceId: resourceId ?? this.resourceId,
+      resourceQuantity: resourceQuantity ?? this.resourceQuantity,
     );
   }
 
