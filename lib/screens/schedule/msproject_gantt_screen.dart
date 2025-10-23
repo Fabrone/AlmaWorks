@@ -46,6 +46,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   double _finishColumnWidth = 120.0;
   double _resourcesColumnWidth = 120.0;
   double _actualDatesColumnWidth = 120.0;
+  int? _openDropdownIndex;
 
   List<PurchaseResourceModel> _resources = [];
   List<GanttRowData> _rows = [];
@@ -57,6 +58,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   // Overlay management
   OverlayEntry? _overlayEntry;
+  GlobalKey? _activeResourceCellKey;
+  OverlayEntry? _resourceDropdownOverlay;
 
   @override
   void initState() {
@@ -72,9 +75,219 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   void dispose() {
     _firebaseListener?.cancel();
     _removeOverlay();
+    _removeResourceDropdown(); // Add this line
     _horizontalScrollController.dispose();
     _verticalScrollController.dispose();
     super.dispose();
+  }
+
+  void _removeResourceDropdown() {
+    _resourceDropdownOverlay?.remove();
+    _resourceDropdownOverlay = null;
+    _activeResourceCellKey = null;
+    widget.logger.d('📅 Removed resource dropdown overlay');
+  }
+
+  void _showResourceDropdown(BuildContext context, GlobalKey cellKey, GanttRowData row, int index) {
+    // Remove any existing dropdown first
+    _removeResourceDropdown();
+
+    if (_activeResourceCellKey != null) {
+      widget.logger.d('📅 Closing previous dropdown before opening new one');
+    }
+
+    // Get the position of the cell
+    final RenderBox? renderBox = cellKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    final position = renderBox.localToGlobal(Offset.zero);
+    final cellSize = renderBox.size;
+
+    _activeResourceCellKey = cellKey;
+
+    _resourceDropdownOverlay = OverlayEntry(
+      builder: (context) => GestureDetector(
+        onTap: () {
+          setState(() {
+            _openDropdownIndex = null;
+          });
+          _removeResourceDropdown();
+        },
+        behavior: HitTestBehavior.translucent,
+        child: Stack(
+          children: [
+            // Transparent background to catch taps
+            Positioned.fill(
+              child: Container(color: Colors.transparent),
+            ),
+            // Dropdown positioned below the cell
+            Positioned(
+              left: position.dx,
+              top: position.dy + cellSize.height,
+              child: GestureDetector(
+                onTap: () {}, // Prevent tap from closing when clicking inside dropdown
+                child: Material(
+                  elevation: 8,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: cellSize.width,
+                    constraints: BoxConstraints(
+                      maxHeight: 250,
+                      minWidth: cellSize.width,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300, width: 1),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.15),
+                          blurRadius: 8,
+                          offset: Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // "None" option
+                        InkWell(
+                          onTap: () {
+                            setState(() {
+                              row.resourceId = null;
+                              _editedRows[index] = row;
+                              _openDropdownIndex = null;
+                              _computeColumnWidths();
+                            });
+                            _removeResourceDropdown();
+                          },
+                          child: Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: row.resourceId == null
+                                  ? Colors.blue.shade50
+                                  : Colors.transparent,
+                              border: Border(
+                                bottom: BorderSide(color: Colors.grey.shade200, width: 0.5),
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                if (row.resourceId == null)
+                                  Padding(
+                                    padding: EdgeInsets.only(right: 8),
+                                    child: Icon(
+                                      Icons.check,
+                                      size: 14,
+                                      color: Colors.blue.shade600,
+                                    ),
+                                  ),
+                                Expanded(
+                                  child: Text(
+                                    'None',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 12,
+                                      color: row.resourceId == null
+                                          ? Colors.blue.shade600
+                                          : Colors.grey.shade700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        // Resource options with scrolling
+                        Flexible(
+                          child: _resources.isEmpty
+                              ? Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: Text(
+                                    'No resources available',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade500,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  shrinkWrap: true,
+                                  padding: EdgeInsets.zero,
+                                  itemCount: _resources.length,
+                                  itemBuilder: (context, resIndex) {
+                                    final resource = _resources[resIndex];
+                                    final isSelected = row.resourceId == resource.id;
+
+                                    return InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          row.resourceId = resource.id;
+                                          _editedRows[index] = row;
+                                          _openDropdownIndex = null;
+                                          _computeColumnWidths();
+                                        });
+                                        _removeResourceDropdown();
+                                      },
+                                      child: Container(
+                                        width: double.infinity,
+                                        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                                        decoration: BoxDecoration(
+                                          color: isSelected
+                                              ? Colors.blue.shade50
+                                              : Colors.transparent,
+                                          border: Border(
+                                            bottom: BorderSide(
+                                              color: Colors.grey.shade200,
+                                              width: resIndex < _resources.length - 1 ? 0.5 : 0,
+                                            ),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            if (isSelected)
+                                              Padding(
+                                                padding: EdgeInsets.only(right: 8),
+                                                child: Icon(
+                                                  Icons.check,
+                                                  size: 14,
+                                                  color: Colors.blue.shade600,
+                                                ),
+                                              ),
+                                            Expanded(
+                                              child: Text(
+                                                resource.name,
+                                                style: GoogleFonts.poppins(
+                                                  fontSize: 12,
+                                                  color: isSelected
+                                                      ? Colors.blue.shade600
+                                                      : Colors.grey.shade700,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    Overlay.of(context).insert(_resourceDropdownOverlay!);
+    widget.logger.d('📅 Showing resource dropdown for row $index');
   }
 
   Future<void> _loadResources() async {
@@ -287,188 +500,24 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         );
   }
 
-  void _showResourceDropdown(int index, BuildContext cellContext) {
-    _removeOverlay();
-
+  void _toggleResourceDropdown(int index, BuildContext context, GlobalKey cellKey) {
     final row = _editedRows[index] ?? _rows[index];
     
-    // Get the RenderBox of the specific cell that was clicked
-    final RenderBox? cellBox = cellContext.findRenderObject() as RenderBox?;
-    if (cellBox == null) {
-      widget.logger.w('Could not find RenderBox for resource cell at index $index');
-      return;
+    if (_openDropdownIndex == index) {
+      // Close if already open
+      setState(() {
+        _openDropdownIndex = null;
+      });
+      _removeResourceDropdown();
+    } else {
+      // Open this dropdown
+      setState(() {
+        _openDropdownIndex = index;
+      });
+      _showResourceDropdown(context, cellKey, row, index);
     }
-
-    // Get the global position of the cell
-    final cellPosition = cellBox.localToGlobal(Offset.zero);
-    final cellSize = cellBox.size;
-
-    // Get screen size to determine if dropdown should appear above or below
-    final screenHeight = MediaQuery.of(context).size.height;
-    final dropdownMaxHeight = 300.0;
-    final spaceBelow = screenHeight - (cellPosition.dy + cellSize.height);
-    final spaceAbove = cellPosition.dy;
     
-    // Determine if dropdown should appear above or below the cell
-    final showAbove = spaceBelow < dropdownMaxHeight && spaceAbove > spaceBelow;
-    final dropdownTop = showAbove 
-        ? cellPosition.dy - math.min(dropdownMaxHeight, spaceAbove)
-        : cellPosition.dy + cellSize.height;
-
-    _overlayEntry = OverlayEntry(
-      builder: (context) => Stack(
-        children: [
-          // Transparent barrier to detect outside taps
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: _removeOverlay,
-              behavior: HitTestBehavior.translucent,
-              child: Container(color: Colors.transparent),
-            ),
-          ),
-          // Dropdown menu positioned exactly below/above the cell
-          Positioned(
-            left: cellPosition.dx,
-            top: dropdownTop,
-            child: Material(
-              elevation: 8,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: math.max(cellSize.width, 200), // At least as wide as the cell
-                constraints: BoxConstraints(
-                  maxHeight: showAbove 
-                      ? math.min(dropdownMaxHeight, spaceAbove - 10)
-                      : math.min(dropdownMaxHeight, spaceBelow - 10),
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade300),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.1),
-                      blurRadius: 10,
-                      offset: Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      padding: EdgeInsets.zero,
-                      itemCount: _resources.length + 1,
-                      itemBuilder: (context, resIndex) {
-                        if (resIndex == 0) {
-                          return InkWell(
-                            onTap: () {
-                              setState(() {
-                                row.resourceId = null;
-                                _editedRows[index] = row;
-                                _computeColumnWidths();
-                              });
-                              _removeOverlay();
-                            },
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: row.resourceId == null
-                                    ? Colors.blue.shade50
-                                    : Colors.transparent,
-                              ),
-                              child: Row(
-                                children: [
-                                  if (row.resourceId == null)
-                                    Padding(
-                                      padding: EdgeInsets.only(right: 8),
-                                      child: Icon(
-                                        Icons.check,
-                                        size: 16,
-                                        color: Colors.blue.shade600,
-                                      ),
-                                    ),
-                                  Text(
-                                    'None',
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      color: row.resourceId == null
-                                          ? Colors.blue.shade600
-                                          : Colors.grey.shade800,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        }
-                        
-                        final resource = _resources[resIndex - 1];
-                        final isSelected = row.resourceId == resource.id;
-                        
-                        return InkWell(
-                          onTap: () {
-                            setState(() {
-                              row.resourceId = resource.id;
-                              _editedRows[index] = row;
-                              _computeColumnWidths();
-                            });
-                            _removeOverlay();
-                          },
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? Colors.blue.shade50
-                                  : Colors.transparent,
-                            ),
-                            child: Row(
-                              children: [
-                                if (isSelected)
-                                  Padding(
-                                    padding: EdgeInsets.only(right: 8),
-                                    child: Icon(
-                                      Icons.check,
-                                      size: 16,
-                                      color: Colors.blue.shade600,
-                                    ),
-                                  ),
-                                Expanded(
-                                  child: Text(
-                                    resource.name,
-                                    style: GoogleFonts.poppins(
-                                      fontSize: 13,
-                                      color: isSelected
-                                          ? Colors.blue.shade600
-                                          : Colors.grey.shade800,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    Overlay.of(context).insert(_overlayEntry!);
-    widget.logger.d('📅 Showing resource dropdown for row $index at exact cell position');
+    widget.logger.d('📅 Toggled resource dropdown for row $index');
   }
 
   // Updated _loadTasksFromFirebase method to handle orphaned tasks
@@ -2221,8 +2270,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   Widget _buildRow(int index, double ganttWidth) {
     final row = _editedRows[index] ?? _rows[index];
-    final canDelete = row.isUnsaved; // Only show delete button for unsaved rows
+    final canDelete = row.isUnsaved;
     final TaskType currentTaskType = row.taskType;
+    final isDropdownOpen = _openDropdownIndex == index;
+    
+    // Create a GlobalKey for the Resources cell
+    final resourceCellKey = GlobalKey();
 
     return Container(
       height: rowHeight,
@@ -2234,6 +2287,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       ),
       child: Row(
         children: [
+          // Number column
           Container(
             width: _numberColumnWidth,
             height: rowHeight,
@@ -2278,6 +2332,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                     ),
             ),
           ),
+          // Task Name column
           Container(
             width: _taskColumnWidth,
             height: rowHeight,
@@ -2329,6 +2384,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
               ),
             ),
           ),
+          // Duration column
           Container(
             width: _durationColumnWidth,
             height: rowHeight,
@@ -2366,6 +2422,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
               ),
             ),
           ),
+          // Start date column
           Container(
             width: _startColumnWidth,
             height: rowHeight,
@@ -2377,9 +2434,10 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             child: _buildDateCell(
               date: row.startDate,
               onDateSelected: (date) => _updateRowData(index, startDate: date),
-              rowData: row, // Pass row data for validation context
+              rowData: row,
             ),
           ),
+          // Finish date column
           Container(
             width: _finishColumnWidth,
             height: rowHeight,
@@ -2391,60 +2449,56 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             child: _buildDateCell(
               date: row.endDate,
               onDateSelected: (date) => _updateRowData(index, endDate: date),
-              rowData: row, // Pass row data for validation context
+              rowData: row,
             ),
           ),
-          // Resources column cell
-          Builder(
-            builder: (context) {
-              return GestureDetector(
-                onTapDown: (details) {
-                  if (row.taskType == TaskType.task) {
-                    // Pass the BuildContext of this cell to get exact position
-                    _showResourceDropdown(index, context);
-                  }
-                },
-                child: Container(
-                  width: _resourcesColumnWidth,
-                  height: rowHeight,
-                  decoration: BoxDecoration(
-                    border: Border(
-                      right: BorderSide(color: Colors.grey.shade300, width: 0.5),
-                    ),
-                    color: row.taskType == TaskType.task 
-                        ? Colors.transparent 
-                        : Colors.grey.shade100,
-                  ),
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _getResourceDisplayText(row),
-                            style: GoogleFonts.poppins(
-                              fontSize: 11,
-                              color: row.taskType == TaskType.task
-                                  ? Colors.grey.shade800
-                                  : Colors.grey.shade500,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        if (row.taskType == TaskType.task)
-                          Icon(
-                            Icons.arrow_drop_down,
-                            size: 18,
-                            color: Colors.grey.shade600,
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
+          // Resources column with overlay dropdown
+          GestureDetector(
+            key: resourceCellKey,
+            onTap: () {
+              if (row.taskType == TaskType.task) {
+                _toggleResourceDropdown(index, context, resourceCellKey);
+              }
             },
+            child: Container(
+              width: _resourcesColumnWidth,
+              height: rowHeight,
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+                ),
+                color: row.taskType == TaskType.task 
+                    ? (isDropdownOpen ? Colors.blue.shade50 : Colors.transparent)
+                    : Colors.grey.shade100,
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _getResourceDisplayText(row),
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          color: row.taskType == TaskType.task
+                              ? Colors.grey.shade800
+                              : Colors.grey.shade500,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (row.taskType == TaskType.task)
+                      Icon(
+                        isDropdownOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down,
+                        size: 18,
+                        color: Colors.grey.shade600,
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          // Actual Dates column cell (empty for now)
+          // Actual Dates column
           Container(
             width: _actualDatesColumnWidth,
             height: rowHeight,
@@ -2455,6 +2509,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             ),
             child: Container(),
           ),
+          // Gantt chart area
           Container(
             width: ganttWidth,
             height: rowHeight,
