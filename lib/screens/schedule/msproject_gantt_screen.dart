@@ -4244,7 +4244,7 @@ class GanttRowPainter extends CustomPainter {
     }
   }
 
-  // NEW METHOD: Draw actual dates bar with overlap handling
+  // UPDATED METHOD: Draw actual dates bar with overlap handling - now draws full light bar first, then dark overlap, then dotted outline for whole
   void _drawActualGanttBar(Canvas canvas, Size size) {
     // Use scheduled dates as fallback if actual start/end missing
     final actualStart = row.actualStartDate ?? row.startDate!;
@@ -4264,54 +4264,36 @@ class GanttRowPainter extends CustomPainter {
     final barHeight = rowHeight * 0.6;
     final barTop = (rowHeight - barHeight) / 2;
     final lightColor = Colors.green.shade100; // Light tint
-    final darkColor = Colors.green.shade800;  // Dark shade for overlap
+    final darkColor = Colors.green.shade900;  // Darker shade for overlap (changed from shade800 to shade900 for more distinctness)
     final dottedBorderPaint = Paint()
       ..color = Colors.green.shade800
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
       ..strokeCap = StrokeCap.round;
 
-    // Calculate segments
-    // 1. Pre-scheduled extension (if actual start < scheduled start)
-    if (actualStartOffset < scheduledStartOffset) {
-      final preWidth = scheduledStartOffset - actualStartOffset;
-      final preRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(actualStartOffset + 2, barTop, preWidth - 4, barHeight),
-        Radius.circular(2),
-      );
-      final prePaint = Paint()..color = lightColor..style = PaintingStyle.fill;
-      canvas.drawRRect(preRect, prePaint);
-      _drawDashedRRect(canvas, preRect, dottedBorderPaint, [2, 2]);
-    }
+    // 1. Draw full actual bar with light color (no insets to avoid gaps)
+    final fullActualRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(actualStartOffset, barTop, actualBarWidth, barHeight),
+      Radius.circular(2),
+    );
+    final lightPaint = Paint()..color = lightColor..style = PaintingStyle.fill;
+    canvas.drawRRect(fullActualRect, lightPaint);
 
-    // 2. Overlap section (max(actualStart, scheduledStart) to min(actualEnd, scheduledEnd))
+    // 2. Overwrite overlap section with dark color (no insets)
     final overlapStart = math.max(actualStartOffset, scheduledStartOffset);
     final overlapEnd = math.min(actualEndOffset, scheduledEndOffset);
     if (overlapStart < overlapEnd) {
       final overlapWidth = overlapEnd - overlapStart;
       final overlapRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(overlapStart + 2, barTop, overlapWidth - 4, barHeight),
+        Rect.fromLTWH(overlapStart, barTop, overlapWidth, barHeight),
         Radius.circular(2),
       );
-      final overlapPaint = Paint()..color = darkColor..style = PaintingStyle.fill;
-      canvas.drawRRect(overlapRect, overlapPaint);
-      _drawDashedRRect(canvas, overlapRect, dottedBorderPaint, [2, 2]);
+      final darkPaint = Paint()..color = darkColor..style = PaintingStyle.fill;
+      canvas.drawRRect(overlapRect, darkPaint);
     }
 
-    // 3. Post-scheduled extension (if actual end > scheduled end, non-overlap parts)
-    if (actualEndOffset > scheduledEndOffset) {
-      final postWidth = actualEndOffset - scheduledEndOffset;
-      final postRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(scheduledEndOffset + 2, barTop, postWidth - 4, barHeight),
-        Radius.circular(2),
-      );
-      final postPaint = Paint()..color = lightColor..style = PaintingStyle.fill;
-      canvas.drawRRect(postRect, postPaint);
-      _drawDashedRRect(canvas, postRect, dottedBorderPaint, [2, 2]);
-    }
-
-    // 4. Non-overlapping actual in middle (if actual fully within scheduled, but since overlap is dark, and non-overlap light - but in this case, all is overlap)
-    // Handled above as overlap is dark, extensions are light
+    // 3. Draw dotted outline for the full actual bar
+    _drawDashedRRect(canvas, fullActualRect, dottedBorderPaint, [2, 2]);
   }
 
   // NEW HELPER METHOD: Draw dashed rounded rectangle
