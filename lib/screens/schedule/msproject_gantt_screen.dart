@@ -1334,7 +1334,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     return true;
   }
 
-  // Show parent task date violation dialog
+    // Show parent task date violation dialog
   void _showParentTaskDateViolationDialog(
     String message,
     String boundaryType,
@@ -1342,8 +1342,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     GanttRowData parentRow,
     GanttRowData childRow,
     int childIndex,
-    String dateType,
-  ) {
+    String dateType, {
+    bool isActual = false,
+  }) {
     final dateStr = DateFormat('MM/dd/yyyy').format(attemptedDate);
     final parentStartStr = parentRow.startDate != null 
         ? DateFormat('MM/dd/yyyy').format(parentRow.startDate!) 
@@ -1352,7 +1353,8 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         ? DateFormat('MM/dd/yyyy').format(parentRow.endDate!) 
         : 'Not set';
 
-    String fullMessage = '$message.\n\n';
+    String adjustedMessage = isActual ? message.replaceAll('selected', 'selected actual') : message;
+    String fullMessage = '$adjustedMessage.\n\n';
     fullMessage += 'Attempted date: $dateStr\n';
     fullMessage += 'Parent task "${parentRow.taskName ?? 'Unnamed'}" timeline: $parentStartStr - $parentEndStr\n\n';
     fullMessage += 'Would you like to adjust the parent task dates to accommodate this change?';
@@ -1425,6 +1427,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                   childIndex,
                   attemptedDate,
                   dateType,
+                  isActual: isActual,
                 );
               },
               style: ElevatedButton.styleFrom(
@@ -1457,13 +1460,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
   }
 
-  Future<void> _adjustParentTaskDates(
+  void _adjustParentTaskDates(
     GanttRowData parentRow,
     GanttRowData childRow,
     int childIndex,
     DateTime attemptedDate,
-    String dateType,
-  ) async {
+    String dateType, {
+    bool isActual = false,
+  }) async {
     widget.logger.i(
       '📅 Attempting to adjust parent task "${parentRow.taskName}" dates for child task change',
     );
@@ -1508,6 +1512,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             'Adjusting the MainTask would place it outside the project timeline',
             violationType,
             violatingDate,
+            isActual: isActual,
           );
           return;
         }
@@ -1547,23 +1552,33 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
       // CRITICAL FIX: Apply child date change AND perform full recalculation immediately
       if (dateType == 'start' || dateType == 'calculated_start') {
-        childRow.startDate = attemptedDate;
+        if (isActual) {
+          childRow.actualStartDate = attemptedDate;
+        } else {
+          childRow.startDate = attemptedDate;
+        }
       } else if (dateType == 'end' || dateType == 'calculated_end') {
-        childRow.endDate = attemptedDate;
+        if (isActual) {
+          childRow.actualEndDate = attemptedDate;
+        } else {
+          childRow.endDate = attemptedDate;
+        }
       }
 
       // Ensure child row is in edited rows
       _editedRows[childIndex] = childRow;
 
-      // CRITICAL FIX: Perform complete recalculation for the child row immediately
-      _performImmediateRecalculation(childRow, childIndex);
+      // CRITICAL FIX: Perform complete recalculation for the child row immediately if not actual
+      if (!isActual) {
+        _performImmediateRecalculation(childRow, childIndex);
+      }
     });
 
     // Check if parent needs further adjustment (e.g., its own parent)
     _updateParentDatesIfNeeded(parentRow, _getRowIndex(parentRow.id));
 
     widget.logger.i(
-      '✅ Successfully adjusted parent task dates and applied child task change with full recalculation',
+      '✅ Successfully adjusted parent task dates and applied child task change${isActual ? ' (actual dates)' : ''} with${isActual ? 'out' : ''} recalculation',
     );
 
     if (mounted) {
@@ -1947,6 +1962,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     );
     final cellStyle = GoogleFonts.poppins(fontSize: 11);
 
+    // Existing number column calculation
     double headerWidth = _measureText('No.', headerStyle) + 16;
     double maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -1961,6 +1977,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _numberColumnWidth = math.max(headerWidth, maxCellWidth);
 
+    // Existing task column calculation
     headerWidth = _measureText('Task Name', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -1972,6 +1989,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 48;
     _taskColumnWidth = math.max(headerWidth, maxCellWidth);
 
+    // Existing duration column calculation
     headerWidth = _measureText('Duration', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -1983,6 +2001,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _durationColumnWidth = math.max(headerWidth, maxCellWidth);
 
+    // Existing start column calculation
     headerWidth = _measureText('Start', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -1996,6 +2015,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 32;
     _startColumnWidth = math.max(headerWidth, maxCellWidth);
 
+    // Existing finish column calculation
     headerWidth = _measureText('Finish', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
@@ -2009,21 +2029,33 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     maxCellWidth += 48;
     _finishColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Compute for Resources column
+    // Existing resources column calculation
     headerWidth = _measureText('Resources', headerStyle) + 24;
     maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
-      String text = _getResourceDisplayText(row); // Use display text for measurement
+      String text = _getResourceDisplayText(row);
       double w = _measureText(text, cellStyle);
       if (w > maxCellWidth) maxCellWidth = w;
     }
     maxCellWidth += 32;
     _resourcesColumnWidth = math.max(headerWidth, maxCellWidth);
 
-    // Compute for Actual Dates column (empty for now)
+    // Compute for Actual Dates column
     headerWidth = _measureText('Actual Dates', headerStyle) + 24;
-    _actualDatesColumnWidth = math.max(headerWidth, 120.0);
+    maxCellWidth = 0;
+    for (int i = 0; i < _rows.length; i++) {
+      final row = _editedRows[i] ?? _rows[i];
+      if (row.canHaveActualDates) {
+        String text = row.actualDatesDisplayText.isNotEmpty 
+            ? row.actualDatesDisplayText 
+            : 'Add dates';
+        double w = _measureText(text, cellStyle);
+        if (w > maxCellWidth) maxCellWidth = w;
+      }
+    }
+    maxCellWidth += 32;
+    _actualDatesColumnWidth = math.max(headerWidth, maxCellWidth);
 
     widget.logger.d(
       '📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth, resources=$_resourcesColumnWidth, actualDates=$_actualDatesColumnWidth',
@@ -2175,17 +2207,19 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     widget.logger.d('📅 Sorted rows by hierarchy, total rows: ${_rows.length}');
   }
 
-  // NEW METHOD: Show project date violation dialog
   void _showProjectDateViolationDialog(
     String message,
     String boundaryType,
-    DateTime attemptedDate,
-  ) {
+    DateTime attemptedDate, {
+    bool isActual = false,
+  }) {
     final dateStr = DateFormat('MM/dd/yyyy').format(attemptedDate);
     final projectStartStr = DateFormat('MM/dd/yyyy').format(_projectStartDate!);
     final projectEndStr = DateFormat('MM/dd/yyyy').format(_projectEndDate!);
 
-    String fullMessage = '$message.\n\n';
+    String adjustedMessage = isActual ? message.replaceAll('date', 'actual date') : message;
+
+    String fullMessage = '$adjustedMessage.\n\n';
     fullMessage += 'Attempted date: $dateStr\n';
     fullMessage += 'Project timeline: $projectStartStr - $projectEndStr\n\n';
     fullMessage +=
@@ -2843,7 +2877,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
               rowData: row,
             ),
           ),
-          // Resources column Container :
+          // Resources column
           GestureDetector(
             key: resourceCellKey,
             onTap: () {
@@ -2901,15 +2935,68 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             ),
           ),
           // Actual Dates column
-          Container(
-            width: _actualDatesColumnWidth,
-            height: rowHeight,
-            decoration: BoxDecoration(
-              border: Border(
-                right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+          GestureDetector(
+            onTap: row.taskType == TaskType.task
+                ? () => _showActualDatesDialog(index)
+                : null,
+            child: Container(
+              width: _actualDatesColumnWidth,
+              height: rowHeight,
+              decoration: BoxDecoration(
+                border: Border(
+                  right: BorderSide(color: Colors.grey.shade300, width: 0.5),
+                ),
+                color: row.taskType == TaskType.task
+                    ? Colors.transparent
+                    : Colors.grey.shade100,
+              ),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
+                    if (row.actualStartDate != null || row.actualEndDate != null)
+                      Container(
+                        width: 6,
+                        height: 6,
+                        margin: EdgeInsets.only(right: 6),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _getActualDatesStatusColor(row),
+                        ),
+                      ),
+                    Expanded(
+                      child: Text(
+                        row.taskType == TaskType.task
+                            ? (row.actualDatesDisplayText.isNotEmpty
+                                ? row.actualDatesDisplayText
+                                : 'Add dates')
+                            : '',
+                        style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: (row.actualStartDate != null || row.actualEndDate != null)
+                              ? FontWeight.w500
+                              : FontWeight.w400,
+                          color: row.taskType == TaskType.task
+                              ? ((row.actualStartDate != null || row.actualEndDate != null)
+                                  ? Colors.grey.shade800
+                                  : Colors.grey.shade500)
+                              : Colors.grey.shade400,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (row.taskType == TaskType.task)
+                      Icon(
+                        Icons.calendar_today,
+                        size: 14,
+                        color: (row.actualStartDate != null || row.actualEndDate != null)
+                            ? Colors.blue.shade600
+                            : Colors.grey.shade400,
+                      ),
+                  ],
+                ),
               ),
             ),
-            child: Container(),
           ),
           // Gantt chart area
           Container(
@@ -2931,6 +3018,668 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Color _getActualDatesStatusColor(GanttRowData row) {
+    // Both dates present
+    if (row.actualStartDate != null && row.actualEndDate != null) {
+      return Colors.green.shade600;
+    }
+    // Only one date present
+    else if (row.actualStartDate != null || row.actualEndDate != null) {
+      return Colors.orange.shade600;
+    }
+    // No dates
+    return Colors.grey.shade400;
+  }
+
+  void _showActualDatesDialog(int index) {
+    final row = _editedRows[index] ?? _rows[index];
+    
+    // Determine dialog state based on existing data
+    bool hasActualStart = row.actualStartDate != null;
+    bool hasActualEnd = row.actualEndDate != null;
+    
+    String dialogTitle;
+    List<String> options;
+    
+    if (!hasActualStart && !hasActualEnd) {
+      // No dates saved
+      dialogTitle = 'Add Actual Dates';
+      options = ['Actual Start Date', 'Actual Finish Date'];
+    } else if (hasActualStart && !hasActualEnd) {
+      // Only start date saved
+      dialogTitle = 'Manage Actual Dates';
+      options = ['Edit Actual Start Date', 'Add Actual Finish Date'];
+    } else if (!hasActualStart && hasActualEnd) {
+      // Only finish date saved
+      dialogTitle = 'Manage Actual Dates';
+      options = ['Add Actual Start Date', 'Edit Actual Finish Date'];
+    } else {
+      // Both dates saved
+      dialogTitle = 'Edit Actual Dates';
+      options = ['Edit Actual Start Date', 'Edit Actual Finish Date'];
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                Icons.event_available,
+                color: Colors.blue.shade600,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  dialogTitle,
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            constraints: BoxConstraints(maxWidth: 350),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Task: ${row.taskName ?? "Unnamed Task"}',
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Scheduled: ${row.startDate != null ? DateFormat('MM/dd/yyyy').format(row.startDate!) : "N/A"} - ${row.endDate != null ? DateFormat('MM/dd/yyyy').format(row.endDate!) : "N/A"}',
+                  style: GoogleFonts.poppins(
+                    fontSize: 11,
+                    color: Colors.grey.shade500,
+                  ),
+                ),
+                if (hasActualStart || hasActualEnd) ...[
+                  SizedBox(height: 4),
+                  Text(
+                    'Current Actual: ${row.actualDatesDisplayText}',
+                    style: GoogleFonts.poppins(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.blue.shade600,
+                    ),
+                  ),
+                ],
+                SizedBox(height: 20),
+                Text(
+                  'Select action:',
+                  style: GoogleFonts.poppins(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+                SizedBox(height: 12),
+                ...options.map((option) => _buildDialogOption(
+                  option: option,
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    _handleActualDateSelection(index, option, row);
+                  },
+                )),
+                if (hasActualStart || hasActualEnd) ...[
+                  SizedBox(height: 12),
+                  Divider(height: 1, color: Colors.grey.shade300),
+                  SizedBox(height: 12),
+                  _buildDialogOption(
+                    option: 'Clear All Actual Dates',
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      _clearActualDates(index);
+                    },
+                    isDestructive: true,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+          ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 8,
+        );
+      },
+    );
+
+    widget.logger.d(
+      '📅 Showing actual dates dialog for row $index - hasStart: $hasActualStart, hasEnd: $hasActualEnd',
+    );
+  }
+
+  Widget _buildDialogOption({
+    required String option,
+    required VoidCallback onTap,
+    bool isDestructive = false,
+  }) {
+    IconData icon;
+    if (option.contains('Start')) {
+      icon = Icons.play_arrow;
+    } else if (option.contains('Finish')) {
+      icon = Icons.stop;
+    } else {
+      icon = Icons.delete_outline;
+    }
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border.all(
+            color: isDestructive ? Colors.red.shade200 : Colors.grey.shade300,
+            width: 1,
+          ),
+          borderRadius: BorderRadius.circular(8),
+          color: isDestructive ? Colors.red.shade50 : Colors.grey.shade50,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              size: 18,
+              color: isDestructive ? Colors.red.shade600 : Colors.blue.shade600,
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                option,
+                style: GoogleFonts.poppins(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: isDestructive ? Colors.red.shade700 : Colors.grey.shade800,
+                ),
+              ),
+            ),
+            Icon(
+              Icons.arrow_forward_ios,
+              size: 14,
+              color: isDestructive ? Colors.red.shade400 : Colors.grey.shade400,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _handleActualDateSelection(int index, String option, GanttRowData row) {
+    widget.logger.d('📅 User selected: $option for row $index');
+
+    if (option.contains('Start')) {
+      _selectActualStartDate(index, row, isEdit: option.contains('Edit'));
+    } else if (option.contains('Finish')) {
+      _selectActualFinishDate(index, row, isEdit: option.contains('Edit'));
+    }
+  }
+
+  Future<void> _selectActualStartDate(int index, GanttRowData row, {required bool isEdit}) async {
+    // Set broad range for picker to allow selections outside current bounds
+    DateTime firstDate = DateTime(2020);
+    DateTime lastDate = DateTime(2030);
+    
+    // Do not tighten to scheduled dates (loosened as per requirement)
+    // Still apply parent if exists, but only as initial, since post-validation will handle violations
+    final parentRow = _getParentRow(row);
+    if (parentRow != null) {
+      if (parentRow.startDate != null) {
+        firstDate = parentRow.startDate!;
+      }
+      if (parentRow.endDate != null) {
+        lastDate = parentRow.endDate!;
+      }
+    }
+
+    // Apply project bounds as soft (picker uses parent, but broad if no)
+    if (_projectStartDate != null) {
+      firstDate = _projectStartDate!;
+    }
+    if (_projectEndDate != null) {
+      lastDate = _projectEndDate!;
+    }
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: isEdit && row.actualStartDate != null
+          ? row.actualStartDate!
+          : (row.startDate ?? DateTime.now()),
+      firstDate: firstDate,
+      lastDate: lastDate,
+      helpText: isEdit ? 'Edit Actual Start Date' : 'Add Actual Start Date',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Colors.blue.shade600,
+              onPrimary: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (selectedDate != null) {
+      // 1. Internal consistency validation
+      if (row.actualEndDate != null && selectedDate.isAfter(row.actualEndDate!)) {
+        _showActualDateViolationDialog(
+          'Actual start date cannot be after actual finish date',
+          selectedDate,
+          row.actualEndDate!,
+          'start_after_end',
+          index,
+          allowOverride: false,
+        );
+        return;
+      }
+
+      // 2. Project bounds validation
+      if (_projectStartDate != null && selectedDate.isBefore(_projectStartDate!)) {
+        _showProjectDateViolationDialog(
+          'The selected actual start date is before the project start date',
+          'start',
+          selectedDate,
+        );
+        return;
+      }
+      if (_projectEndDate != null && selectedDate.isAfter(_projectEndDate!)) {
+        _showProjectDateViolationDialog(
+          'The selected actual start date is after the project end date',
+          'end',
+          selectedDate,
+        );
+        return;
+      }
+
+      // 3. Parent bounds validation
+      if (parentRow != null) {
+        if (parentRow.startDate != null && selectedDate.isBefore(parentRow.startDate!)) {
+          _showParentTaskDateViolationDialog(
+            'Your selected actual start date is before the parent task start date',
+            'start',
+            selectedDate,
+            parentRow,
+            row,
+            index,
+            'start',
+            isActual: true,
+          );
+          return;
+        }
+        if (parentRow.endDate != null && selectedDate.isAfter(parentRow.endDate!)) {
+          _showParentTaskDateViolationDialog(
+            'Your selected actual start date is after the parent task end date',
+            'end',
+            selectedDate,
+            parentRow,
+            row,
+            index,
+            'start',
+            isActual: true,
+          );
+          return;
+        }
+      }
+
+      // 4. Scheduled variance warning (allow override)
+      if (row.startDate != null && selectedDate.isBefore(row.startDate!)) {
+        _showActualDateViolationDialog(
+          'Actual start date is before the scheduled start date',
+          selectedDate,
+          row.startDate!,
+          'before_scheduled_start',
+          index,
+          allowOverride: true,
+          onOverride: () => _applyActualStartDate(index, selectedDate),
+        );
+        return;
+      }
+
+      // If all validations pass, apply the date
+      _applyActualStartDate(index, selectedDate);
+    }
+  }
+
+  Future<void> _selectActualFinishDate(int index, GanttRowData row, {required bool isEdit}) async {
+    // Set broad range for picker to allow selections outside current bounds
+    DateTime firstDate = DateTime(2020);
+    DateTime lastDate = DateTime(2030);
+    
+    // Still apply parent if exists, but only as initial, since post-validation will handle violations
+    final parentRow = _getParentRow(row);
+    if (parentRow != null) {
+      if (parentRow.startDate != null) {
+        firstDate = parentRow.startDate!;
+      }
+      if (parentRow.endDate != null) {
+        lastDate = parentRow.endDate!;
+      }
+    }
+
+    // Apply project bounds as soft
+    if (_projectStartDate != null) {
+      firstDate = _projectStartDate!;
+    }
+    if (_projectEndDate != null) {
+      lastDate = _projectEndDate!;
+    }
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: isEdit && row.actualEndDate != null
+          ? row.actualEndDate!
+          : (row.endDate ?? DateTime.now()),
+      firstDate: firstDate,
+      lastDate: lastDate,
+      helpText: isEdit ? 'Edit Actual Finish Date' : 'Add Actual Finish Date',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Colors.blue.shade600,
+              onPrimary: Colors.white,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (selectedDate != null) {
+      // 1. Internal consistency validation
+      if (row.actualStartDate != null && selectedDate.isBefore(row.actualStartDate!)) {
+        _showActualDateViolationDialog(
+          'Actual finish date cannot be before actual start date',
+          selectedDate,
+          row.actualStartDate!,
+          'end_before_start',
+          index,
+          allowOverride: false,
+        );
+        return;
+      }
+
+      // 2. Project bounds validation
+      if (_projectStartDate != null && selectedDate.isBefore(_projectStartDate!)) {
+        _showProjectDateViolationDialog(
+          'The selected actual finish date is before the project start date',
+          'start',
+          selectedDate,
+        );
+        return;
+      }
+      if (_projectEndDate != null && selectedDate.isAfter(_projectEndDate!)) {
+        _showProjectDateViolationDialog(
+          'The selected actual finish date is after the project end date',
+          'end',
+          selectedDate,
+        );
+        return;
+      }
+
+      // 3. Parent bounds validation
+      if (parentRow != null) {
+        if (parentRow.startDate != null && selectedDate.isBefore(parentRow.startDate!)) {
+          _showParentTaskDateViolationDialog(
+            'Your selected actual finish date is before the parent task start date',
+            'start',
+            selectedDate,
+            parentRow,
+            row,
+            index,
+            'end',
+            isActual: true,
+          );
+          return;
+        }
+        if (parentRow.endDate != null && selectedDate.isAfter(parentRow.endDate!)) {
+          _showParentTaskDateViolationDialog(
+            'Your selected actual finish date is after the parent task end date',
+            'end',
+            selectedDate,
+            parentRow,
+            row,
+            index,
+            'end',
+            isActual: true,
+          );
+          return;
+        }
+      }
+
+      // 4. Scheduled variance warning (allow override)
+      if (row.endDate != null && selectedDate.isAfter(row.endDate!)) {
+        _showActualDateViolationDialog(
+          'Actual finish date is after the scheduled finish date',
+          selectedDate,
+          row.endDate!,
+          'after_scheduled_end',
+          index,
+          allowOverride: true,
+          onOverride: () => _applyActualFinishDate(index, selectedDate),
+        );
+        return;
+      }
+
+      // If all validations pass, apply the date
+      _applyActualFinishDate(index, selectedDate);
+    }
+  }
+
+  void _applyActualStartDate(int index, DateTime date) {
+    setState(() {
+      final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
+      row.actualStartDate = date;
+      _editedRows[index] = row;
+      _computeColumnWidths();
+    });
+
+    widget.logger.i(
+      '✅ Applied actual start date: ${DateFormat('MM/dd/yyyy').format(date)} to row $index',
+    );
+
+    if (mounted) {
+      _showSuccessSnackbar('Actual start date set to ${DateFormat('MM/dd/yyyy').format(date)}');
+    }
+  }
+
+  void _applyActualFinishDate(int index, DateTime date) {
+    setState(() {
+      final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
+      row.actualEndDate = date;
+      _editedRows[index] = row;
+      _computeColumnWidths();
+    });
+
+    widget.logger.i(
+      '✅ Applied actual finish date: ${DateFormat('MM/dd/yyyy').format(date)} to row $index',
+    );
+
+    if (mounted) {
+      _showSuccessSnackbar('Actual finish date set to ${DateFormat('MM/dd/yyyy').format(date)}');
+    }
+  }
+
+  void _clearActualDates(int index) {
+    setState(() {
+      final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
+      row.actualStartDate = null;
+      row.actualEndDate = null;
+      _editedRows[index] = row;
+      _computeColumnWidths();
+    });
+
+    widget.logger.i(
+      '🗑️ Cleared actual dates for row $index',
+    );
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Actual dates cleared',
+                  style: GoogleFonts.poppins(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.blue.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _showActualDateViolationDialog(
+    String message,
+    DateTime attemptedDate,
+    DateTime boundaryDate,
+    String violationType,
+    int index, {
+    bool allowOverride = false,
+    VoidCallback? onOverride,
+  }) {
+    final attemptedStr = DateFormat('MM/dd/yyyy').format(attemptedDate);
+    final boundaryStr = DateFormat('MM/dd/yyyy').format(boundaryDate);
+
+    String fullMessage = '$message.\n\n';
+    fullMessage += 'Attempted date: $attemptedStr\n';
+    fullMessage += 'Boundary date: $boundaryStr\n';
+
+    if (allowOverride) {
+      fullMessage += '\nThis may indicate a schedule variance. Continue anyway?';
+    }
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                Icons.warning_amber_rounded,
+                color: Colors.orange.shade600,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Actual Date Constraint',
+                  style: GoogleFonts.poppins(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            constraints: BoxConstraints(maxWidth: 400),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  fullMessage,
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    height: 1.4,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                widget.logger.i(
+                  '📅 User canceled actual date selection due to violation: $violationType',
+                );
+              },
+              child: Text(
+                'Cancel',
+                style: GoogleFonts.poppins(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ),
+            if (allowOverride)
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  onOverride?.call();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue.shade600,
+                  foregroundColor: Colors.white,
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                child: Text(
+                  'Continue Anyway',
+                  style: GoogleFonts.poppins(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+          ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 8,
+        );
+      },
+    );
+
+    widget.logger.w(
+      '⚠️ Actual date violation: $message for date $attemptedStr (type: $violationType)',
     );
   }
 

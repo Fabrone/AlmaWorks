@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 enum TaskType { mainTask, subTask, task }
 
@@ -25,6 +26,10 @@ class GanttRowData {
   // New: Resource assignment field
   String? resourceId;
 
+  // NEW: Actual dates fields
+  DateTime? actualStartDate;
+  DateTime? actualEndDate;
+
   GanttRowData({
     required this.id,
     this.firestoreId,
@@ -42,6 +47,8 @@ class GanttRowData {
     List<String>? childIds,
     this.resourceId,
     this.resourceQuantity,
+    this.actualStartDate,
+    this.actualEndDate,
   }) : childIds = childIds ?? <String>[];
 
   factory GanttRowData.from(GanttRowData other) {
@@ -62,11 +69,10 @@ class GanttRowData {
       childIds: List<String>.from(other.childIds),
       resourceId: other.resourceId,
       resourceQuantity: other.resourceQuantity,
+      actualStartDate: other.actualStartDate,
+      actualEndDate: other.actualEndDate,
     );
   }
-
-  bool get hasData =>
-      taskName?.isNotEmpty == true && startDate != null && endDate != null;
 
   factory GanttRowData.fromFirebaseMap(String firestoreId, Map<String, dynamic> data) {
     TaskType taskType = TaskType.task;
@@ -108,6 +114,8 @@ class GanttRowData {
       childIds: childIdsList,
       resourceId: data['resourceId'] as String?,
       resourceQuantity: data['resourceQuantity'] as String?,
+      actualStartDate: (data['actualStartDate'] as Timestamp?)?.toDate(),
+      actualEndDate: (data['actualEndDate'] as Timestamp?)?.toDate(),
     );
   }
 
@@ -146,6 +154,8 @@ class GanttRowData {
       'childIds': childIds,
       'resourceId': resourceId,
       'resourceQuantity': resourceQuantity,
+      'actualStartDate': actualStartDate != null ? Timestamp.fromDate(actualStartDate!) : null,
+      'actualEndDate': actualEndDate != null ? Timestamp.fromDate(actualEndDate!) : null,
     };
   }
 
@@ -162,6 +172,8 @@ class GanttRowData {
     String? projectName,
     String? resourceId,
     String? resourceQuantity,
+    DateTime? actualStartDate,
+    DateTime? actualEndDate,
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -180,12 +192,14 @@ class GanttRowData {
       childIds: List.from(childIds),
       resourceId: resourceId ?? this.resourceId,
       resourceQuantity: resourceQuantity ?? this.resourceQuantity,
+      actualStartDate: actualStartDate ?? this.actualStartDate,
+      actualEndDate: actualEndDate ?? this.actualEndDate,
     );
   }
 
   @override
   String toString() {
-    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName, resourceId: $resourceId)';
+    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName, resourceId: $resourceId, actualStartDate: $actualStartDate, actualEndDate: $actualEndDate)';
   }
 
   @override
@@ -202,7 +216,9 @@ class GanttRowData {
         other.isUnsaved == isUnsaved &&
         other.projectId == projectId &&
         other.projectName == projectName &&
-        other.resourceId == resourceId;
+        other.resourceId == resourceId &&
+        other.actualStartDate == actualStartDate &&
+        other.actualEndDate == actualEndDate;
   }
 
   @override
@@ -217,7 +233,9 @@ class GanttRowData {
         isUnsaved.hashCode ^
         projectId.hashCode ^
         projectName.hashCode ^
-        resourceId.hashCode;
+        resourceId.hashCode ^
+        actualStartDate.hashCode ^
+        actualEndDate.hashCode;
   }
 
   String get taskTypeDisplayText {
@@ -231,9 +249,22 @@ class GanttRowData {
     }
   }
 
-  bool get isMainTask => taskType == TaskType.mainTask;
+  bool get hasData =>
+      taskName?.isNotEmpty == true && startDate != null && endDate != null;
 
-  bool get isSubTask => taskType == TaskType.subTask;
-
-  bool get isRegularTask => taskType == TaskType.task;
+  // NEW: Helper getter for formatted actual dates display
+  String get actualDatesDisplayText {
+    if (actualStartDate == null && actualEndDate == null) {
+      return '';
+    } else if (actualStartDate != null && actualEndDate != null) {
+      return '${DateFormat('MM/dd/yy').format(actualStartDate!)} - ${DateFormat('MM/dd/yy').format(actualEndDate!)}';
+    } else if (actualStartDate != null) {
+      return '${DateFormat('MM/dd/yy').format(actualStartDate!)} - ...';
+    } else {
+      return '... - ${DateFormat('MM/dd/yy').format(actualEndDate!)}';
+    }
+  }
+  
+  // NEW: Check if row can have actual dates (only regular tasks)
+  bool get canHaveActualDates => taskType == TaskType.task;
 }
