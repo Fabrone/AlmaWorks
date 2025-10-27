@@ -322,8 +322,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
   Future<void> _checkForNotifications() async {
     if (kIsWeb) return;
 
-    final DateTime now = DateTime.now();
-
     final List<GanttRowData> notifyTasks = _startingSoonTasks;
 
     if (notifyTasks.isNotEmpty) {
@@ -390,7 +388,12 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           widget.logger.e('❌ ScheduleMonitor: Error in stream', error: snapshot.error);
-          return Center(child: Text('Error loading data', style: GoogleFonts.poppins(color: Colors.red)));
+          return Center(
+            child: Text(
+              'Error loading data',
+              style: GoogleFonts.poppins(color: Colors.red),
+            ),
+          );
         }
 
         if (!snapshot.hasData) {
@@ -415,17 +418,23 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
           },
           child: Column(
             children: [
+              // Search bar
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: TextField(
                   controller: _searchController,
                   decoration: InputDecoration(
                     labelText: 'Search Tasks',
-                    suffixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
+                    suffixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    filled: true,
+                    fillColor: Colors.grey.shade50,
                   ),
                 ),
               ),
+              // Task list
               Expanded(
                 child: ListView(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -435,20 +444,89 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          _buildSectionHeader('Starting Soon (<=3 days)', Colors.orange),
-                          ..._filterTasks(_startingSoonTasks).map((task) => _buildTaskItem(task, Colors.orange)),
-                          const SizedBox(height: 16),
-                          _buildSectionHeader('Other Upcoming', Colors.grey),
-                          ..._filterTasks(_otherUpcomingTasks).map((task) => _buildTaskItem(task, Colors.grey)),
-                          const SizedBox(height: 16),
-                          _buildSectionHeader('Ongoing', Colors.yellow),
-                          ..._filterTasks(_ongoingTasks).map((task) => _buildTaskItem(task, Colors.yellow)),
-                          const SizedBox(height: 16),
-                          _buildSectionHeader('Overdue', Colors.red),
-                          ..._filterTasks(_overdueTasks).map((task) => _buildTaskItem(task, Colors.red)),
-                          const SizedBox(height: 16),
-                          _buildSectionHeader('Completed', Colors.green),
-                          ..._filterTasks(_completedTasks).map((task) => _buildTaskItem(task, Colors.green)),
+                          if (_filterTasks(_startingSoonTasks).isNotEmpty) ...[
+                            _buildSectionHeader(
+                              'Starting Soon (≤3 days)',
+                              Colors.orange.shade700,
+                              _filterTasks(_startingSoonTasks).length,
+                            ),
+                            ..._filterTasks(_startingSoonTasks).map(
+                              (task) => _buildTaskItem(task, Colors.orange.shade700),
+                            ),
+                          ],
+                          
+                          if (_filterTasks(_otherUpcomingTasks).isNotEmpty) ...[
+                            _buildSectionHeader(
+                              'Other Upcoming',
+                              Colors.blue.shade600,
+                              _filterTasks(_otherUpcomingTasks).length,
+                            ),
+                            ..._filterTasks(_otherUpcomingTasks).map(
+                              (task) => _buildTaskItem(task, Colors.blue.shade600),
+                            ),
+                          ],
+                          
+                          if (_filterTasks(_ongoingTasks).isNotEmpty) ...[
+                            _buildSectionHeader(
+                              'Ongoing',
+                              Colors.amber.shade700,
+                              _filterTasks(_ongoingTasks).length,
+                            ),
+                            ..._filterTasks(_ongoingTasks).map(
+                              (task) => _buildTaskItem(task, Colors.amber.shade700),
+                            ),
+                          ],
+                          
+                          if (_filterTasks(_overdueTasks).isNotEmpty) ...[
+                            _buildSectionHeader(
+                              'Overdue',
+                              Colors.red.shade700,
+                              _filterTasks(_overdueTasks).length,
+                            ),
+                            ..._filterTasks(_overdueTasks).map(
+                              (task) => _buildTaskItem(task, Colors.red.shade700),
+                            ),
+                          ],
+                          
+                          if (_filterTasks(_completedTasks).isNotEmpty) ...[
+                            _buildSectionHeader(
+                              'Completed',
+                              Colors.green.shade600,
+                              _filterTasks(_completedTasks).length,
+                            ),
+                            ..._filterTasks(_completedTasks).map(
+                              (task) => _buildTaskItem(task, Colors.green.shade600),
+                            ),
+                          ],
+                          
+                          // Empty state if all filtered out
+                          if (_filterTasks(_startingSoonTasks).isEmpty &&
+                              _filterTasks(_otherUpcomingTasks).isEmpty &&
+                              _filterTasks(_ongoingTasks).isEmpty &&
+                              _filterTasks(_overdueTasks).isEmpty &&
+                              _filterTasks(_completedTasks).isEmpty &&
+                              _searchQuery.isNotEmpty) ...[
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  children: [
+                                    Icon(Icons.search_off, size: 64, color: Colors.grey.shade400),
+                                    const SizedBox(height: 16),
+                                    Text(
+                                      'No tasks match your search',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 16,
+                                        color: Colors.grey.shade600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                          
+                          const SizedBox(height: 24), // Bottom padding
                         ],
                       ),
                     ),
@@ -462,16 +540,47 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     );
   }
 
-  Widget _buildSectionHeader(String title, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Text(
-        title,
-        style: GoogleFonts.poppins(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          color: color,
+  Widget _buildSectionHeader(String title, Color color, int count) {
+    return Container(
+      margin: const EdgeInsets.only(top: 16, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: color,
+            width: 4,
+          ),
         ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: color.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              count.toString(),
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -509,28 +618,219 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     );
   }
 
-  Widget _buildTaskItem(GanttRowData task, Color color) {
-    return Card(
-      color: color.withAlpha((255 * 0.1).toInt()),
-      margin: const EdgeInsets.symmetric(vertical: 8),
-      child: ListTile(
-        title: Text(
-          task.taskName ?? 'Untitled',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          '${_dateFormat.format(task.startDate!)} - ${_dateFormat.format(task.endDate!)} | Duration: ${task.duration} days',
-          style: GoogleFonts.poppins(color: Colors.grey.shade600),
-        ),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) {
-            TaskStatus newStatus = value == 'started' ? TaskStatus.started : TaskStatus.completed;
-            _updateTaskStatus(task, newStatus);
-          },
-          itemBuilder: (context) => [
-            const PopupMenuItem(value: 'started', child: Text('Mark Started')),
-            const PopupMenuItem(value: 'completed', child: Text('Mark Completed')),
-          ],
+  Widget _buildTaskItem(GanttRowData task, Color accentColor) {
+    // Calculate progress indicator
+    final DateTime now = DateTime.now();
+    final int daysUntilStart = task.startDate!.difference(now).inDays;
+    final int daysUntilEnd = task.endDate!.difference(now).inDays;
+    
+    String urgencyText = '';
+    IconData urgencyIcon = Icons.info_outline;
+    
+    if (daysUntilStart <= 3 && daysUntilStart > 0) {
+      urgencyText = 'Starts in $daysUntilStart day${daysUntilStart == 1 ? '' : 's'}';
+      urgencyIcon = Icons.timer_outlined;
+    } else if (daysUntilEnd <= 3 && daysUntilEnd >= 0) {
+      urgencyText = 'Due in $daysUntilEnd day${daysUntilEnd == 1 ? '' : 's'}';
+      urgencyIcon = Icons.warning_amber_outlined;
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: accentColor.withValues(alpha: 0.3), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: accentColor.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              // Colored accent strip on the left
+              Container(
+                width: 5,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      accentColor,
+                      accentColor.withValues(alpha: 0.7),
+                    ],
+                  ),
+                ),
+              ),
+              // Main content
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Task name and menu
+                      Row(
+                        children: [
+                          // Status indicator dot
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: accentColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              task.taskName ?? 'Untitled Task',
+                              style: GoogleFonts.poppins(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                          ),
+                          // Action menu
+                          Material(
+                            color: Colors.transparent,
+                            child: PopupMenuButton<String>(
+                              icon: Icon(
+                                Icons.more_vert,
+                                color: Colors.grey.shade600,
+                                size: 20,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              onSelected: (value) {
+                                TaskStatus newStatus = value == 'started' 
+                                    ? TaskStatus.started 
+                                    : TaskStatus.completed;
+                                _updateTaskStatus(task, newStatus);
+                              },
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  value: 'started',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.play_circle_outline, 
+                                          size: 20, 
+                                          color: Colors.blue.shade600),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        'Mark Started',
+                                        style: GoogleFonts.poppins(fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'completed',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.check_circle_outline, 
+                                          size: 20, 
+                                          color: Colors.green.shade600),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        'Mark Completed',
+                                        style: GoogleFonts.poppins(fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      
+                      // Date range with icons
+                      Row(
+                        children: [
+                          Icon(Icons.calendar_today_outlined, 
+                              size: 14, 
+                              color: Colors.grey.shade600),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${_dateFormat.format(task.startDate!)} - ${_dateFormat.format(task.endDate!)}',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      
+                      // Duration with icon
+                      Row(
+                        children: [
+                          Icon(Icons.timelapse_outlined, 
+                              size: 14, 
+                              color: Colors.grey.shade600),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Duration: ${task.duration} day${task.duration == 1 ? '' : 's'}',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // Urgency chip (if applicable)
+                      if (urgencyText.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: accentColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: accentColor.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                urgencyIcon,
+                                size: 14,
+                                color: accentColor,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                urgencyText,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: accentColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
