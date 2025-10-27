@@ -1,7 +1,10 @@
+// Updated GanttRowData model
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 enum TaskType { mainTask, subTask, task }
+
+enum TaskStatus { overdue, ongoing, upcoming, started, completed }
 
 class GanttRowData {  
   final String id;
@@ -30,6 +33,9 @@ class GanttRowData {
   DateTime? actualStartDate;
   DateTime? actualEndDate;
 
+  // NEW: Task status
+  TaskStatus? status;
+
   GanttRowData({
     required this.id,
     this.firestoreId,
@@ -49,6 +55,7 @@ class GanttRowData {
     this.resourceQuantity,
     this.actualStartDate,
     this.actualEndDate,
+    this.status,
   }) : childIds = childIds ?? <String>[];
 
   factory GanttRowData.from(GanttRowData other) {
@@ -71,6 +78,7 @@ class GanttRowData {
       resourceQuantity: other.resourceQuantity,
       actualStartDate: other.actualStartDate,
       actualEndDate: other.actualEndDate,
+      status: other.status,
     );
   }
 
@@ -87,6 +95,27 @@ class GanttRowData {
         case 'Task':
         default:
           taskType = TaskType.task;
+          break;
+      }
+    }
+
+    TaskStatus? taskStatus;
+    if (data['status'] != null) {
+      switch (data['status'].toString().toUpperCase()) {
+        case 'OVERDUE':
+          taskStatus = TaskStatus.overdue;
+          break;
+        case 'ONGOING':
+          taskStatus = TaskStatus.ongoing;
+          break;
+        case 'UPCOMING':
+          taskStatus = TaskStatus.upcoming;
+          break;
+        case 'STARTED':
+          taskStatus = TaskStatus.started;
+          break;
+        case 'COMPLETED':
+          taskStatus = TaskStatus.completed;
           break;
       }
     }
@@ -116,6 +145,7 @@ class GanttRowData {
       resourceQuantity: data['resourceQuantity'] as String?,
       actualStartDate: (data['actualStartDate'] as Timestamp?)?.toDate(),
       actualEndDate: (data['actualEndDate'] as Timestamp?)?.toDate(),
+      status: taskStatus,
     );
   }
 
@@ -156,6 +186,7 @@ class GanttRowData {
       'resourceQuantity': resourceQuantity,
       'actualStartDate': actualStartDate != null ? Timestamp.fromDate(actualStartDate!) : null,
       'actualEndDate': actualEndDate != null ? Timestamp.fromDate(actualEndDate!) : null,
+      if (status != null) 'status': status!.toString().split('.').last.toUpperCase(),
     };
   }
 
@@ -174,6 +205,7 @@ class GanttRowData {
     String? resourceQuantity,
     DateTime? actualStartDate,
     DateTime? actualEndDate,
+    TaskStatus? status,
   }) {
     return GanttRowData(
       id: id ?? this.id,
@@ -194,12 +226,13 @@ class GanttRowData {
       resourceQuantity: resourceQuantity ?? this.resourceQuantity,
       actualStartDate: actualStartDate ?? this.actualStartDate,
       actualEndDate: actualEndDate ?? this.actualEndDate,
+      status: status ?? this.status,
     );
   }
 
   @override
   String toString() {
-    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName, resourceId: $resourceId, actualStartDate: $actualStartDate, actualEndDate: $actualEndDate)';
+    return 'GanttRowData(id: $id, firestoreId: $firestoreId, taskName: $taskName, duration: $duration, startDate: $startDate, endDate: $endDate, taskType: $taskType, isUnsaved: $isUnsaved, projectId: $projectId, projectName: $projectName, resourceId: $resourceId, actualStartDate: $actualStartDate, actualEndDate: $actualEndDate, status: $status)';
   }
 
   @override
@@ -218,7 +251,8 @@ class GanttRowData {
         other.projectName == projectName &&
         other.resourceId == resourceId &&
         other.actualStartDate == actualStartDate &&
-        other.actualEndDate == actualEndDate;
+        other.actualEndDate == actualEndDate &&
+        other.status == status;
   }
 
   @override
@@ -235,7 +269,8 @@ class GanttRowData {
         projectName.hashCode ^
         resourceId.hashCode ^
         actualStartDate.hashCode ^
-        actualEndDate.hashCode;
+        actualEndDate.hashCode ^
+        status.hashCode;
   }
 
   String get taskTypeDisplayText {

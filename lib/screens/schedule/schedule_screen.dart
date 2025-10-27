@@ -1,7 +1,7 @@
 import 'package:almaworks/models/project_model.dart';
-import 'package:almaworks/screens/schedule/critical_path_screen.dart';
 import 'package:almaworks/screens/schedule/msproject_gantt_screen.dart';
 import 'package:almaworks/screens/schedule/purchasing_plan_screen.dart';
+import 'package:almaworks/screens/schedule/schedule_monitor_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -87,7 +87,7 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                           ),
                           tabs: const [
                             Tab(text: 'Gantt Chart'),
-                            Tab(text: 'Critical Path'),
+                            Tab(text: 'Schedule Monitor'),
                             Tab(text: 'Purchasing Plan/Resources'),
                             Tab(text: 'Updates'),
                           ],
@@ -106,7 +106,7 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                               project: widget.project,
                               logger: widget.logger,
                             ),
-                            CriticalPathScreen(
+                            ScheduleMonitorScreen(
                               project: widget.project,
                               logger: widget.logger,
                               projectId: widget.project.id, 
