@@ -186,7 +186,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       "scheduleMonitorTask",
       frequency: const Duration(hours: 1),
       inputData: {'projectId': widget.projectId},
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep, // Corrected type
     );
     widget.logger.i('Registered background task for project ${widget.projectId}');
   }
@@ -379,6 +379,12 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
   @override
   Widget build(BuildContext context) {
+    final Color overdueColor = Colors.red.shade700;
+    final Color ongoingColor = Colors.blue.shade600;
+    final Color startingSoonColor = Colors.orange.shade700;
+    final Color upcomingColor = Colors.grey.shade700;
+    final Color completedColor = Colors.green.shade600;
+
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('Schedule')
@@ -412,131 +418,135 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
         if (tasks.isEmpty) return _buildEmptyState();
 
-        return RefreshIndicator(
-          onRefresh: () async {
-            _checkForNotifications();
-          },
-          child: Column(
-            children: [
-              // Search bar
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: TextField(
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    labelText: 'Search Tasks',
-                    suffixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+        final filteredOverdue = _filterTasks(_overdueTasks);
+        final filteredOngoing = _filterTasks(_ongoingTasks);
+        final filteredStartingSoon = _filterTasks(_startingSoonTasks);
+        final filteredOtherUpcoming = _filterTasks(_otherUpcomingTasks);
+        final filteredCompleted = _filterTasks(_completedTasks);
+        final upcomingCount = filteredStartingSoon.length + filteredOtherUpcoming.length;
+
+        return DefaultTabController(
+          length: 4,
+          child: RefreshIndicator(
+            onRefresh: () async {
+              _checkForNotifications();
+            },
+            child: Column(
+              children: [
+                // Search bar
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'Search Tasks',
+                      suffixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      filled: true,
+                      fillColor: Colors.grey.shade50,
                     ),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
                   ),
                 ),
-              ),
-              // Task list
-              Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  children: [
-                    FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (_filterTasks(_startingSoonTasks).isNotEmpty) ...[
-                            _buildSectionHeader(
-                              'Starting Soon (≤3 days)',
-                              Colors.orange.shade700,
-                              _filterTasks(_startingSoonTasks).length,
-                            ),
-                            ..._filterTasks(_startingSoonTasks).map(
-                              (task) => _buildTaskItem(task, Colors.orange.shade700),
-                            ),
-                          ],
-                          
-                          if (_filterTasks(_otherUpcomingTasks).isNotEmpty) ...[
-                            _buildSectionHeader(
-                              'Other Upcoming',
-                              Colors.blue.shade600,
-                              _filterTasks(_otherUpcomingTasks).length,
-                            ),
-                            ..._filterTasks(_otherUpcomingTasks).map(
-                              (task) => _buildTaskItem(task, Colors.blue.shade600),
-                            ),
-                          ],
-                          
-                          if (_filterTasks(_ongoingTasks).isNotEmpty) ...[
-                            _buildSectionHeader(
-                              'Ongoing',
-                              Colors.amber.shade700,
-                              _filterTasks(_ongoingTasks).length,
-                            ),
-                            ..._filterTasks(_ongoingTasks).map(
-                              (task) => _buildTaskItem(task, Colors.amber.shade700),
-                            ),
-                          ],
-                          
-                          if (_filterTasks(_overdueTasks).isNotEmpty) ...[
-                            _buildSectionHeader(
-                              'Overdue',
-                              Colors.red.shade700,
-                              _filterTasks(_overdueTasks).length,
-                            ),
-                            ..._filterTasks(_overdueTasks).map(
-                              (task) => _buildTaskItem(task, Colors.red.shade700),
-                            ),
-                          ],
-                          
-                          if (_filterTasks(_completedTasks).isNotEmpty) ...[
-                            _buildSectionHeader(
-                              'Completed',
-                              Colors.green.shade600,
-                              _filterTasks(_completedTasks).length,
-                            ),
-                            ..._filterTasks(_completedTasks).map(
-                              (task) => _buildTaskItem(task, Colors.green.shade600),
-                            ),
-                          ],
-                          
-                          // Empty state if all filtered out
-                          if (_filterTasks(_startingSoonTasks).isEmpty &&
-                              _filterTasks(_otherUpcomingTasks).isEmpty &&
-                              _filterTasks(_ongoingTasks).isEmpty &&
-                              _filterTasks(_overdueTasks).isEmpty &&
-                              _filterTasks(_completedTasks).isEmpty &&
-                              _searchQuery.isNotEmpty) ...[
-                            Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(32),
-                                child: Column(
-                                  children: [
-                                    Icon(Icons.search_off, size: 64, color: Colors.grey.shade400),
-                                    const SizedBox(height: 16),
-                                    Text(
-                                      'No tasks match your search',
-                                      style: GoogleFonts.poppins(
-                                        fontSize: 16,
-                                        color: Colors.grey.shade600,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                          
-                          const SizedBox(height: 24), // Bottom padding
-                        ],
-                      ),
-                    ),
+                // Tabs
+                TabBar(
+                  tabs: [
+                    Tab(text: 'Overdue (${filteredOverdue.length})'),
+                    Tab(text: 'Ongoing (${filteredOngoing.length})'),
+                    Tab(text: 'Upcoming ($upcomingCount)'),
+                    Tab(text: 'Completed (${filteredCompleted.length})'),
                   ],
                 ),
-              ),
-            ],
+                // Tab views
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _buildCategoryView(filteredOverdue, overdueColor, 'Overdue'),
+                      _buildCategoryView(filteredOngoing, ongoingColor, 'Ongoing'),
+                      _buildUpcomingView(filteredStartingSoon, filteredOtherUpcoming, startingSoonColor, upcomingColor),
+                      _buildCategoryView(filteredCompleted, completedColor, 'Completed'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildCategoryView(List<GanttRowData> filteredTasks, Color color, String title) {
+    if (filteredTasks.isEmpty) {
+      return _buildNoTasksWidget(title);
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      children: [
+        FadeTransition(
+          opacity: _fadeAnimation,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSectionHeader(title, color, filteredTasks.length),
+              ...filteredTasks.map((task) => _buildTaskItem(task, color)),
+              const SizedBox(height: 24), // Bottom padding
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildUpcomingView(List<GanttRowData> filteredStartingSoon, List<GanttRowData> filteredOtherUpcoming, Color startingColor, Color upcomingColor) {
+    if (filteredStartingSoon.isEmpty && filteredOtherUpcoming.isEmpty) {
+      return _buildNoTasksWidget('Upcoming');
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      children: [
+        FadeTransition(
+          opacity: _fadeAnimation,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (filteredStartingSoon.isNotEmpty) ...[
+                _buildSectionHeader('Starting Soon (≤3 days)', startingColor, filteredStartingSoon.length),
+                ...filteredStartingSoon.map((task) => _buildTaskItem(task, startingColor)),
+              ],
+              if (filteredOtherUpcoming.isNotEmpty) ...[
+                _buildSectionHeader('Other Upcoming', upcomingColor, filteredOtherUpcoming.length),
+                ...filteredOtherUpcoming.map((task) => _buildTaskItem(task, upcomingColor)),
+              ],
+              const SizedBox(height: 24), // Bottom padding
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNoTasksWidget(String title) {
+    final bool isSearch = _searchQuery.isNotEmpty;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(isSearch ? Icons.search_off : Icons.timeline, size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              isSearch ? 'No tasks match your search' : 'No $title tasks',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
