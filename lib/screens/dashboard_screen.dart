@@ -500,7 +500,7 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-  Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
+Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
     final screenWidth = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
@@ -512,12 +512,18 @@ class _MainDashboardState extends State<MainDashboard> {
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: const TodoWidget(showAllProjects: true),
+        child: TodoWidget(
+          showAllProjects: true,
+          logger: widget.logger,  // <-- Added logger for consistency
+        ),
       ),
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: const ActivityFeed(),
+        child: ActivityFeed(
+          showAllProjects: true,  // <-- FIX: Added missing showAllProjects parameter
+          logger: widget.logger,   // <-- FIX: Added missing logger parameter
+        ),
       ),
       SizedBox(
         width: availableWidth,

@@ -522,7 +522,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: const ActivityFeed(),
+        child: ActivityFeed(
+          projectId: widget.project.id,  // <-- FIX: Added missing projectId
+          project: widget.project,        // <-- FIX: Added missing project
+          logger: widget.logger,          // <-- FIX: Added missing logger
+          showAllProjects: false,
+        ),
       ),
       SizedBox(
         width: availableWidth,
