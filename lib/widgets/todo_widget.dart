@@ -29,46 +29,29 @@ class _TodoWidgetState extends State<TodoWidget> {
   final DateFormat _dateFormat = DateFormat('MMM dd, yyyy');
   bool _isExpanded = false;
 
-  Stream<List<GanttRowData>> _getTasksStream() {
-    final now = DateTime.now();
-    final twoWeeksFromNow = now.add(const Duration(days: 14));
+  // Task category lists
+  List<GanttRowData> _overdueTasks = [];
+  List<GanttRowData> _startingSoonTasks = [];
+  List<GanttRowData> _ongoingTasks = [];
+  List<GanttRowData> _otherUpcomingTasks = [];
+  List<GanttRowData> _completedTasks = [];
 
+  Stream<List<GanttRowData>> _getTasksStream() {
     if (widget.showAllProjects) {
-      return _firestore
-          .collection('Schedule')
-          .snapshots()
-          .map((snapshot) {
+      return _firestore.collection('Schedule').snapshots().map((snapshot) {
         List<GanttRowData> tasks = [];
 
         for (var doc in snapshot.docs) {
-          final data = doc.data();  // Removed unnecessary cast
+          final data = doc.data();
           try {
             final task = GanttRowData.fromFirebaseMap(doc.id, data);
-            
             if (task.hasData && task.startDate != null && task.endDate != null) {
-              final taskStart = task.startDate!;
-              final taskEnd = task.endDate!;
-
-              if ((taskStart.isBefore(twoWeeksFromNow) && taskEnd.isAfter(now)) ||
-                  (taskStart.isBefore(twoWeeksFromNow) && taskStart.isAfter(now.subtract(const Duration(days: 1))))) {
-                tasks.add(task);
-              }
+              tasks.add(task);
             }
           } catch (e) {
             continue;
           }
         }
-
-        tasks.sort((a, b) {
-          final aPriority = _calculatePriority(a.startDate!, a.endDate!);
-          final bPriority = _calculatePriority(b.startDate!, b.endDate!);
-          
-          if (aPriority != bPriority) {
-            return aPriority.compareTo(bPriority);
-          }
-          
-          return a.startDate!.compareTo(b.startDate!);
-        });
 
         return tasks;
       });
@@ -81,18 +64,16 @@ class _TodoWidgetState extends State<TodoWidget> {
         List<GanttRowData> tasks = [];
 
         for (var doc in snapshot.docs) {
-          final data = doc.data();  // Removed unnecessary cast
+          final data = doc.data();
           try {
             final task = GanttRowData.fromFirebaseMap(doc.id, data);
-            if (task.hasData) {
+            if (task.hasData && task.startDate != null && task.endDate != null) {
               tasks.add(task);
             }
           } catch (e) {
             continue;
           }
         }
-
-        tasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
 
         return tasks;
       });
@@ -101,71 +82,106 @@ class _TodoWidgetState extends State<TodoWidget> {
     }
   }
 
-  int _calculatePriority(DateTime startDate, DateTime endDate) {
-    final now = DateTime.now();
-    final daysUntilStart = startDate.difference(now).inDays;
-    final daysUntilEnd = endDate.difference(now).inDays;
+  void _categorizeTasks(List<GanttRowData> tasks) {
+    final DateTime now = DateTime.now();
 
-    // Overdue (highest priority = 0)
-    if (endDate.isBefore(now)) {
-      return 0;
+    _overdueTasks = [];
+    _startingSoonTasks = [];
+    _ongoingTasks = [];
+    _otherUpcomingTasks = [];
+    _completedTasks = [];
+
+    for (var task in tasks) {
+      if (task.startDate == null || task.endDate == null) continue;
+
+      TaskStatus effectiveStatus = task.status ?? TaskStatus.upcoming;
+
+      // Auto-update overdue status
+      if (task.startDate!.isBefore(now) &&
+          (effectiveStatus != TaskStatus.started &&
+              effectiveStatus != TaskStatus.ongoing &&
+              effectiveStatus != TaskStatus.completed)) {
+        effectiveStatus = TaskStatus.overdue;
+        _updateTaskStatus(task, TaskStatus.overdue);
+      }
+
+      // Categorize tasks based on status
+      switch (effectiveStatus) {
+        case TaskStatus.upcoming:
+          if (task.startDate!.isAfter(now)) {
+            final diff = task.startDate!.difference(now).inDays;
+            if (diff <= 3) {
+              _startingSoonTasks.add(task);
+            } else {
+              _otherUpcomingTasks.add(task);
+            }
+          }
+          break;
+        case TaskStatus.ongoing:
+        case TaskStatus.started:
+          _ongoingTasks.add(task);
+          break;
+        case TaskStatus.completed:
+          _completedTasks.add(task);
+          break;
+        case TaskStatus.overdue:
+          _overdueTasks.add(task);
+          break;
+      }
     }
 
-    // Happening now (priority = 1)
-    if (daysUntilStart <= 0 && daysUntilEnd >= 0) {
-      return 1;
-    }
-
-    // Starting very soon (within 2 days, priority = 2)
-    if (daysUntilStart <= 2) {
-      return 2;
-    }
-
-    // Starting within a week (priority = 3)
-    if (daysUntilStart <= 7) {
-      return 3;
-    }
-
-    // Starting later (priority = 4)
-    return 4;
+    // Sort tasks
+    _overdueTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
+    _startingSoonTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
+    _otherUpcomingTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
+    _ongoingTasks.sort((a, b) => a.endDate!.compareTo(b.endDate!));
+    _completedTasks.sort((a, b) => b.endDate!.compareTo(a.endDate!));
   }
 
-  Color _getPriorityColor(DateTime startDate, DateTime endDate) {
-    final now = DateTime.now();
-    final daysUntilStart = startDate.difference(now).inDays;
-    final daysUntilEnd = endDate.difference(now).inDays;
-
-    // Overdue
-    if (endDate.isBefore(now)) {
-      return Colors.red;
+  Future<void> _updateTaskStatus(GanttRowData task, TaskStatus newStatus) async {
+    try {
+      await _firestore
+          .collection('Schedule')
+          .doc(task.firestoreId ?? task.id)
+          .update({'status': newStatus.toString().split('.').last.toUpperCase()});
+    } catch (e) {
+      widget.logger?.e('Error updating task status: $e');
     }
-
-    // Happening now or due soon (within 3 days)
-    if (daysUntilStart <= 0 && daysUntilEnd >= 0) {
-      return Colors.deepOrange;
-    }
-
-    if (daysUntilStart <= 3) {
-      return Colors.orange;
-    }
-
-    // Upcoming
-    return Colors.blue;
   }
 
-  String _getDeadlineText(DateTime startDate, DateTime endDate) {
+  Color _getStatusColor(TaskStatus? status) {
+    switch (status) {
+      case TaskStatus.overdue:
+        return Colors.red.shade700;
+      case TaskStatus.ongoing:
+      case TaskStatus.started:
+        return Colors.blue.shade600;
+      case TaskStatus.completed:
+        return Colors.green.shade600;
+      case TaskStatus.upcoming:
+      default:
+        return Colors.orange.shade700;
+    }
+  }
+
+  String _getDeadlineText(DateTime startDate, DateTime endDate, TaskStatus? status) {
     final now = DateTime.now();
     final daysUntilStart = startDate.difference(now).inDays;
     final daysUntilEnd = endDate.difference(now).inDays;
 
-    if (endDate.isBefore(now)) {
+    if (status == TaskStatus.overdue) {
       return 'Overdue by ${now.difference(endDate).inDays} days';
     }
 
-    if (daysUntilStart <= 0 && daysUntilEnd >= 0) {
-      return 'Ongoing until ${_dateFormat.format(endDate)}';
+    if (status == TaskStatus.ongoing || status == TaskStatus.started) {
+      return 'Due in $daysUntilEnd day${daysUntilEnd == 1 ? '' : 's'}';
     }
 
+    if (status == TaskStatus.completed) {
+      return 'Completed ${_dateFormat.format(endDate)}';
+    }
+
+    // Upcoming tasks
     if (daysUntilStart == 0) {
       return 'Starting today';
     }
@@ -181,20 +197,12 @@ class _TodoWidgetState extends State<TodoWidget> {
     return 'Starts ${_dateFormat.format(startDate)}';
   }
 
-  bool _isUrgent(DateTime startDate, DateTime endDate) {
-    final now = DateTime.now();
-    final daysUntilStart = startDate.difference(now).inDays;
-
-    // Urgent if overdue or starting soon (within 2 days)
-    return endDate.isBefore(now) || daysUntilStart <= 2;
-  }
-
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
 
-    if (!widget.showAllProjects && 
+    if (!widget.showAllProjects &&
         (widget.projectId == null || widget.projectId!.isEmpty)) {
       return _buildNoProjectState(isMobile);
     }
@@ -211,6 +219,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         }
 
         final tasks = snapshot.data ?? [];
+        _categorizeTasks(tasks);
 
         return Card(
           elevation: 2,
@@ -221,62 +230,183 @@ class _TodoWidgetState extends State<TodoWidget> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.assignment, color: Theme.of(context).primaryColor, size: isMobile ? 20 : 24),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.showAllProjects ? 'Tasks Due Soon' : 'Upcoming Deadlines',
-                        style: TextStyle(
-                          fontSize: isMobile ? 16 : 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
+                _buildHeader(isMobile),
                 const SizedBox(height: 12),
                 Expanded(
                   child: tasks.isEmpty
                       ? _buildEmptyState(isMobile)
-                      : Column(
-                          children: [
-                            Expanded(
-                              child: ListView.builder(
-                                itemCount: _isExpanded ? tasks.length : (tasks.length > 4 ? 4 : tasks.length),
-                                itemBuilder: (context, index) {
-                                  return _buildTodoItem(tasks[index], isMobile, widget.showAllProjects);
-                                },
-                              ),
-                            ),
-                            if (tasks.length > 4)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 8),
-                                child: Center(
-                                  child: TextButton(
-                                    onPressed: () {
-                                      setState(() {
-                                        _isExpanded = !_isExpanded;
-                                      });
-                                    },
-                                    child: Text(
-                                      _isExpanded
-                                          ? 'Show Less'
-                                          : 'View All Tasks (${tasks.length})',
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
+                      : _buildTasksList(isMobile),
                 ),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildHeader(bool isMobile) {
+    return Row(
+      children: [
+        Icon(
+          Icons.assignment,
+          color: Theme.of(context).primaryColor,
+          size: isMobile ? 20 : 24,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            widget.showAllProjects ? 'Tasks Overview' : 'Project Tasks',
+            style: TextStyle(
+              fontSize: isMobile ? 16 : 18,
+              fontWeight: FontWeight.bold,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTasksList(bool isMobile) {
+    // Priority display: Overdue > Starting Soon only
+    List<Widget> priorityItems = [];
+    
+    // Add overdue tasks
+    for (var task in _overdueTasks) {
+      priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+    }
+    
+    // Add starting soon tasks
+    for (var task in _startingSoonTasks) {
+      priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+    }
+
+    // Prepare "View All" items (shown when expanded)
+    List<Widget> expandedItems = [];
+    
+    if (_ongoingTasks.isNotEmpty) {
+      expandedItems.add(_buildCategoryHeader('Ongoing', _ongoingTasks.length, Colors.blue.shade600, isMobile));
+      for (var task in _ongoingTasks) {
+        expandedItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+    
+    if (_otherUpcomingTasks.isNotEmpty) {
+      expandedItems.add(_buildCategoryHeader('Upcoming', _otherUpcomingTasks.length, Colors.grey.shade700, isMobile));
+      for (var task in _otherUpcomingTasks) {
+        expandedItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+    
+    if (_completedTasks.isNotEmpty) {
+      expandedItems.add(_buildCategoryHeader('Completed', _completedTasks.length, Colors.green.shade600, isMobile));
+      for (var task in _completedTasks) {
+        expandedItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+
+    final totalTasks = _overdueTasks.length +
+        _startingSoonTasks.length +
+        _ongoingTasks.length +
+        _otherUpcomingTasks.length +
+        _completedTasks.length;
+
+    final hasHiddenTasks = expandedItems.isNotEmpty;
+
+    if (priorityItems.isEmpty && expandedItems.isEmpty) {
+      return _buildEmptyState(isMobile);
+    }
+
+    return Column(
+      children: [
+        Expanded(
+          child: ListView(
+            children: [
+              // Priority section header
+              if (priorityItems.isNotEmpty) ...[
+                _buildCategoryHeader(
+                  'Priority Tasks',
+                  _overdueTasks.length + _startingSoonTasks.length,
+                  Colors.red.shade700,
+                  isMobile,
+                ),
+                ...priorityItems,
+              ],
+              // Expanded items
+              if (_isExpanded) ...expandedItems,
+            ],
+          ),
+        ),
+        if (hasHiddenTasks)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Center(
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _isExpanded = !_isExpanded;
+                  });
+                },
+                icon: Icon(
+                  _isExpanded ? Icons.expand_less : Icons.expand_more,
+                  size: isMobile ? 18 : 20,
+                ),
+                label: Text(
+                  _isExpanded
+                      ? 'Show Less'
+                      : 'View All Tasks ($totalTasks)',
+                  style: TextStyle(fontSize: isMobile ? 12 : 14),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildCategoryHeader(String title, int count, Color color, bool isMobile) {
+    return Container(
+      margin: const EdgeInsets.only(top: 12, bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border(
+          left: BorderSide(
+            color: color,
+            width: 3,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: isMobile ? 13 : 15,
+              fontWeight: FontWeight.w600,
+              color: color.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              count.toString(),
+              style: TextStyle(
+                fontSize: isMobile ? 11 : 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -290,22 +420,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.assignment, color: Theme.of(context).primaryColor, size: isMobile ? 20 : 24),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    widget.showAllProjects ? 'Tasks Due Soon' : 'Upcoming Deadlines',
-                    style: TextStyle(
-                      fontSize: isMobile ? 16 : 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+            _buildHeader(isMobile),
             const SizedBox(height: 12),
             const Expanded(
               child: Center(child: CircularProgressIndicator()),
@@ -326,22 +441,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.assignment, color: Theme.of(context).primaryColor, size: isMobile ? 20 : 24),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    widget.showAllProjects ? 'Tasks Due Soon' : 'Upcoming Deadlines',
-                    style: TextStyle(
-                      fontSize: isMobile ? 16 : 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+            _buildHeader(isMobile),
             const SizedBox(height: 12),
             Expanded(
               child: Center(
@@ -370,22 +470,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.assignment, color: Theme.of(context).primaryColor, size: isMobile ? 20 : 24),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Upcoming Deadlines',
-                    style: TextStyle(
-                      fontSize: isMobile ? 16 : 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+            _buildHeader(isMobile),
             const SizedBox(height: 12),
             Expanded(
               child: Center(
@@ -404,135 +489,146 @@ class _TodoWidgetState extends State<TodoWidget> {
     );
   }
 
-Widget _buildEmptyState(bool isMobile) {
-  if (widget.showAllProjects) {
-    // Dashboard view - all projects
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.check_circle,
-            size: isMobile ? 40 : 48,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'No tasks due in the next two weeks',
-            style: TextStyle(
-              color: Colors.grey[600],
-              fontSize: isMobile ? 12 : 14,
-              fontWeight: FontWeight.w500,
+  Widget _buildEmptyState(bool isMobile) {
+    if (widget.showAllProjects) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.check_circle,
+              size: isMobile ? 40 : 48,
+              color: Colors.grey[400],
             ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'You\'re all caught up!',
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: isMobile ? 10 : 12,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  } else {
-    // Project-specific view
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.calendar_today,
-            size: isMobile ? 40 : 48,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            'Tasks not yet added',
-            style: TextStyle(
-              color: Colors.grey[700],
-              fontSize: isMobile ? 13 : 15,
-              fontWeight: FontWeight.w600,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Add tasks from the Gantt Chart to see upcoming deadlines',
+            const SizedBox(height: 8),
+            Text(
+              'No priority tasks at the moment',
               style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: isMobile ? 11 : 12,
+                color: Colors.grey[600],
+                fontSize: isMobile ? 12 : 14,
+                fontWeight: FontWeight.w500,
               ),
               textAlign: TextAlign.center,
             ),
-          ),
-          const SizedBox(height: 16),
-          ElevatedButton.icon(
-            onPressed: () {
-              _navigateToGanttChart();
-            },
-            icon: Icon(Icons.timeline, size: isMobile ? 16 : 18),
-            label: Text(
-              'Go to Gantt Chart',
-              style: TextStyle(fontSize: isMobile ? 12 : 13),
+            const SizedBox(height: 4),
+            Text(
+              'All tasks are on track!',
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: isMobile ? 10 : 12,
+              ),
+              textAlign: TextAlign.center,
             ),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0A2E5A),
-              foregroundColor: Colors.white,
-              padding: EdgeInsets.symmetric(
-                horizontal: isMobile ? 12 : 16,
-                vertical: isMobile ? 8 : 10,
+          ],
+        ),
+      );
+    } else {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.calendar_today,
+              size: isMobile ? 40 : 48,
+              color: Colors.grey[400],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Tasks not yet added',
+              style: TextStyle(
+                color: Colors.grey[700],
+                fontSize: isMobile ? 13 : 15,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                'Add tasks from the Gantt Chart to track your project',
+                style: TextStyle(
+                  color: Colors.grey[500],
+                  fontSize: isMobile ? 11 : 12,
+                ),
+                textAlign: TextAlign.center,
               ),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: () {
+                _navigateToGanttChart();
+              },
+              icon: Icon(Icons.timeline, size: isMobile ? 16 : 18),
+              label: Text(
+                'Go to Gantt Chart',
+                style: TextStyle(fontSize: isMobile ? 12 : 13),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A2E5A),
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 12 : 16,
+                  vertical: isMobile ? 8 : 10,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  void _navigateToGanttChart() {
+    if (widget.project == null) {
+      return;
+    }
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ScheduleScreen(
+          project: widget.project!,
+          logger: widget.logger ?? Logger(),
+        ),
       ),
     );
   }
-}
-
-void _navigateToGanttChart() {
-  if (widget.project == null) {
-    return;
-  }
-
-  // Navigate to the ScheduleScreen which contains the Gantt Chart tab
-  Navigator.of(context).push(
-    MaterialPageRoute(
-      builder: (context) => ScheduleScreen(
-        project: widget.project!,
-        logger: widget.logger ?? Logger(),
-      ),
-    ),
-  );
-}
 
   Widget _buildTodoItem(GanttRowData task, bool isMobile, bool showAllProjects) {
-    final priorityColor = _getPriorityColor(task.startDate!, task.endDate!);
-    final deadlineText = _getDeadlineText(task.startDate!, task.endDate!);
-    final urgent = _isUrgent(task.startDate!, task.endDate!);
+    final statusColor = _getStatusColor(task.status);
+    final deadlineText = _getDeadlineText(task.startDate!, task.endDate!, task.status);
+    final bool isUrgent = task.status == TaskStatus.overdue || 
+        (task.status == TaskStatus.upcoming && 
+         task.startDate!.difference(DateTime.now()).inDays <= 3);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: EdgeInsets.all(isMobile ? 8 : 12),
       decoration: BoxDecoration(
-        color: urgent ? priorityColor.withValues(alpha: 0.1) : Colors.grey[50],
+        color: isUrgent ? statusColor.withValues(alpha: 0.08) : Colors.white,
         borderRadius: BorderRadius.circular(8),
-        border: urgent ? Border.all(color: priorityColor.withValues(alpha: 0.3)) : null,
+        border: Border.all(
+          color: statusColor.withValues(alpha: 0.3),
+          width: isUrgent ? 1.5 : 1,
+        ),
+        boxShadow: isUrgent
+            ? [
+                BoxShadow(
+                  color: statusColor.withValues(alpha: 0.1),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 4,
-            height: isMobile ? 28 : 32,
+            height: isMobile ? 32 : 36,
             decoration: BoxDecoration(
-              color: priorityColor,
+              color: statusColor,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -542,30 +638,45 @@ void _navigateToGanttChart() {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  task.taskName ?? 'Untitled Task',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: isMobile ? 12 : 14,
-                    color: urgent ? priorityColor : null,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        task.taskName ?? 'Untitled Task',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: isMobile ? 12 : 14,
+                          color: isUrgent ? statusColor : Colors.grey[800],
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 6),
                 Row(
                   children: [
                     Icon(
-                      urgent ? Icons.warning : Icons.schedule,
-                      size: isMobile ? 10 : 12,
-                      color: priorityColor,
+                      isUrgent ? Icons.warning_amber : Icons.schedule,
+                      size: isMobile ? 11 : 13,
+                      color: statusColor,
                     ),
                     const SizedBox(width: 4),
                     Expanded(
                       child: Text(
                         deadlineText,
                         style: TextStyle(
-                          color: priorityColor,
+                          color: statusColor,
                           fontSize: isMobile ? 10 : 12,
                           fontWeight: FontWeight.w500,
                         ),
@@ -573,49 +684,73 @@ void _navigateToGanttChart() {
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (showAllProjects) ...[
+                  ],
+                ),
+                if (showAllProjects && task.projectName != null) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.folder_outlined,
+                        size: isMobile ? 10 : 12,
+                        color: Colors.grey[600],
+                      ),
                       const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[200],
-                          borderRadius: BorderRadius.circular(4),
-                        ),
+                      Expanded(
                         child: Text(
-                          task.projectName ?? 'N/A',
+                          task.projectName!,
                           style: TextStyle(
-                            fontSize: isMobile ? 8 : 10,
-                            color: Colors.grey[700],
-                            fontWeight: FontWeight.w500,
+                            fontSize: isMobile ? 9 : 11,
+                            color: Colors.grey[600],
+                            fontStyle: FontStyle.italic,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
-                  ],
-                ),
+                  ),
+                ],
               ],
             ),
           ),
-          if (urgent)
+          if (task.status != null) ...[
+            const SizedBox(width: 8),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
               decoration: BoxDecoration(
-                color: priorityColor,
+                color: statusColor.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: statusColor.withValues(alpha: 0.3),
+                ),
               ),
               child: Text(
-                'URGENT',
+                _getStatusLabel(task.status!),
                 style: TextStyle(
-                  color: Colors.white,
+                  color: statusColor,
                   fontSize: isMobile ? 8 : 10,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
+          ],
         ],
       ),
     );
+  }
+
+  String _getStatusLabel(TaskStatus status) {
+    switch (status) {
+      case TaskStatus.overdue:
+        return 'OVERDUE';
+      case TaskStatus.ongoing:
+      case TaskStatus.started:
+        return 'ONGOING';
+      case TaskStatus.completed:
+        return 'DONE';
+      case TaskStatus.upcoming:
+        return 'SOON';
+    }
   }
 }
