@@ -32,6 +32,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   final ScrollController _horizontalScrollController = ScrollController();
   final ScrollController _verticalScrollController = ScrollController();
   StreamSubscription<QuerySnapshot>? _firebaseListener;
+  StreamSubscription<QuerySnapshot>? _resourcesListener;
   DateTime? _projectStartDate;
   DateTime? _projectEndDate;
 
@@ -71,12 +72,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     _setupFirebaseListener();
     _loadProjectDates();
     _loadTasksFromFirebase();
-    _loadResources();
+    _setupResourcesListener();  // NEW: Realtime listener replaces one-time load
   }
 
   @override
   void dispose() {
     _firebaseListener?.cancel();
+    _resourcesListener?.cancel();  // NEW
     _removeOverlay();
     _removeResourceDropdown();
     _horizontalScrollController.dispose();
@@ -85,6 +87,31 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       controller.dispose();
     }
     super.dispose();
+  }
+
+    void _setupResourcesListener() {
+    _resourcesListener = FirebaseFirestore.instance
+        .collection('PurchaseplanResources')
+        .where('projectId', isEqualTo: widget.project.id)
+        .snapshots()
+        .listen(
+      (snapshot) {
+        if (mounted) {
+          setState(() {
+            _resources = snapshot.docs.map((doc) {
+              final data = doc.data();
+              return PurchaseResourceModel.fromFirebaseMap(doc.id, data);
+            }).toList();
+          });
+          widget.logger.i('🛒 Realtime: Updated ${_resources.length} resources');
+          _computeColumnWidths();  // Refresh display widths
+        }
+      },
+      onError: (e, stackTrace) {
+        widget.logger.e('❌ Resources listener error', error: e, stackTrace: stackTrace);
+      },
+    );
+    widget.logger.i('🛒 Setup realtime resources listener for project ${widget.project.id}');
   }
 
   void _removeResourceDropdown() {
@@ -423,32 +450,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     };
   }
 
-  Future<void> _loadResources() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('PurchaseplanResources')
-          .where('projectId', isEqualTo: widget.project.id)
-          .get();
-      if (mounted) {
-        setState(() {
-          _resources = snapshot.docs.map((doc) {
-            final data = doc.data();
-            return PurchaseResourceModel.fromFirebaseMap(doc.id, data);
-          }).toList();
-        });
-        widget.logger.i(
-          '🛒 Loaded ${_resources.length} resources for Gantt screen',
-        );
-      }
-    } catch (e, stackTrace) {
-      widget.logger.e(
-        '❌ Error loading resources for Gantt screen',
-        error: e,
-        stackTrace: stackTrace,
-      );
-    }
-  }
-
   String _getResourceDisplayText(GanttRowData row) {
     if (row.resourceId == null) return '';
     final resource = _resources.firstWhere(
@@ -470,6 +471,84 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       displayText += ' (${row.resourceQuantity})';
     }
     return displayText;
+  }
+
+  double _parseQuantity(String qtyStr) {
+    final match = RegExp(r'(\d+(?:\.\d+)?)').firstMatch(qtyStr);
+    return match != null ? (double.tryParse(match.group(1)!) ?? 0.0) : 0.0;
+  }
+
+  Map<String, dynamic> _getResourceAvailabilityInfo(GanttRowData row) {
+    if (row.resourceId == null || row.resourceQuantity == null || row.resourceQuantity!.isEmpty) {
+      return {
+        'textColor': Colors.grey.shade500,
+        'badgeText': null,
+        'badgeBg': null,
+      };
+    }
+
+    final resource = _resources.firstWhere(
+      (res) => res.id == row.resourceId,
+      orElse: () => PurchaseResourceModel(
+        id: '',
+        name: 'Unknown Resource',
+        type: ResourceType.other,
+        quantity: '',
+        status: '',
+        projectId: '',
+        projectName: '',
+        updatedAt: DateTime.now(),
+      ),
+    );
+
+    final required = _parseQuantity(row.resourceQuantity!);
+    if (required <= 0) {
+      return {
+        'textColor': Colors.green.shade700,
+        'badgeColor': null,
+        'badgeText': null,
+      };
+    }
+
+    // Aggregate quantities by resource NAME (case-insensitive)
+    final Map<String, double> statusSums = {};
+    for (final res in _resources) {
+      if (res.name.toLowerCase() == resource.name.toLowerCase()) {
+        final qty = _parseQuantity(res.quantity);
+        statusSums[res.status] = (statusSums[res.status] ?? 0.0) + qty;
+      }
+    }
+
+    final double onSite = statusSums['On site'] ?? 0.0;
+    final double storage = statusSums['In storage'] ?? 0.0;
+    final double ordered = statusSums['Ordered'] ?? 0.0;
+
+    final double available = onSite + storage;
+    final double totalCover = available + ordered;
+    final int shortfall = ((required - available).ceil()).toInt();
+
+    if (available >= required) {
+      // ✅ Fully available (green text)
+      return {
+        'textColor': Colors.green.shade700,
+        'badgeText': null,
+        'badgeBg': null,
+      };
+    } else if (totalCover >= required) {
+      // 🔵 Shortfall covered by Ordered (normal text + blue badge)
+      return {
+        'textColor': Colors.grey.shade800,
+        'badgeText': shortfall.toString(),
+        'badgeBg': Colors.blue.shade600,
+      };
+    } else {
+      // 🔴 Insufficient even with Ordered (normal text + red badge)
+      return {
+        'textColor': Colors.grey.shade800,
+        'badgeText': shortfall.toString(),
+        'badgeBg': Colors.red.shade600,
+      };
+    }
   }
 
   // Fetch project start and end dates from Firestore with detailed logging
@@ -2896,38 +2975,64 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
                     : Colors.grey.shade100,
               ),
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                child: Row(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),  // Tighter padding for badge fit
+                child: Row(  // NEW: Row for text + badge + icon
                   children: [
+                    // Green dot indicator
                     if (row.resourceId != null && row.taskType == TaskType.task)
                       Container(
-                        width: 6,
-                        height: 6,
-                        margin: EdgeInsets.only(right: 6),
+                        width: 5,  // Slightly smaller
+                        height: 5,
+                        margin: EdgeInsets.only(right: 4),
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: Colors.green.shade600,
                         ),
                       ),
+                    // Resource text with dynamic color
                     Expanded(
                       child: Text(
                         _getResourceDisplayText(row),
                         style: GoogleFonts.poppins(
-                          fontSize: 11,
-                          fontWeight: row.resourceId != null ? FontWeight.w500 : FontWeight.w400,
-                          color: row.taskType == TaskType.task
-                              ? (row.resourceId != null ? Colors.grey.shade800 : Colors.grey.shade500)
-                              : Colors.grey.shade400,
+                          fontSize: 10.5,  // Slightly smaller for fit
+                          fontWeight: row.resourceId != null ? FontWeight.w600 : FontWeight.w400,
+                          color: (_getResourceAvailabilityInfo(row)['textColor'] as Color),
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    if (row.taskType == TaskType.task)
+                    // NEW: Shortfall badge
+                    if (row.taskType == TaskType.task) ...[
+                      if ((_getResourceAvailabilityInfo(row)['badgeText'] as String?) != null)
+                        Container(
+                          padding: EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                          margin: EdgeInsets.only(left: 2),
+                          decoration: BoxDecoration(
+                            color: (_getResourceAvailabilityInfo(row)['badgeBg'] as Color),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 0.5),  // Subtle border
+                          ),
+                          constraints: BoxConstraints(
+                            minWidth: 14,
+                            minHeight: 14,
+                          ),
+                          child: Text(
+                            (_getResourceAvailabilityInfo(row)['badgeText'] as String),
+                            style: GoogleFonts.poppins(
+                              fontSize: 8.5,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      // Dropdown arrow
                       Icon(
                         isDropdownOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down,
-                        size: 18,
+                        size: 14,  // Smaller for space
                         color: row.resourceId != null ? Colors.blue.shade600 : Colors.grey.shade500,
                       ),
+                    ],
                   ],
                 ),
               ),
