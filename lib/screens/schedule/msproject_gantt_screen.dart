@@ -2023,121 +2023,94 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         (row.childIds.isNotEmpty); 
   }
 
-  double _measureText(String text, TextStyle style) {
-    final textPainter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      maxLines: 1,
-      textDirection: ui.TextDirection.ltr,
-    )..layout(minWidth: 0, maxWidth: double.infinity);
-    return textPainter.size.width;
-  }
-
   void _computeColumnWidths() {
-    final headerStyle = GoogleFonts.poppins(
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-      color: Colors.grey.shade700,
-    );
-    final cellStyle = GoogleFonts.poppins(fontSize: 11);
+    // Reset to minimum widths
+    _numberColumnWidth = 60.0;
+    _taskColumnWidth = 250.0;
+    _durationColumnWidth = 90.0;
+    _startColumnWidth = 120.0;
+    _finishColumnWidth = 120.0;
+    _resourcesColumnWidth = 120.0;
+    _actualDatesColumnWidth = 120.0;
 
-    // Existing number column calculation
-    double headerWidth = _measureText('No.', headerStyle) + 16;
-    double maxCellWidth = 0;
     for (int i = 0; i < _rows.length; i++) {
-      String noText = '${i + 1}';
-      double textW = _measureText(noText, cellStyle);
-      double cellW = textW;
-      if (i >= defaultRowCount) {
-        cellW += 16 + 8;
+      final row = _editedRows[i] ?? _rows[i];
+
+      // Number column (fixed, no need to compute)
+      
+      // Task Name column
+      final taskText = row.taskName ?? '';
+      final taskStyle = _getTaskNameStyle(row.taskType);
+      final taskPainter = TextPainter(
+        text: TextSpan(text: taskText, style: taskStyle),
+        maxLines: 1,
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      _taskColumnWidth = math.max(_taskColumnWidth, taskPainter.width + 32.0);  // Padding + margin
+
+      // Duration column
+      final durationText = row.duration?.toString() ?? 'days';
+      final durationPainter = TextPainter(
+        text: TextSpan(text: durationText, style: GoogleFonts.poppins(fontSize: 11)),
+        maxLines: 1,
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      _durationColumnWidth = math.max(_durationColumnWidth, durationPainter.width + 16.0);
+
+      // Start column
+      final startText = row.startDate != null ? DateFormat('MM/dd/yyyy').format(row.startDate!) : '';
+      final startPainter = TextPainter(
+        text: TextSpan(text: startText, style: GoogleFonts.poppins(fontSize: 11)),
+        maxLines: 1,
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      _startColumnWidth = math.max(_startColumnWidth, startPainter.width + 16.0);
+
+      // Finish column
+      final finishText = row.endDate != null ? DateFormat('MM/dd/yyyy').format(row.endDate!) : '';
+      final finishPainter = TextPainter(
+        text: TextSpan(text: finishText, style: GoogleFonts.poppins(fontSize: 11)),
+        maxLines: 1,
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      _finishColumnWidth = math.max(_finishColumnWidth, finishPainter.width + 16.0);
+
+      // Resources column - Updated to include all fixed elements
+      final resText = _getResourceDisplayText(row);
+      final resStyle = GoogleFonts.poppins(
+        fontSize: 10.5,
+        fontWeight: row.resourceId != null ? FontWeight.w600 : FontWeight.w400,
+      );
+      final resPainter = TextPainter(
+        text: TextSpan(text: resText, style: resStyle),
+        maxLines: 1,
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+
+      double rowExtras = 8.0;  // Horizontal padding (4 * 2)
+      if (row.resourceId != null && row.taskType == TaskType.task) {
+        rowExtras += 5.0 + 4.0;  // Green dot width + margin
       }
-      if (cellW > maxCellWidth) maxCellWidth = cellW;
-    }
-    maxCellWidth += 32;
-    _numberColumnWidth = math.max(headerWidth, maxCellWidth);
-
-    // Existing task column calculation
-    headerWidth = _measureText('Task Name', headerStyle) + 24;
-    maxCellWidth = 0;
-    for (int i = 0; i < _rows.length; i++) {
-      final row = _editedRows[i] ?? _rows[i];
-      String text = row.taskName ?? 'Enter task name';
-      double w = _measureText(text, cellStyle);
-      if (w > maxCellWidth) maxCellWidth = w;
-    }
-    maxCellWidth += 48;
-    _taskColumnWidth = math.max(headerWidth, maxCellWidth);
-
-    // Existing duration column calculation
-    headerWidth = _measureText('Duration', headerStyle) + 24;
-    maxCellWidth = 0;
-    for (int i = 0; i < _rows.length; i++) {
-      final row = _editedRows[i] ?? _rows[i];
-      String text = row.duration?.toString() ?? 'days';
-      double w = _measureText(text, cellStyle);
-      if (w > maxCellWidth) maxCellWidth = w;
-    }
-    maxCellWidth += 32;
-    _durationColumnWidth = math.max(headerWidth, maxCellWidth);
-
-    // Existing start column calculation
-    headerWidth = _measureText('Start', headerStyle) + 24;
-    maxCellWidth = 0;
-    for (int i = 0; i < _rows.length; i++) {
-      final row = _editedRows[i] ?? _rows[i];
-      String text = row.startDate != null
-          ? DateFormat('MM/dd/yyyy').format(row.startDate!)
-          : 'MM/dd/yyyy';
-      double w = _measureText(text, cellStyle);
-      if (w > maxCellWidth) maxCellWidth = w;
-    }
-    maxCellWidth += 32;
-    _startColumnWidth = math.max(headerWidth, maxCellWidth);
-
-    // Existing finish column calculation
-    headerWidth = _measureText('Finish', headerStyle) + 24;
-    maxCellWidth = 0;
-    for (int i = 0; i < _rows.length; i++) {
-      final row = _editedRows[i] ?? _rows[i];
-      String text = row.endDate != null
-          ? DateFormat('MM/dd/yyyy').format(row.endDate!)
-          : 'MM/dd/yyyy';
-      double w = _measureText(text, cellStyle);
-      if (w > maxCellWidth) maxCellWidth = w;
-    }
-    maxCellWidth += 48;
-    _finishColumnWidth = math.max(headerWidth, maxCellWidth);
-
-    // Existing resources column calculation
-    headerWidth = _measureText('Resources', headerStyle) + 24;
-    maxCellWidth = 0;
-    for (int i = 0; i < _rows.length; i++) {
-      final row = _editedRows[i] ?? _rows[i];
-      String text = _getResourceDisplayText(row);
-      double w = _measureText(text, cellStyle);
-      if (w > maxCellWidth) maxCellWidth = w;
-    }
-    maxCellWidth += 32;
-    _resourcesColumnWidth = math.max(headerWidth, maxCellWidth);
-
-    // Compute for Actual Dates column
-    headerWidth = _measureText('Actual Dates', headerStyle) + 24;
-    maxCellWidth = 0;
-    for (int i = 0; i < _rows.length; i++) {
-      final row = _editedRows[i] ?? _rows[i];
-      if (row.canHaveActualDates) {
-        String text = row.actualDatesDisplayText.isNotEmpty 
-            ? row.actualDatesDisplayText 
-            : 'Add dates';
-        double w = _measureText(text, cellStyle);
-        if (w > maxCellWidth) maxCellWidth = w;
+      if (row.taskType == TaskType.task) {
+        final availabilityInfo = _getResourceAvailabilityInfo(row);
+        if (availabilityInfo['badgeText'] != null) {
+          rowExtras += 14.0 + 2.0;  // Badge min width + margin
+        }
+        rowExtras += 14.0;  // Dropdown icon size
       }
-    }
-    maxCellWidth += 32;
-    _actualDatesColumnWidth = math.max(headerWidth, maxCellWidth);
+      final requiredWidthForRow = resPainter.width + rowExtras;
+      _resourcesColumnWidth = math.max(_resourcesColumnWidth, requiredWidthForRow);
 
-    widget.logger.d(
-      '📅 Computed column widths: number=$_numberColumnWidth, task=$_taskColumnWidth, duration=$_durationColumnWidth, start=$_startColumnWidth, finish=$_finishColumnWidth, resources=$_resourcesColumnWidth, actualDates=$_actualDatesColumnWidth',
-    );
+      // Actual Dates column
+      final actualText = row.actualDatesDisplayText.isNotEmpty ? row.actualDatesDisplayText : 'Add dates';
+      final actualStyle = GoogleFonts.poppins(fontSize: 11);
+      final actualPainter = TextPainter(
+        text: TextSpan(text: actualText, style: actualStyle),
+        maxLines: 1,
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      _actualDatesColumnWidth = math.max(_actualDatesColumnWidth, actualPainter.width + 32.0);  // Padding + icon
+    }
   }
 
   // Updated _calculateHierarchy method with orphaned task assignment
