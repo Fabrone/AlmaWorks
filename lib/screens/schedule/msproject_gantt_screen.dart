@@ -479,7 +479,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   Map<String, dynamic> _getResourceAvailabilityInfo(GanttRowData row) {
-    if (row.resourceId == null || row.resourceQuantity == null || row.resourceQuantity!.isEmpty) {
+    if (row.resourceId == null || row.resourceQuantity == null || row.resourceQuantity!.isEmpty || row.startDate == null) {
       return {
         'textColor': Colors.grey.shade500,
         'badgeText': null,
@@ -505,12 +505,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     if (required <= 0) {
       return {
         'textColor': Colors.green.shade700,
-        'badgeColor': null,
         'badgeText': null,
+        'badgeBg': null,
       };
     }
 
-    // Aggregate quantities by resource NAME (case-insensitive)
+    // Aggregate stock quantities by resource NAME (case-insensitive)
     final Map<String, double> statusSums = {};
     for (final res in _resources) {
       if (res.name.toLowerCase() == resource.name.toLowerCase()) {
@@ -522,19 +522,59 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     final double onSite = statusSums['On site'] ?? 0.0;
     final double storage = statusSums['In storage'] ?? 0.0;
     final double ordered = statusSums['Ordered'] ?? 0.0;
+    final double totalStock = onSite + storage;
 
-    final double available = onSite + storage;
-    final double totalCover = available + ordered;
-    final int shortfall = ((required - available).ceil()).toInt();
+    // NEW: Calculate assigned to previous tasks based on timeline
+    double assignedToPrevious = 0.0;
 
-    if (available >= required) {
+    // Get all current tasks (merging edits)
+    final List<GanttRowData> allTasks = List.generate(_rows.length, (i) => _editedRows[i] ?? _rows[i]);
+
+    // Collect tasks using the same resource (by name) with valid startDate and quantity
+    final List<Map<String, dynamic>> relevantTasks = [];
+    for (final task in allTasks) {
+      if (task.resourceId != null && task.startDate != null && task.resourceQuantity != null && task.resourceQuantity!.isNotEmpty) {
+        final taskResource = _resources.firstWhere(
+          (res) => res.id == task.resourceId,
+          orElse: () => PurchaseResourceModel(id: '', name: '', type: ResourceType.other, quantity: '', status: '', projectId: '', projectName: '', updatedAt: DateTime.now()),
+        );
+        if (taskResource.name.toLowerCase() == resource.name.toLowerCase()) {
+          relevantTasks.add({
+            'task': task,
+            'startDate': task.startDate!,
+            'quantity': _parseQuantity(task.resourceQuantity!),
+          });
+        }
+      }
+    }
+
+    // Sort relevant tasks by startDate ascending
+    relevantTasks.sort((a, b) => a['startDate'].compareTo(b['startDate']));
+
+    // Find position of current row and sum previous
+    for (int i = 0; i < relevantTasks.length; i++) {
+      if (relevantTasks[i]['task'] == row) {
+        // Sum quantities before this index
+        for (int j = 0; j < i; j++) {
+          assignedToPrevious += relevantTasks[j]['quantity'];
+        }
+        break;
+      }
+    }
+
+    // Calculate remaining available
+    double remainingAvailable = math.max(0.0, totalStock - assignedToPrevious);
+    double remainingTotalCover = remainingAvailable + ordered;
+    final int shortfall = math.max(0, (required - remainingAvailable).ceil().toInt());
+
+    if (remainingAvailable >= required) {
       // ✅ Fully available (green text)
       return {
         'textColor': Colors.green.shade700,
         'badgeText': null,
         'badgeBg': null,
       };
-    } else if (totalCover >= required) {
+    } else if (remainingTotalCover >= required) {
       // 🔵 Shortfall covered by Ordered (normal text + blue badge)
       return {
         'textColor': Colors.grey.shade800,
@@ -2036,8 +2076,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
 
-      // Number column (fixed, no need to compute)
-      
       // Task Name column
       final taskText = row.taskName ?? '';
       final taskStyle = _getTaskNameStyle(row.taskType);
