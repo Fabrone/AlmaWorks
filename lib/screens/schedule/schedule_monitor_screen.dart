@@ -273,17 +273,24 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     _overdueTasks = [];
 
     for (var task in tasks) {
-      if (task.startDate == null || task.endDate == null) continue; // Edge case: Skip invalid dates
+      if (task.startDate == null || task.endDate == null) continue;
 
+      // NEW: Infer status from actual dates if not set
       TaskStatus effectiveStatus = task.status ?? TaskStatus.upcoming;
-
-      // Auto-overdue if conditions met (manual override possible later)
-      if (task.startDate!.isBefore(now) &&
-          (effectiveStatus != TaskStatus.started && effectiveStatus != TaskStatus.ongoing && effectiveStatus != TaskStatus.completed)) {
+      
+      if (task.actualEndDate != null) {
+        effectiveStatus = TaskStatus.completed;
+      } else if (task.actualStartDate != null) {
+        effectiveStatus = TaskStatus.started;
+      } else if (task.startDate!.isBefore(now) && 
+                effectiveStatus != TaskStatus.started && 
+                effectiveStatus != TaskStatus.ongoing && 
+                effectiveStatus != TaskStatus.completed) {
         effectiveStatus = TaskStatus.overdue;
-        _updateTaskStatus(task, TaskStatus.overdue); // Sync to Firestore
+        _updateTaskStatus(task, TaskStatus.overdue);  // Sync inferred overdue
       }
 
+      // Rest of categorization remains the same
       switch (effectiveStatus) {
         case TaskStatus.upcoming:
           if (task.startDate!.isAfter(now)) {
@@ -308,14 +315,13 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       }
     }
 
-    // Sorting
-    _startingSoonTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!)); // Soonest first
-    _otherUpcomingTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!)); // Soonest first
-    _overdueTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!)); // Oldest overdue first
-    _ongoingTasks.sort((a, b) => a.endDate!.compareTo(b.endDate!)); // Soonest end first
-    _completedTasks.sort((a, b) => b.endDate!.compareTo(a.endDate!)); // Most recent first
+    // Sorting remains the same
+    _startingSoonTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
+    _otherUpcomingTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
+    _overdueTasks.sort((a, b) => a.startDate!.compareTo(b.startDate!));
+    _ongoingTasks.sort((a, b) => a.endDate!.compareTo(b.endDate!));
+    _completedTasks.sort((a, b) => b.endDate!.compareTo(a.endDate!));
 
-    // Manual check for notifications on screen load
     _checkForNotifications();
   }
 
@@ -362,13 +368,46 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
   Future<void> _updateTaskStatus(GanttRowData task, TaskStatus newStatus) async {
     try {
-      await FirebaseFirestore.instance
-          .collection('Schedule')
-          .doc(task.firestoreId ?? task.id)
-          .update({'status': newStatus.toString().split('.').last.toUpperCase()});
-      widget.logger.i('Updated task ${task.id} status to $newStatus');
-    } catch (e) {
-      widget.logger.e('Error updating task status: $e');
+      final now = DateTime.now();
+      final firestore = FirebaseFirestore.instance;
+      
+      // NEW: Set actual dates based on new status
+      DateTime? newActualStart;
+      DateTime? newActualEnd;
+      
+      if (newStatus == TaskStatus.started || newStatus == TaskStatus.ongoing) {
+        newActualStart = task.actualStartDate ?? now;  // Use current if not set
+      } else if (newStatus == TaskStatus.completed) {
+        newActualStart = task.actualStartDate ?? now;  // Ensure start is set
+        newActualEnd = task.actualEndDate ?? now;
+      }
+      
+      final updateData = {
+        'status': newStatus.toString().split('.').last.toUpperCase(),
+        if (newActualStart != null) 'actualStartDate': Timestamp.fromDate(newActualStart),
+        if (newActualEnd != null) 'actualEndDate': Timestamp.fromDate(newActualEnd),
+        'updatedAt': Timestamp.now(),
+      };
+      
+      await firestore.collection('Schedule').doc(task.firestoreId).update(updateData);
+      
+      if (!mounted) return;
+      widget.logger.i('📅 Updated task status for ${task.taskName} to $newStatus');
+      
+      if (!mounted) return;
+      ElegantNotification.success(
+        title: const Text('Task Updated'),
+        description: Text('${task.taskName} marked as ${newStatus.name}'),
+      ).show(context);
+      
+      // Re-categorize will happen via StreamBuilder
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error updating task status', error: e, stackTrace: stackTrace);
+      if (!mounted) return;
+      ElegantNotification.error(
+        title: const Text('Error'),
+        description: const Text('Failed to update task status'),
+      ).show(context);
     }
   }
 
@@ -629,7 +668,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
   }
 
   Widget _buildTaskItem(GanttRowData task, Color accentColor) {
-    // Calculate progress indicator
     final DateTime now = DateTime.now();
     final int daysUntilStart = task.startDate!.difference(now).inDays;
     final int daysUntilEnd = task.endDate!.difference(now).inDays;
@@ -664,7 +702,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
         child: IntrinsicHeight(
           child: Row(
             children: [
-              // Colored accent strip on the left
               Container(
                 width: 5,
                 decoration: BoxDecoration(
@@ -678,17 +715,14 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                   ),
                 ),
               ),
-              // Main content
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Task name and menu
                       Row(
                         children: [
-                          // Status indicator dot
                           Container(
                             width: 10,
                             height: 10,
@@ -708,7 +742,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                               ),
                             ),
                           ),
-                          // Action menu
                           Material(
                             color: Colors.transparent,
                             child: PopupMenuButton<String>(
@@ -764,7 +797,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                       ),
                       const SizedBox(height: 10),
                       
-                      // Date range with icons
                       Row(
                         children: [
                           Icon(Icons.calendar_today_outlined, 
@@ -782,7 +814,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                       ),
                       const SizedBox(height: 6),
                       
-                      // Duration with icon
                       Row(
                         children: [
                           Icon(Icons.timelapse_outlined, 
@@ -799,7 +830,44 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                         ],
                       ),
                       
-                      // Urgency chip (if applicable)
+                      // NEW: Display started and completion dates if available
+                      if (task.actualStartDate != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(Icons.play_arrow_outlined, 
+                                size: 14, 
+                                color: Colors.blue.shade600),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Started: ${_dateFormat.format(task.actualStartDate!)}',
+                              style: GoogleFonts.poppins(
+                                fontSize: 13,
+                                color: Colors.blue.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (task.actualEndDate != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(Icons.check_circle_outlined, 
+                                size: 14, 
+                                color: Colors.green.shade600),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Completed: ${_dateFormat.format(task.actualEndDate!)}',
+                              style: GoogleFonts.poppins(
+                                fontSize: 13,
+                                color: Colors.green.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      
                       if (urgencyText.isNotEmpty) ...[
                         const SizedBox(height: 10),
                         Container(
@@ -842,7 +910,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
             ],
           ),
         ),
-      ),
+      )
     );
   }
 }
