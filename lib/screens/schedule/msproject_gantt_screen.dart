@@ -114,6 +114,78 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     widget.logger.i('🛒 Setup realtime resources listener for project ${widget.project.id}');
   }
 
+  /// Reconciles Firestore updates with local edited rows based on timestamps
+  void _reconcileFirestoreUpdates(List<GanttRowData> firestoreRows) {
+    for (int i = 0; i < firestoreRows.length; i++) {
+      final firestoreRow = firestoreRows[i];
+      
+      // Check if this row has local edits
+      if (_editedRows.containsKey(i)) {
+        final editedRow = _editedRows[i]!;
+        
+        // If the row IDs match, we need to decide which version to keep
+        if (editedRow.id == firestoreRow.id) {
+          // Priority rules for reconciliation:
+          // 1. If edited row is unsaved and has no firestoreId, keep local edits
+          // 2. If Firestore has actual dates that local doesn't have, merge them
+          // 3. If Firestore has updated status, merge it
+          
+          bool needsReconciliation = false;
+          
+          // Check if Firestore has actual dates that should override local state
+          if (firestoreRow.actualStartDate != null && 
+              editedRow.actualStartDate != firestoreRow.actualStartDate) {
+            editedRow.actualStartDate = firestoreRow.actualStartDate;
+            needsReconciliation = true;
+            widget.logger.d(
+              '🔄 Reconciled actualStartDate for row $i from Firestore: ${firestoreRow.actualStartDate}',
+            );
+          }
+          
+          if (firestoreRow.actualEndDate != null && 
+              editedRow.actualEndDate != firestoreRow.actualEndDate) {
+            editedRow.actualEndDate = firestoreRow.actualEndDate;
+            needsReconciliation = true;
+            widget.logger.d(
+              '🔄 Reconciled actualEndDate for row $i from Firestore: ${firestoreRow.actualEndDate}',
+            );
+          }
+          
+          // Check if Firestore has status updates that should override local state
+          if (firestoreRow.status != null && 
+              editedRow.status != firestoreRow.status) {
+            editedRow.status = firestoreRow.status;
+            needsReconciliation = true;
+            widget.logger.d(
+              '🔄 Reconciled status for row $i from Firestore: ${firestoreRow.status}',
+            );
+          }
+          
+          // If reconciliation occurred, update the edited row
+          if (needsReconciliation) {
+            _editedRows[i] = editedRow;
+          }
+        } else {
+          // IDs don't match - Firestore data takes precedence, clear local edit
+          _editedRows.remove(i);
+          widget.logger.d(
+            '🔄 Cleared mismatched edited row at index $i (local ID: ${editedRow.id}, Firestore ID: ${firestoreRow.id})',
+          );
+        }
+      }
+    }
+    
+    // Clean up any edited rows that no longer exist in Firestore
+    final validIndices = List.generate(firestoreRows.length, (i) => i).toSet();
+    _editedRows.removeWhere((index, row) {
+      if (!validIndices.contains(index)) {
+        widget.logger.d('🔄 Removed orphaned edited row at index $index');
+        return true;
+      }
+      return false;
+    });
+  }
+
   void _removeResourceDropdown() {
     _resourceDropdownOverlay?.remove();
     _resourceDropdownOverlay = null;
@@ -714,7 +786,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     });
   }
 
-  // Updated _setupFirebaseListener method to handle orphaned tasks after loading
   void _setupFirebaseListener() {
     _firebaseListener = FirebaseFirestore.instance
         .collection('Schedule')
@@ -743,6 +814,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
               // Handle orphaned tasks that may exist in loaded data
               _assignParentsToOrphanedTasks();
+              
+              // NEW: Reconcile Firestore updates with local edited rows
+              _reconcileFirestoreUpdates(_rows);
             }
 
             while (_rows.length < defaultRowCount) {
@@ -756,7 +830,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
             });
 
             widget.logger.i(
-              '📅 MSProjectGantt: Real-time update with ${_rows.length} rows',
+              '📅 MSProjectGantt: Real-time update with ${_rows.length} rows (reconciliation applied)',
             );
           },
           onError: (e, stackTrace) {
@@ -783,7 +857,6 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         );
   }
 
-  // Updated _loadTasksFromFirebase method to handle orphaned tasks
   Future<void> _loadTasksFromFirebase() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
@@ -795,6 +868,9 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
         // Handle orphaned tasks in cached data
         _assignParentsToOrphanedTasks();
+        
+        // NEW: Reconcile cached data with any pending local edits
+        _reconcileFirestoreUpdates(_rows);
 
         while (_rows.length < defaultRowCount) {
           _rows.add(GanttRowData(id: 'row_${_rows.length + 1}'));
@@ -802,7 +878,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         _computeColumnWidths();
         setState(() => _isLoading = false);
         widget.logger.i(
-          '📅 MSProjectGantt: Loaded ${_rows.length} rows from cache with orphaned task handling',
+          '📅 MSProjectGantt: Loaded ${_rows.length} rows from cache with reconciliation',
         );
         return;
       }
@@ -1013,6 +1089,12 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
       // Mark row as saved
       row.isUnsaved = false;
+
+      // NEW: Remove from _editedRows after successful save to allow Firestore updates to take precedence
+      if (_editedRows.containsKey(index)) {
+        _editedRows.remove(index);
+        widget.logger.d('🔄 Removed row $index from _editedRows after successful save');
+      }
 
       if (_cachedProjects.containsKey(widget.project.id)) {
         final cachedRows = _cachedProjects[widget.project.id]!;
@@ -3123,6 +3205,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
               ),
             ),
             child: CustomPaint(
+              key: ValueKey('gantt_${row.id}_${row.actualStartDate}_${row.actualEndDate}_${row.status}'), // Force rebuild on actual date/status changes
               painter: GanttRowPainter(
                 row: row,
                 projectStartDate: _projectStartDate!,
