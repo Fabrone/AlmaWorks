@@ -114,76 +114,85 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
     widget.logger.i('🛒 Setup realtime resources listener for project ${widget.project.id}');
   }
 
-  /// Reconciles Firestore updates with local edited rows based on timestamps
   void _reconcileFirestoreUpdates(List<GanttRowData> firestoreRows) {
-    for (int i = 0; i < firestoreRows.length; i++) {
+    // Create a safe copy of current edited row indices to avoid concurrent modification
+    final editedIndices = List<int>.from(_editedRows.keys);
+    
+    for (int i in editedIndices) {
+      // Safety check: ensure index is still valid
+      if (i >= firestoreRows.length) {
+        _editedRows.remove(i);
+        widget.logger.d('📄 Removed edited row at index $i (out of bounds)');
+        continue;
+      }
+      
       final firestoreRow = firestoreRows[i];
       
       // Check if this row has local edits
-      if (_editedRows.containsKey(i)) {
-        final editedRow = _editedRows[i]!;
+      if (!_editedRows.containsKey(i)) continue;
+      
+      final editedRow = _editedRows[i];
+      if (editedRow == null) {
+        _editedRows.remove(i);
+        widget.logger.d('📄 Removed null edited row at index $i');
+        continue;
+      }
+      
+      // If the row IDs match, we need to decide which version to keep
+      if (editedRow.id == firestoreRow.id) {
+        // Priority rules for reconciliation:
+        // 1. If edited row is unsaved and has no firestoreId, keep local edits
+        // 2. If Firestore has actual dates that local doesn't have, merge them
+        // 3. If Firestore has updated status, merge it
         
-        // If the row IDs match, we need to decide which version to keep
-        if (editedRow.id == firestoreRow.id) {
-          // Priority rules for reconciliation:
-          // 1. If edited row is unsaved and has no firestoreId, keep local edits
-          // 2. If Firestore has actual dates that local doesn't have, merge them
-          // 3. If Firestore has updated status, merge it
-          
-          bool needsReconciliation = false;
-          
-          // Check if Firestore has actual dates that should override local state
-          if (firestoreRow.actualStartDate != null && 
-              editedRow.actualStartDate != firestoreRow.actualStartDate) {
-            editedRow.actualStartDate = firestoreRow.actualStartDate;
-            needsReconciliation = true;
-            widget.logger.d(
-              '🔄 Reconciled actualStartDate for row $i from Firestore: ${firestoreRow.actualStartDate}',
-            );
-          }
-          
-          if (firestoreRow.actualEndDate != null && 
-              editedRow.actualEndDate != firestoreRow.actualEndDate) {
-            editedRow.actualEndDate = firestoreRow.actualEndDate;
-            needsReconciliation = true;
-            widget.logger.d(
-              '🔄 Reconciled actualEndDate for row $i from Firestore: ${firestoreRow.actualEndDate}',
-            );
-          }
-          
-          // Check if Firestore has status updates that should override local state
-          if (firestoreRow.status != null && 
-              editedRow.status != firestoreRow.status) {
-            editedRow.status = firestoreRow.status;
-            needsReconciliation = true;
-            widget.logger.d(
-              '🔄 Reconciled status for row $i from Firestore: ${firestoreRow.status}',
-            );
-          }
-          
-          // If reconciliation occurred, update the edited row
-          if (needsReconciliation) {
-            _editedRows[i] = editedRow;
-          }
-        } else {
-          // IDs don't match - Firestore data takes precedence, clear local edit
-          _editedRows.remove(i);
+        bool needsReconciliation = false;
+        
+        if (firestoreRow.actualStartDate != editedRow.actualStartDate) {
+          editedRow.actualStartDate = firestoreRow.actualStartDate;
+          needsReconciliation = true;
           widget.logger.d(
-            '🔄 Cleared mismatched edited row at index $i (local ID: ${editedRow.id}, Firestore ID: ${firestoreRow.id})',
+            '📄 Reconciled actualStartDate for row $i from Firestore: ${firestoreRow.actualStartDate}',
           );
         }
+        
+        if (firestoreRow.actualEndDate != editedRow.actualEndDate) {
+          editedRow.actualEndDate = firestoreRow.actualEndDate;
+          needsReconciliation = true;
+          widget.logger.d(
+            '📄 Reconciled actualEndDate for row $i from Firestore: ${firestoreRow.actualEndDate}',
+          );
+        }
+        
+        // Check if Firestore has status updates that should override local state
+        if (firestoreRow.status != editedRow.status) {
+          editedRow.status = firestoreRow.status;
+          needsReconciliation = true;
+          widget.logger.d(
+            '📄 Reconciled status for row $i from Firestore: ${firestoreRow.status}',
+          );
+        }
+        
+        // If reconciliation occurred, update the edited row
+        if (needsReconciliation) {
+          _editedRows[i] = editedRow;
+        }
+      } else {
+        // IDs don't match - Firestore data takes precedence, clear local edit
+        _editedRows.remove(i);
+        widget.logger.d(
+          '📄 Cleared mismatched edited row at index $i (local ID: ${editedRow.id}, Firestore ID: ${firestoreRow.id})',
+        );
       }
     }
     
     // Clean up any edited rows that no longer exist in Firestore
     final validIndices = List.generate(firestoreRows.length, (i) => i).toSet();
-    _editedRows.removeWhere((index, row) {
-      if (!validIndices.contains(index)) {
-        widget.logger.d('🔄 Removed orphaned edited row at index $index');
-        return true;
-      }
-      return false;
-    });
+    final orphanedIndices = _editedRows.keys.where((index) => !validIndices.contains(index)).toList();
+    
+    for (final index in orphanedIndices) {
+      _editedRows.remove(index);
+      widget.logger.d('📄 Removed orphaned edited row at index $index');
+    }
   }
 
   void _removeResourceDropdown() {
@@ -3795,12 +3804,14 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   void _clearActualDates(int index) {
+    if (!mounted) return;
+    
     setState(() {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       row.actualStartDate = null;
       row.actualEndDate = null;
       
-      // ⭐ NEW: Revert status based on scheduled dates vs current time
+      // Revert status based on scheduled dates vs current time
       final now = DateTime.now();
       TaskStatus revertedStatus;
       
@@ -3808,13 +3819,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
         // Task should have started already -> mark as overdue
         revertedStatus = TaskStatus.overdue;
         widget.logger.i(
-          'ðŸ"… Reverted status to OVERDUE for task "${row.taskName}" (scheduled start: ${row.startDate})',
+          '📅 Reverted status to OVERDUE for task "${row.taskName}" (scheduled start: ${row.startDate})',
         );
       } else {
         // Task hasn't started yet -> mark as upcoming
         revertedStatus = TaskStatus.upcoming;
         widget.logger.i(
-          'ðŸ"… Reverted status to UPCOMING for task "${row.taskName}"',
+          '📅 Reverted status to UPCOMING for task "${row.taskName}"',
         );
       }
       
@@ -3827,43 +3838,71 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       'Cleared actual dates for row $index with status reversion',
     );
 
-    // ⭐ NEW: Immediately save to Firestore to sync with Schedule Monitor
+    // Better error handling and state management for Firebase save
     _saveRowToFirebase(_editedRows[index]!, index).then((_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.white, size: 20),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Actual dates cleared - Status: ${_editedRows[index]!.status?.name ?? "updated"}',
-                    style: GoogleFonts.poppins(fontSize: 13),
-                  ),
+      if (!mounted) return;
+      
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Actual dates cleared - Status: ${_editedRows[index]?.status?.name ?? "updated"}',
+                  style: GoogleFonts.poppins(fontSize: 13),
                 ),
-              ],
-            ),
-            backgroundColor: Colors.blue.shade600,
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            duration: Duration(seconds: 3),
+              ),
+            ],
           ),
-        );
-      }
-    }).catchError((e) {
-      widget.logger.e('âŒ Error clearing actual dates with status', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to clear dates: $e',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.red,
+          backgroundColor: Colors.blue.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }).catchError((e, stackTrace) {
+      widget.logger.e(
+        '⛔ Error clearing actual dates with status',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      
+      if (!mounted) return;
+      
+      // Show error message with more context
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Failed to clear dates. Please try again.',
+                  style: GoogleFonts.poppins(fontSize: 13),
+                ),
+              ),
+            ],
           ),
-        );
-      }
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              // Retry the save operation
+              if (mounted && _editedRows.containsKey(index)) {
+                _saveRowToFirebase(_editedRows[index]!, index);
+              }
+            },
+          ),
+        ),
+      );
     });
   }
 
