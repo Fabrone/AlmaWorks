@@ -3705,101 +3705,166 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   void _applyActualStartDate(int index, DateTime date) {
+    if (!mounted) return;
+    
+    // Declare variables that will be assigned in setState
+    late final GanttRowData rowToSave;
+    
     setState(() {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       row.actualStartDate = date;
       
-      // ⭐ NEW: Auto-set status to 'started' when actual start date is applied
+      // Auto-set status to 'started' when actual start date is applied
       // Only set to 'started' if not already completed
       if (row.status != TaskStatus.completed) {
         row.status = TaskStatus.started;
         widget.logger.i(
-          'ðŸ"… Auto-set status to STARTED for task "${row.taskName}" due to actual start date',
+          '📅 Auto-set status to STARTED for task "${row.taskName}" due to actual start date',
         );
       }
       
       _editedRows[index] = row;
+      rowToSave = GanttRowData.from(row); // Create a copy for saving
       _computeColumnWidths();
     });
 
     widget.logger.i(
-      'âœ… Applied actual start date: ${DateFormat('MM/dd/yyyy').format(date)} to row $index with status update',
+      '✅ Applied actual start date: ${DateFormat('MM/dd/yyyy').format(date)} to row $index with status update',
     );
 
-    // ⭐ NEW: Immediately save to Firestore to sync with Schedule Monitor
-    _saveRowToFirebase(_editedRows[index]!, index).then((_) {
-      if (mounted) {
-        _showSuccessSnackbar(
-          'Actual start date set to ${DateFormat('MM/dd/yyyy').format(date)} - Status: Started',
-        );
-      }
-    }).catchError((e) {
-      widget.logger.e('âŒ Error saving actual start date with status', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to save changes: $e',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.red,
+    // Use the captured copy instead of accessing _editedRows in callback
+    _saveRowToFirebase(rowToSave, index).then((_) {
+      if (!mounted) return;
+      
+      _showSuccessSnackbar(
+        'Actual start date set to ${DateFormat('MM/dd/yyyy').format(date)} - Status: Started',
+      );
+    }).catchError((e, stackTrace) {
+      widget.logger.e(
+        '⛔ Error saving actual start date with status',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Failed to save changes. Please try again.',
+                  style: GoogleFonts.poppins(fontSize: 13),
+                ),
+              ),
+            ],
           ),
-        );
-      }
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              if (mounted) {
+                _saveRowToFirebase(rowToSave, index);
+              }
+            },
+          ),
+        ),
+      );
     });
   }
 
   void _applyActualFinishDate(int index, DateTime date) {
+    if (!mounted) return;
+    
+    // Declare variables that will be assigned in setState
+    late final GanttRowData rowToSave;
+    late final String successMessage;
+    
     setState(() {
       final row = _editedRows[index] ?? GanttRowData.from(_rows[index]);
       row.actualEndDate = date;
       
-      // ⭐ NEW: Ensure actual start date exists when setting finish date
+      // Ensure actual start date exists when setting finish date
       if (row.actualStartDate == null) {
         // Set actual start to scheduled start if available, otherwise use current date
         row.actualStartDate = row.startDate ?? DateTime.now();
         widget.logger.i(
-          'ðŸ"… Auto-set actual start date to ${row.actualStartDate} for task "${row.taskName}" when completing',
+          '📅 Auto-set actual start date to ${row.actualStartDate} for task "${row.taskName}" when completing',
         );
       }
       
-      // ⭐ NEW: Auto-set status to 'completed' when actual finish date is applied
+      // Auto-set status to 'completed' when actual finish date is applied
       row.status = TaskStatus.completed;
       widget.logger.i(
-        'ðŸ"… Auto-set status to COMPLETED for task "${row.taskName}" due to actual finish date',
+        '📅 Auto-set status to COMPLETED for task "${row.taskName}" due to actual finish date',
       );
       
       _editedRows[index] = row;
+      rowToSave = GanttRowData.from(row); // Create a copy for saving
+      
+      // Prepare success message with captured data
+      final startMsg = row.actualStartDate != null
+          ? ' (Start: ${DateFormat('MM/dd/yyyy').format(row.actualStartDate!)})'
+          : '';
+      successMessage = 'Task completed on ${DateFormat('MM/dd/yyyy').format(date)}$startMsg';
+      
       _computeColumnWidths();
     });
 
     widget.logger.i(
-      'âœ… Applied actual finish date: ${DateFormat('MM/dd/yyyy').format(date)} to row $index with status update',
+      '✅ Applied actual finish date: ${DateFormat('MM/dd/yyyy').format(date)} to row $index with status update',
     );
 
-    // ⭐ NEW: Immediately save to Firestore to sync with Schedule Monitor
-    _saveRowToFirebase(_editedRows[index]!, index).then((_) {
-      if (mounted) {
-        final startMsg = _editedRows[index]!.actualStartDate != null
-            ? ' (Start: ${DateFormat('MM/dd/yyyy').format(_editedRows[index]!.actualStartDate!)})'
-            : '';
-        _showSuccessSnackbar(
-          'Task completed on ${DateFormat('MM/dd/yyyy').format(date)}$startMsg',
-        );
-      }
-    }).catchError((e) {
-      widget.logger.e('âŒ Error saving actual finish date with status', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to save changes: $e',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.red,
+    // Use the captured copy and message instead of accessing _editedRows in callback
+    _saveRowToFirebase(rowToSave, index).then((_) {
+      if (!mounted) return;
+      
+      _showSuccessSnackbar(successMessage);
+    }).catchError((e, stackTrace) {
+      widget.logger.e(
+        '⛔ Error saving actual finish date with status',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.error_outline, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Failed to save changes. Please try again.',
+                  style: GoogleFonts.poppins(fontSize: 13),
+                ),
+              ),
+            ],
           ),
-        );
-      }
+          backgroundColor: Colors.red.shade600,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          duration: Duration(seconds: 3),
+          action: SnackBarAction(
+            label: 'Retry',
+            textColor: Colors.white,
+            onPressed: () {
+              if (mounted) {
+                _saveRowToFirebase(rowToSave, index);
+              }
+            },
+          ),
+        ),
+      );
     });
   }
 
