@@ -18,7 +18,7 @@ class NotificationCenterScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0A2E5A), // Theme blue color
+        backgroundColor: const Color(0xFF0A2E5A),
         foregroundColor: Colors.white,
         title: Text(
           'Notifications',
@@ -28,37 +28,63 @@ class NotificationCenterScreen extends StatelessWidget {
           ),
         ),
         actions: [
-          TextButton.icon(
-            onPressed: () async {
-              await notificationService.markAllAsRead(projectId);
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'All notifications marked as read',
-                      style: GoogleFonts.poppins(),
-                    ),
-                    backgroundColor: const Color(0xFF0A2E5A),
+          StreamBuilder<int>(
+            stream: notificationService.getUnreadCount(projectId),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+              if (unreadCount == 0) return const SizedBox.shrink();
+              
+              return TextButton.icon(
+                onPressed: () async {
+                  try {
+                    await notificationService.markAllAsRead(projectId);
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'All notifications marked as read',
+                            style: GoogleFonts.poppins(),
+                          ),
+                          backgroundColor: const Color(0xFF0A2E5A),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Error marking notifications as read',
+                            style: GoogleFonts.poppins(),
+                          ),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                icon: const Icon(Icons.done_all, size: 18, color: Colors.white),
+                label: Text(
+                  'Mark All Read ($unreadCount)',
+                  style: GoogleFonts.poppins(
+                    fontSize: 13,
+                    color: Colors.white,
                   ),
-                );
-              }
+                ),
+              );
             },
-            icon: const Icon(Icons.done_all, size: 18, color: Colors.white),
-            label: Text(
-              'Mark All Read',
-              style: GoogleFonts.poppins(
-                fontSize: 13,
-                color: Colors.white,
-              ),
-            ),
           ),
+          const SizedBox(width: 8),
         ],
       ),
       body: StreamBuilder<List<ScheduleNotification>>(
-        stream: notificationService.getNotifications(projectId),
+        stream: notificationService.getNotifications(projectId, limit: 100),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: CircularProgressIndicator(),
+            );
           }
 
           if (snapshot.hasError) {
@@ -77,15 +103,6 @@ class NotificationCenterScreen extends StatelessWidget {
                         fontSize: 18,
                         fontWeight: FontWeight.w600,
                       ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      snapshot.error.toString(),
-                      style: GoogleFonts.poppins(
-                        color: Colors.red.shade700,
-                        fontSize: 14,
-                      ),
-                      textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),
                     ElevatedButton.icon(
@@ -142,6 +159,7 @@ class NotificationCenterScreen extends StatelessWidget {
     );
   }
 
+  // UPDATED: Better tap handling with haptic feedback
   Widget _buildNotificationItem(BuildContext context, ScheduleNotification notification) {
     final dateFormat = DateFormat('MMM dd, yyyy - HH:mm');
     
@@ -161,7 +179,11 @@ class NotificationCenterScreen extends StatelessWidget {
       child: InkWell(
         onTap: () async {
           if (!notification.isRead) {
-            await notificationService.markAsRead(notification.id);
+            try {
+              await notificationService.markAsRead(notification.id);
+            } catch (e) {
+              // Silently fail - notification will be marked read on next sync
+            }
           }
         },
         borderRadius: BorderRadius.circular(12),
@@ -204,6 +226,8 @@ class NotificationCenterScreen extends StatelessWidget {
                             fontSize: 15,
                             color: Colors.grey.shade800,
                           ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(

@@ -184,6 +184,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
   Timer? _refreshTimer;
 
+  // UPDATED: Better timer management
   @override
   void initState() {
     super.initState();
@@ -192,14 +193,16 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       logger: widget.logger,
       userId: null,
     );
+    
     _notificationService.initialize().then((_) {
-      // Only check notifications after successful initialization
       if (mounted && !kIsWeb) {
-        _scheduleNotificationCheck();
+        // Initial check after 2 seconds
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) _scheduleNotificationCheck();
+        });
       }
     });
     
-    // Listen to unread count
     _notificationService.getUnreadCount(widget.projectId).listen((unreadCount) {
       if (mounted) {
         setState(() {
@@ -217,7 +220,9 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
     );
+    
     tzdata.initializeTimeZones();
+    
     if (!kIsWeb) {
       _initializeNotifications();
       _initializeBackgroundTasks();
@@ -229,8 +234,8 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       });
     });
 
-    // Check notifications periodically (every 5 minutes)
-    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+    // Check notifications every 30 minutes (reduced frequency)
+    _refreshTimer = Timer.periodic(const Duration(minutes: 30), (timer) {
       if (mounted && !kIsWeb) {
         _scheduleNotificationCheck();
       }
@@ -385,12 +390,13 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     _completedTasks.sort((a, b) => b.endDate!.compareTo(a.endDate!));
   }
 
+  // UPDATED: Better rate limiting
   void _scheduleNotificationCheck() {
     final now = DateTime.now();
     
-    // Only check once every 5 minutes to prevent spam
+    // Only check once every 30 minutes to prevent spam
     if (_lastNotificationCheck != null && 
-        now.difference(_lastNotificationCheck!).inMinutes < 5) {
+        now.difference(_lastNotificationCheck!).inMinutes < 30) {
       return;
     }
     
@@ -408,24 +414,39 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     _isCheckingNotifications = true;
     
     try {
-      final List<GanttRowData> notifyTasks = _startingSoonTasks;
+      // Only check tasks starting within 3 days
+      final List<GanttRowData> notifyTasks = _startingSoonTasks.where((task) {
+        if (task.startDate == null) return false;
+        final diff = task.startDate!.difference(DateTime.now()).inDays;
+        return diff >= 0 && diff <= 3;
+      }).toList();
 
       if (notifyTasks.isEmpty) {
         _isCheckingNotifications = false;
         return;
       }
 
-      // Check which notifications haven't been sent today
-      final List<GanttRowData> unsentTasks = [];
-      for (var task in notifyTasks) {
-        final wasSent = await _notificationService.wasNotificationSentToday(
-          widget.projectId,
-          task.firestoreId ?? '',
-        );
-        if (!wasSent) {
-          unsentTasks.add(task);
-        }
+      // Batch check all tasks at once for better performance
+      final List<String> taskIds = notifyTasks
+          .where((t) => t.firestoreId != null)
+          .map((t) => t.firestoreId!)
+          .toList();
+      
+      if (taskIds.isEmpty) {
+        _isCheckingNotifications = false;
+        return;
       }
+
+      // Check which notifications haven't been sent today (batch operation)
+      final Map<String, bool> sentStatus = 
+          await _notificationService.batchCheckNotificationsSentToday(
+        widget.projectId,
+        taskIds,
+      );
+
+      final List<GanttRowData> unsentTasks = notifyTasks
+          .where((task) => sentStatus[task.firestoreId] == false)
+          .toList();
 
       if (unsentTasks.isEmpty) {
         widget.logger.i('ℹ️ All notifications already sent today');
@@ -433,58 +454,79 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
         return;
       }
 
-      // Create grouped notification message
-      final String taskNames = unsentTasks.map((t) => t.taskName ?? 'Untitled').join(', ');
-      final String body = unsentTasks.length == 1
-          ? 'Task "${unsentTasks.first.taskName}" is starting soon!'
-          : '${unsentTasks.length} tasks starting soon: $taskNames';
+      // Save notifications in a batch operation
+      final List<Map<String, dynamic>> notificationsToSave = unsentTasks.map((task) {
+        final daysUntil = task.startDate!.difference(DateTime.now()).inDays;
+        return {
+          'taskId': task.firestoreId ?? '',
+          'taskName': task.taskName ?? 'Untitled',
+          'startDate': task.startDate!,
+          'message': 'Task starts in $daysUntil day${daysUntil == 1 ? '' : 's'}',
+        };
+      }).toList();
 
-      // Save each notification to tracking system
-      for (var task in unsentTasks) {
-        await _notificationService.saveNotification(
-          projectId: widget.projectId,
-          taskId: task.firestoreId ?? '',
-          taskName: task.taskName ?? 'Untitled',
-          startDate: task.startDate!,
-          message: 'Task starts in ${task.startDate!.difference(DateTime.now()).inDays} days',
-        );
-      }
-
-      // Show single grouped system notification
-      const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        'schedule_monitor_channel',
-        'Schedule Monitor Notifications',
-        importance: Importance.high,
-        priority: Priority.high,
-        ongoing: true,
-        autoCancel: false,
-        actions: <AndroidNotificationAction>[
-          AndroidNotificationAction('open', 'View Tasks'),
-        ],
-      );
-      const DarwinNotificationDetails iosDetails = DarwinNotificationDetails();
-      final NotificationDetails details = NotificationDetails(
-        android: androidDetails,
-        iOS: iosDetails,
+      await _notificationService.batchSaveNotifications(
+        projectId: widget.projectId,
+        notifications: notificationsToSave,
       );
 
-      await _flutterLocalNotificationsPlugin!.show(
-        widget.projectId.hashCode,
-        'Tasks Starting Soon',
-        body,
-        details,
-        payload: widget.projectId,
-      );
-
-      if (!kIsWeb) {
-        FlutterRingtonePlayer().playNotification();
-      }
+      // Show SINGLE grouped system notification
+      await _showGroupedNotification(unsentTasks);
       
       widget.logger.i('✅ Sent grouped notification for ${unsentTasks.length} tasks');
-    } catch (e) {
-      widget.logger.e('Error checking notifications', error: e);
+    } catch (e, stackTrace) {
+      widget.logger.e('Error checking notifications', error: e, stackTrace: stackTrace);
     } finally {
       _isCheckingNotifications = false;
+    }
+  }
+
+  Future<void> _showGroupedNotification(List<GanttRowData> tasks) async {
+    if (_flutterLocalNotificationsPlugin == null) return;
+
+    final String taskNames = tasks.map((t) => t.taskName ?? 'Untitled').take(3).join(', ');
+    final String body = tasks.length == 1
+        ? 'Task "${tasks.first.taskName}" is starting soon!'
+        : tasks.length <= 3
+            ? 'Tasks starting soon: $taskNames'
+            : '${tasks.length} tasks starting soon: $taskNames and ${tasks.length - 3} more';
+
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'schedule_monitor_channel',
+      'Schedule Monitor Notifications',
+      channelDescription: 'Notifications for upcoming project tasks',
+      importance: Importance.high,
+      priority: Priority.high,
+      groupKey: 'com.almaworks.schedule_monitor',
+      setAsGroupSummary: true,
+      autoCancel: true,
+      actions: <AndroidNotificationAction>[
+        AndroidNotificationAction('open', 'View Tasks'),
+        AndroidNotificationAction('dismiss', 'Dismiss'),
+      ],
+    );
+    
+    const DarwinNotificationDetails iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    final NotificationDetails details = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    await _flutterLocalNotificationsPlugin!.show(
+      widget.projectId.hashCode,
+      'Tasks Starting Soon',
+      body,
+      details,
+      payload: widget.projectId,
+    );
+
+    if (!kIsWeb) {
+      FlutterRingtonePlayer().playNotification();
     }
   }
 
