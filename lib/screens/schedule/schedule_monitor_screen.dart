@@ -1,0 +1,1907 @@
+import 'dart:io';
+import 'package:almaworks/models/project_model.dart';
+import 'package:almaworks/models/schedule_monitor_model.dart';
+import 'package:almaworks/screens/schedule/notification_center_screen.dart';
+import 'package:almaworks/services/notification_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:logger/logger.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:elegant_notification/elegant_notification.dart';
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:timezone/data/latest.dart' as tzdata;
+import 'package:workmanager/workmanager.dart' hide TaskStatus;
+import 'dart:async';
+
+// NEW: Helper method for notification colors based on type
+Color _getNotificationColor(String type) {
+  switch (type) {
+    case 'overdue':
+      return Colors.red; // Distinguished color for Overdue
+    case 'starting_soon':
+      return Colors.orange; // Distinguished color for Starting Soon
+    default:
+      return Colors.blue; // Fallback
+  }
+}
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((taskName, inputData) async {
+    final logger = Logger();
+    
+    try {
+      logger.i('🔄 Background task started: $taskName');
+      
+      tzdata.initializeTimeZones();
+
+      final String? projectId = inputData?['projectId'] as String?;
+      final String? userId = inputData?['userId'] as String?;
+
+      if (projectId == null) {
+        logger.e('❌ Background task: projectId is null');
+        return Future.value(false);
+      }
+
+      logger.d('📋 Background task processing project: $projectId');
+
+      // STEP 1: Initialize notification service
+      final notificationService = NotificationService(
+        logger: logger,
+        userId: userId,
+      );
+      
+      await notificationService.initialize();
+      logger.i('✅ NotificationService initialized in background');
+
+      // STEP 2: Fetch tasks from ScheduleMonitor collection (not Schedule)
+      logger.d('🔥 Fetching tasks from ScheduleMonitor...');
+      final QuerySnapshot snapshot = await FirebaseFirestore.instance
+          .collection('ScheduleMonitor')
+          .where('projectId', isEqualTo: projectId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        logger.i('ℹ️ No tasks found for project $projectId');
+        return Future.value(true);
+      }
+
+      final List<ScheduleMonitorData> tasks = snapshot.docs
+          .map((doc) => ScheduleMonitorData.fromFirestore(doc.id, doc.data() as Map<String, dynamic>))
+          .toList();
+      
+      logger.d('📊 Loaded ${tasks.length} tasks from ScheduleMonitor');
+
+      final DateTime now = DateTime.now();
+
+      // STEP 3: Update statuses in ScheduleMonitor (real-time sync)
+      logger.d('🔄 Updating task statuses...');
+      int updatedCount = 0;
+      final batch = FirebaseFirestore.instance.batch();
+      
+      for (var task in tasks) {
+        // Recompute status
+        final newStatus = ScheduleMonitorData.computeStatus(
+          startDate: task.startDate,
+          endDate: task.endDate,
+          actualStartDate: task.actualStartDate,
+          actualEndDate: task.actualEndDate,
+          taskStatus: task.taskStatus,
+        );
+        
+        // Recompute upcoming category
+        UpcomingCategory? newUpcomingCategory;
+        if (newStatus == MonitorStatus.upcoming) {
+          newUpcomingCategory = ScheduleMonitorData.computeUpcomingCategory(task.startDate);
+        }
+        
+        // Update if status changed
+        if (newStatus != task.status || newUpcomingCategory != task.upcomingCategory) {
+          batch.update(
+            FirebaseFirestore.instance.collection('ScheduleMonitor').doc(task.id),
+            {
+              'status': newStatus.toString().split('.').last.toUpperCase(),
+              'upcomingCategory': newUpcomingCategory?.toString().split('.').last.toUpperCase(),
+              'updatedAt': FieldValue.serverTimestamp(),
+              'lastStatusUpdate': FieldValue.serverTimestamp(),
+            },
+          );
+          updatedCount++;
+        }
+      }
+      
+      if (updatedCount > 0) {
+        await batch.commit();
+        logger.i('✅ Updated $updatedCount task statuses in ScheduleMonitor');
+      }
+
+      // Re-fetch updated tasks
+      final updatedSnapshot = await FirebaseFirestore.instance
+          .collection('ScheduleMonitor')
+          .where('projectId', isEqualTo: projectId)
+          .get();
+      
+      final updatedTasks = updatedSnapshot.docs
+          .map((doc) => ScheduleMonitorData.fromFirestore(doc.id, doc.data()))
+          .toList();
+
+      // STEP 4: Categorize tasks for notifications
+      final List<ScheduleMonitorData> overdueTasks = updatedTasks
+          .where((task) => task.status == MonitorStatus.overdue)
+          .toList();
+
+      final List<ScheduleMonitorData> startingSoonTasks = updatedTasks
+          .where((task) => task.status == MonitorStatus.upcoming && task.isStartingSoon)
+          .toList();
+
+      logger.i('📋 Found ${overdueTasks.length} overdue, ${startingSoonTasks.length} starting soon');
+
+      final List<ScheduleMonitorData> notifyTasks = [...overdueTasks, ...startingSoonTasks];
+
+      if (notifyTasks.isEmpty) {
+        logger.i('✅ No tasks need notifications');
+        return Future.value(true);
+      }
+
+      // STEP 5: Check which tasks need notifications (with locking)
+      logger.d('🔍 Checking notification status for ${notifyTasks.length} tasks...');
+      final List<Map<String, dynamic>> unsentTasks = [];
+      
+      for (var task in notifyTasks) {
+        final taskId = task.scheduleTaskId;
+
+        // Check if already triggered today
+        final wasTriggered = await notificationService.wasNotificationTriggeredToday(
+          projectId, 
+          taskId,
+        );
+        
+        if (wasTriggered) {
+          logger.d('⏭️ Task "${task.taskName}" already notified today');
+          continue;
+        }
+        
+        // Acquire lock
+        final lockAcquired = await notificationService.acquireLock(projectId, taskId);
+        
+        if (!lockAcquired) {
+          logger.w('⚠️ Could not acquire lock for task: ${task.taskName}');
+          continue;
+        }
+
+        try {
+          // Double-check after lock
+          final stillNotTriggered = !await notificationService.wasNotificationTriggeredToday(
+            projectId, 
+            taskId,
+          );
+          
+          if (stillNotTriggered) {
+            final type = task.isOverdue ? 'overdue' : 'starting_soon';
+            unsentTasks.add({
+              'task': task,
+              'type': type,
+            });
+            logger.d('📝 Task "${task.taskName}" queued for notification');
+          }
+        } finally {
+          await notificationService.releaseLock(projectId, taskId);
+        }
+      }
+
+      if (unsentTasks.isEmpty) {
+        logger.i('✅ All tasks already notified or locked');
+        return Future.value(true);
+      }
+
+      logger.i('🔔 Triggering ${unsentTasks.length} notifications');
+
+      // STEP 6: Initialize notification plugin
+      final FlutterLocalNotificationsPlugin notifications = FlutterLocalNotificationsPlugin();
+      
+      // Create notification channel for Android
+      if (!kIsWeb && Platform.isAndroid) {
+        const AndroidNotificationChannel channel = AndroidNotificationChannel(
+          'schedule_monitor_channel',
+          'Schedule Monitor Notifications',
+          description: 'Notifications for task schedule monitoring and reminders',
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+          showBadge: true,
+        );
+
+        await notifications
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(channel);
+      }
+
+      const AndroidInitializationSettings androidInit = 
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      const DarwinInitializationSettings iosInit = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+      const InitializationSettings initSettings = 
+          InitializationSettings(android: androidInit, iOS: iosInit);
+      
+      await notifications.initialize(initSettings);
+      logger.i('✅ Notification plugin initialized');
+
+      // STEP 7: Show individual notifications
+      for (var item in unsentTasks) {
+        final task = item['task'] as ScheduleMonitorData;
+        final type = item['type'] as String;
+        final taskId = task.scheduleTaskId;
+        
+        try {
+          final notifId = '${projectId}_$taskId'.hashCode;
+          final color = _getNotificationColor(type);
+
+          final String title = type == 'overdue' 
+              ? '⚠️ Overdue: ${task.taskName}'
+              : '📅 Starting Soon: ${task.taskName}';
+          
+          final String body = type == 'overdue'
+              ? 'This task is overdue and needs attention!'
+              : 'Starts in ${task.daysUntilStart} day(s)';
+
+          final androidDetails = AndroidNotificationDetails(
+            'schedule_monitor_channel',
+            'Schedule Monitor Notifications',
+            channelDescription: 'Notifications for task schedule monitoring and reminders',
+            importance: Importance.high,
+            priority: Priority.high,
+            groupKey: 'com.almaworks.schedule_monitor',
+            setAsGroupSummary: false,
+            ongoing: false,
+            autoCancel: true,
+            color: color,
+            playSound: true,
+            enableVibration: true,
+            styleInformation: BigTextStyleInformation(body),
+            actions: <AndroidNotificationAction>[
+              AndroidNotificationAction('open', 'View Task'),
+            ],
+          );
+          
+          const iosDetails = DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          );
+          
+          final details = NotificationDetails(
+            android: androidDetails,
+            iOS: iosDetails,
+          );
+
+          await notifications.show(
+            notifId,
+            title,
+            body,
+            details,
+            payload: '$projectId|$taskId|$type',
+          );
+
+          logger.i('✅ Notification shown: ${task.taskName} (ID: $notifId)');
+
+          // Save to Firestore
+          final savedId = await notificationService.saveNotification(
+            projectId: projectId,
+            taskId: taskId,
+            taskName: task.taskName,
+            startDate: task.startDate,
+            message: body,
+            isTriggered: true,
+            triggerSource: 'background_task',
+            triggeredAt: now,
+            notificationId: notifId,
+            expiresAt: task.startDate,
+            type: type,
+          );
+
+          if (savedId != null) {
+            logger.i('✅ Notification saved to Firestore: $savedId');
+          } else {
+            logger.e('❌ Failed to save notification to Firestore');
+          }
+
+        } catch (e, stackTrace) {
+          logger.e('❌ Error showing notification for ${task.taskName}', 
+                   error: e, stackTrace: stackTrace);
+        }
+      }
+
+      // STEP 8: Show group summary if multiple notifications
+      if (unsentTasks.length > 1) {
+        logger.d('📦 Creating group summary notification');
+        
+        final taskNames = unsentTasks
+            .map((item) => (item['task'] as ScheduleMonitorData).taskName)
+            .join(', ');
+        
+        final androidSummaryDetails = AndroidNotificationDetails(
+          'schedule_monitor_channel',
+          'Schedule Monitor Notifications',
+          channelDescription: 'Notifications for task schedule monitoring and reminders',
+          importance: Importance.high,
+          priority: Priority.high,
+          groupKey: 'com.almaworks.schedule_monitor',
+          setAsGroupSummary: true,
+          ongoing: false,
+          autoCancel: false,
+          color: Colors.blue,
+          styleInformation: BigTextStyleInformation(
+            '${unsentTasks.length} tasks need attention: $taskNames',
+          ),
+        );
+        
+        const iosSummaryDetails = DarwinNotificationDetails();
+        
+        final summaryDetails = NotificationDetails(
+          android: androidSummaryDetails,
+          iOS: iosSummaryDetails,
+        );
+        
+        await notifications.show(
+          projectId.hashCode,
+          'Task Alerts',
+          '${unsentTasks.length} tasks need your attention',
+          summaryDetails,
+          payload: projectId,
+        );
+        
+        logger.i('✅ Group summary notification created');
+      }
+
+      // Play notification sound
+      if (!kIsWeb) {
+        try {
+          FlutterRingtonePlayer().playNotification();
+        } catch (e) {
+          logger.w('⚠️ Could not play notification sound', error: e);
+        }
+      }
+
+      logger.i('🎉 Background task completed successfully - sent ${unsentTasks.length} notifications');
+      return Future.value(true);
+
+    } catch (e, stackTrace) {
+      logger.e('❌ Background task failed', error: e, stackTrace: stackTrace);
+      return Future.value(false);
+    }
+  });
+}
+class ScheduleMonitorScreen extends StatefulWidget {
+  final String projectId;
+  final String projectName;
+  final Logger logger;
+  final ProjectModel project;
+
+  const ScheduleMonitorScreen({
+    super.key,
+    required this.projectId,
+    required this.projectName,
+    required this.logger,
+    required this.project,
+  });
+
+  @override
+  State<ScheduleMonitorScreen> createState() => _ScheduleMonitorScreenState();
+}
+
+class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with SingleTickerProviderStateMixin {
+  late AnimationController _animationController;
+  late Animation<double> _fadeAnimation;
+  late NotificationService _notificationService;
+  int _unreadNotificationCount = 0;
+  bool _isCheckingNotifications = false;
+  FlutterLocalNotificationsPlugin? _flutterLocalNotificationsPlugin;
+
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  StreamSubscription<int>? _unreadCountSubscription;
+
+  Timer? _refreshTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    
+    widget.logger.i('🚀 Initializing ScheduleMonitorScreen for project: ${widget.projectId}');
+    
+    // Initialize notification service
+    _notificationService = NotificationService(
+      logger: widget.logger,
+      userId: null,
+    );
+    
+    // Initialize service and setup listeners
+    _notificationService.initialize().then((_) {
+      widget.logger.i('✅ NotificationService initialized successfully');
+      
+      // Sync Schedule to ScheduleMonitor collection
+      _syncScheduleToMonitor();
+      
+      if (mounted && !kIsWeb) {
+        widget.logger.i('📱 Platform supports notifications, scheduling initial check');
+        
+        // Initial check after 5 seconds
+        Future.delayed(const Duration(seconds: 5), () {
+          if (mounted) {
+            widget.logger.i('🔔 Running initial notification check');
+            _scheduleNotificationCheck();
+          }
+        });
+      } else if (kIsWeb) {
+        widget.logger.w('🌐 Web platform - background notifications not fully supported');
+      }
+    }).catchError((error) {
+      widget.logger.e('❌ NotificationService initialization failed', error: error);
+    });
+    
+    // Listen to unread count
+    _unreadCountSubscription = _notificationService.getUnreadCount(widget.projectId).listen(
+      (unreadCount) {
+        if (mounted) {
+          widget.logger.d('📊 Unread count updated: $unreadCount');
+          setState(() {
+            _unreadNotificationCount = unreadCount;
+          });
+        }
+      },
+      onError: (error) {
+        widget.logger.e('❌ Error listening to unread count', error: error);
+      },
+    );
+    
+    // Animation setup
+    _animationController = AnimationController(
+      duration: const Duration(milliseconds: 800),
+      vsync: this,
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _animationController, curve: Curves.easeInOut),
+    );
+    
+    // Initialize timezone data
+    tzdata.initializeTimeZones();
+    
+    // Platform-specific initialization
+    if (!kIsWeb) {
+      _initializeNotifications();
+      _initializeBackgroundTasks();
+    }
+
+    // Search controller listener
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.toLowerCase();
+      });
+    });
+
+    // Periodic check every hour
+    _refreshTimer = Timer.periodic(const Duration(hours: 1), (timer) {
+      if (mounted && !kIsWeb) {
+        widget.logger.d('⏰ Periodic notification check triggered');
+        _scheduleNotificationCheck();
+      }
+    });
+    
+    // Start real-time status updater
+    _startRealtimeStatusUpdater();
+    
+    widget.logger.i('✅ ScheduleMonitorScreen initialization complete');
+  }
+
+  Future<void> _syncScheduleToMonitor() async {
+    try {
+      widget.logger.i('🔄 Syncing Schedule to ScheduleMonitor collection...');
+      
+      final firestore = FirebaseFirestore.instance;
+      
+      // Get all tasks from Schedule collection for this project (only TaskType = "Task")
+      final scheduleSnapshot = await firestore
+          .collection('Schedule')
+          .where('projectId', isEqualTo: widget.projectId)
+          .where('taskType', isEqualTo: 'Task')
+          .get();
+      
+      widget.logger.d('📋 Found ${scheduleSnapshot.docs.length} tasks in Schedule collection');
+      
+      // Get existing ScheduleMonitor documents
+      final monitorSnapshot = await firestore
+          .collection('ScheduleMonitor')
+          .where('projectId', isEqualTo: widget.projectId)
+          .get();
+      
+      // Create a map of existing monitor documents by scheduleTaskId
+      final existingMonitorMap = <String, String>{};
+      for (var doc in monitorSnapshot.docs) {
+        final scheduleTaskId = doc.data()['scheduleTaskId'] as String;
+        existingMonitorMap[scheduleTaskId] = doc.id;
+      }
+      
+      widget.logger.d('📊 Found ${existingMonitorMap.length} existing monitor records');
+      
+      // Batch write for efficiency
+      final batch = firestore.batch();
+      int createCount = 0;
+      int updateCount = 0;
+      
+      for (var scheduleDoc in scheduleSnapshot.docs) {
+        final scheduleData = scheduleDoc.data();
+        
+        // Validate required fields
+        if (scheduleData['startDate'] == null || 
+            scheduleData['endDate'] == null ||
+            scheduleData['taskName'] == null) {
+          widget.logger.w('⚠️ Skipping task ${scheduleDoc.id} - missing required fields');
+          continue;
+        }
+        
+        // Create or update ScheduleMonitor document
+        final monitorData = ScheduleMonitorData.fromScheduleData(
+          scheduleTaskId: scheduleDoc.id,
+          scheduleData: scheduleData,
+        );
+        
+        // Check if document exists using the map
+        if (existingMonitorMap.containsKey(scheduleDoc.id)) {
+          // Update existing document
+          final monitorDocId = existingMonitorMap[scheduleDoc.id]!;
+          batch.update(
+            firestore.collection('ScheduleMonitor').doc(monitorDocId),
+            monitorData.toFirestore(),
+          );
+          updateCount++;
+        } else {
+          // Create new document
+          final newDocRef = firestore.collection('ScheduleMonitor').doc();
+          batch.set(newDocRef, monitorData.toFirestore());
+          createCount++;
+        }
+      }
+      
+      // Delete orphaned ScheduleMonitor documents (tasks deleted from Schedule)
+      final scheduleTaskIds = scheduleSnapshot.docs.map((doc) => doc.id).toSet();
+      int deleteCount = 0;
+      
+      for (var entry in existingMonitorMap.entries) {
+        if (!scheduleTaskIds.contains(entry.key)) {
+          batch.delete(firestore.collection('ScheduleMonitor').doc(entry.value));
+          deleteCount++;
+        }
+      }
+      
+      // Commit batch
+      await batch.commit();
+      
+      widget.logger.i('✅ Sync complete: Created $createCount, Updated $updateCount, Deleted $deleteCount');
+      
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error syncing to ScheduleMonitor', error: e, stackTrace: stackTrace);
+    }
+  }
+
+  /// Normalizes a DateTime to midnight in the device's local timezone
+  DateTime _normalizeToMidnight(DateTime date) {
+    return DateTime(date.year, date.month, date.day);
+  }
+
+  /// Calculates calendar days between two dates
+  int _calculateDaysBetween(DateTime from, DateTime to) {
+    final normalizedFrom = _normalizeToMidnight(from);
+    final normalizedTo = _normalizeToMidnight(to);
+    return normalizedTo.difference(normalizedFrom).inDays;
+  }
+
+  void _startRealtimeStatusUpdater() {
+    // Update statuses every minute to catch date changes
+    Timer.periodic(const Duration(minutes: 1), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
+      try {
+        final firestore = FirebaseFirestore.instance;
+        final now = DateTime.now();
+        
+        // Get all ScheduleMonitor documents for this project
+        final snapshot = await firestore
+            .collection('ScheduleMonitor')
+            .where('projectId', isEqualTo: widget.projectId)
+            .get();
+        
+        final batch = firestore.batch();
+        int updateCount = 0;
+        
+        for (var doc in snapshot.docs) {
+          final monitorData = ScheduleMonitorData.fromFirestore(doc.id, doc.data());
+          
+          // Recompute status
+          final newStatus = ScheduleMonitorData.computeStatus(
+            startDate: monitorData.startDate,
+            endDate: monitorData.endDate,
+            actualStartDate: monitorData.actualStartDate,
+            actualEndDate: monitorData.actualEndDate,
+            taskStatus: monitorData.taskStatus,
+          );
+          
+          // Recompute upcoming category
+          UpcomingCategory? newUpcomingCategory;
+          if (newStatus == MonitorStatus.upcoming) {
+            newUpcomingCategory = ScheduleMonitorData.computeUpcomingCategory(monitorData.startDate);
+          }
+          
+          // Update if status changed
+          if (newStatus != monitorData.status || newUpcomingCategory != monitorData.upcomingCategory) {
+            batch.update(doc.reference, {
+              'status': newStatus.toString().split('.').last.toUpperCase(),
+              'upcomingCategory': newUpcomingCategory?.toString().split('.').last.toUpperCase(),
+              'updatedAt': Timestamp.fromDate(now),
+              'lastStatusUpdate': Timestamp.fromDate(now),
+            });
+            updateCount++;
+          }
+        }
+        
+        if (updateCount > 0) {
+          await batch.commit();
+          widget.logger.d('🔄 Real-time updater: Updated $updateCount task statuses');
+        }
+        
+      } catch (e) {
+        widget.logger.e('❌ Error in real-time status updater', error: e);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    widget.logger.d('🧹 Disposing ScheduleMonitorScreen');
+    
+    _refreshTimer?.cancel();
+    _unreadCountSubscription?.cancel(); // FIXED: Cancel subscription
+    _animationController.dispose();
+    _searchController.dispose();
+    _isCheckingNotifications = false;
+    
+    widget.logger.d('✅ ScheduleMonitorScreen disposed');
+    super.dispose();
+  }
+
+  void _initializeBackgroundTasks() {
+    widget.logger.i('⏰ Initializing background tasks');
+    
+    Workmanager().initialize(callbackDispatcher); // FIXED: Removed isInDebugMode
+
+    // FIXED: Changed to every 6 hours (from 4) to reduce battery drain
+    Workmanager().registerPeriodicTask(
+      "${widget.projectId}_periodic_check",
+      "scheduleMonitorTask",
+      frequency: const Duration(hours: 6),
+      inputData: {
+        'projectId': widget.projectId,
+        'userId': null,
+      },
+      existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
+      constraints: Constraints(
+        networkType: NetworkType.connected, // FIXED: Require network
+      ),
+    );
+    
+    widget.logger.i('✅ Background task registered for project ${widget.projectId}');
+  }
+
+  Future<void> _initializeNotifications() async {
+    widget.logger.i('🔔 Initializing notifications system...');
+    
+    try {
+      _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+      // FIXED: Create notification channel FIRST (Android 8.0+)
+      if (!kIsWeb && (Platform.isAndroid)) {
+        widget.logger.d('📱 Creating Android notification channel');
+        
+        const AndroidNotificationChannel channel = AndroidNotificationChannel(
+          'schedule_monitor_channel',
+          'Schedule Monitor Notifications',
+          description: 'Notifications for task schedule monitoring and reminders',
+          importance: Importance.high,
+          playSound: true,
+          enableVibration: true,
+          showBadge: true,
+        );
+
+        await _flutterLocalNotificationsPlugin!
+            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+            ?.createNotificationChannel(channel);
+        
+        widget.logger.i('✅ Android notification channel created');
+      }
+
+      // Initialize settings
+      const AndroidInitializationSettings androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+      final DarwinInitializationSettings iosInit = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+        notificationCategories: [
+          DarwinNotificationCategory(
+            'actions',
+            actions: <DarwinNotificationAction>[
+              DarwinNotificationAction.plain('snooze', 'Snooze (1 day)'),
+              DarwinNotificationAction.plain('open', 'Open App'),
+            ],
+          ),
+        ],
+      );
+      final InitializationSettings initSettings = InitializationSettings(
+        android: androidInit, 
+        iOS: iosInit,
+      );
+
+      await _flutterLocalNotificationsPlugin!.initialize(
+        initSettings,
+        onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
+        onDidReceiveBackgroundNotificationResponse: _onDidReceiveBackgroundNotificationResponse,
+      );
+      
+      widget.logger.i('✅ Notification plugin initialized');
+
+      // FIXED: Request and verify permissions
+      final permissionStatus = await Permission.notification.request();
+      
+      if (permissionStatus.isGranted) {
+        widget.logger.i('✅ Notification permission GRANTED');
+      } else if (permissionStatus.isDenied) {
+        widget.logger.w('⚠️ Notification permission DENIED');
+        
+        // Show user a dialog explaining why notifications are needed
+        if (mounted) {
+          _showPermissionDialog();
+        }
+      } else if (permissionStatus.isPermanentlyDenied) {
+        widget.logger.e('❌ Notification permission PERMANENTLY DENIED');
+        
+        // Guide user to settings
+        if (mounted) {
+          _showPermissionPermanentlyDeniedDialog();
+        }
+      }
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error initializing notifications', error: e, stackTrace: stackTrace);
+    }
+  }
+
+  void _showPermissionDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Notification Permission Required',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          'This app needs notification permission to alert you about overdue tasks and upcoming deadlines. '
+          'You can enable it now or later in your device settings.',
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('Later', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              final status = await Permission.notification.request();
+              if (status.isGranted) {
+                widget.logger.i('✅ User granted notification permission');
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A2E5A),
+            ),
+            child: Text('Enable', style: GoogleFonts.poppins(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPermissionPermanentlyDeniedDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Notification Permission Disabled',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
+        ),
+        content: Text(
+          'Notification permission has been permanently disabled. '
+          'To receive task alerts, please enable notifications in your device settings.',
+          style: GoogleFonts.poppins(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await openAppSettings();
+              widget.logger.i('📱 Opened app settings for user');
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0A2E5A),
+            ),
+            child: Text('Open Settings', style: GoogleFonts.poppins(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _onDidReceiveNotificationResponse(NotificationResponse response) async {
+    if (!kIsWeb) {
+      FlutterRingtonePlayer().playNotification();
+    }
+    final payload = response.payload;
+    if (payload != null && mounted) {
+      final parts = payload.split('|');
+      final projectId = parts[0];
+      String? taskId = parts.length > 1 ? parts[1] : null;
+      String? type = parts.length > 2 ? parts[2] : null;
+      
+      if (response.actionId == 'snooze') {
+        widget.logger.i('Snoozed notification for project $projectId');
+        // Implement snooze (e.g., reschedule for next day)
+      } else {
+        // UPDATED: Open notification center and mark as read/opened
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => NotificationCenterScreen(
+              projectId: projectId,
+              notificationService: _notificationService,
+            ),
+          ),
+        );
+        
+        if (taskId != null) {
+          final firestore = FirebaseFirestore.instance;
+          Query query = firestore
+              .collection('ScheduleNotifications')
+              .where('projectId', isEqualTo: projectId)
+              .where('taskId', isEqualTo: taskId)
+              .orderBy('createdAt', descending: true)
+              .limit(1);
+          
+          final snapshot = await query.get();
+          if (snapshot.docs.isNotEmpty) {
+            final notifId = snapshot.docs.first.id;
+            await _notificationService.markAsOpened(notifId);
+            await _notificationService.markAsRead(notifId, readSource: 'system_tray');
+          }
+        } else {
+          // If group summary, mark all unread as read
+          await _notificationService.markAllAsRead(projectId);
+        }
+        
+        widget.logger.i('Opened from notification for project $projectId (type: $type)');
+      }
+    }
+  }
+
+  @pragma('vm:entry-point')
+  static Future<void> _onDidReceiveBackgroundNotificationResponse(NotificationResponse response) async {
+    if (!kIsWeb) {
+      FlutterRingtonePlayer().playNotification();
+    }
+    final payload = response.payload;
+    if (payload != null) {
+      final parts = payload.split('|');
+      final projectId = parts[0];
+      String? taskId = parts.length > 1 ? parts[1] : null;
+      
+      if (response.actionId == 'snooze') {
+        // Handle snooze in background
+      } else {
+        // UPDATED: Cannot navigate, but mark as opened/read via service (assume service initialized)
+        final notificationService = NotificationService(logger: Logger());
+        await notificationService.initialize();
+        
+        if (taskId != null) {
+          Query query = FirebaseFirestore.instance
+              .collection('ScheduleNotifications')
+              .where('projectId', isEqualTo: projectId)
+              .where('taskId', isEqualTo: taskId)
+              .orderBy('createdAt', descending: true)
+              .limit(1);
+          
+          final snapshot = await query.get();
+          if (snapshot.docs.isNotEmpty) {
+            final notifId = snapshot.docs.first.id;
+            await notificationService.markAsOpened(notifId);
+            await notificationService.markAsRead(notifId, readSource: 'system_tray');
+          }
+        } else {
+          await notificationService.markAllAsRead(projectId);
+        }
+      }
+    }
+  }
+
+  Future<void> _scheduleNotificationCheck() async {
+    if (_isCheckingNotifications) {
+      widget.logger.w('⚠️ Notification check already in progress, skipping');
+      return;
+    }
+    
+    widget.logger.i('🔍 Starting notification check for project: ${widget.projectId}');
+    
+    setState(() {
+      _isCheckingNotifications = true;
+    });
+
+    try {
+      // STEP 1: Verify notification permissions
+      final permissionStatus = await Permission.notification.status;
+      if (!permissionStatus.isGranted) {
+        widget.logger.w('⚠️ Notification permission not granted, aborting check');
+        return;
+      }
+      widget.logger.d('✅ Permission verified');
+
+      // STEP 2: Fetch tasks from ScheduleMonitor collection (not Schedule)
+      widget.logger.d('🔥 Fetching tasks from ScheduleMonitor...');
+      final QuerySnapshot snapshot = await FirebaseFirestore.instance
+          .collection('ScheduleMonitor')
+          .where('projectId', isEqualTo: widget.projectId)
+          .get();
+
+      if (snapshot.docs.isEmpty) {
+        widget.logger.i('ℹ️ No tasks found in ScheduleMonitor');
+        return;
+      }
+
+      final List<ScheduleMonitorData> allTasks = snapshot.docs
+          .map((doc) => ScheduleMonitorData.fromFirestore(doc.id, doc.data() as Map<String, dynamic>))
+          .toList();
+      
+      widget.logger.d('📊 Loaded ${allTasks.length} tasks from ScheduleMonitor');
+
+      // STEP 3: Filter tasks that need notifications (Overdue or Starting Soon)
+      final DateTime now = DateTime.now();
+      final List<ScheduleMonitorData> notifyTasks = [];
+
+      for (var task in allTasks) {
+        // Overdue tasks
+        if (task.status == MonitorStatus.overdue) {
+          notifyTasks.add(task);
+        }
+        // Starting soon tasks (within 3 days)
+        else if (task.status == MonitorStatus.upcoming && task.isStartingSoon) {
+          notifyTasks.add(task);
+        }
+      }
+
+      widget.logger.i('📋 Found ${notifyTasks.where((t) => t.isOverdue).length} overdue, ${notifyTasks.where((t) => t.isStartingSoon).length} starting soon');
+
+      if (notifyTasks.isEmpty) {
+        widget.logger.i('✅ No tasks require notifications');
+        return;
+      }
+
+      // STEP 4: Check which tasks haven't been notified today
+      widget.logger.d('🔍 Checking which tasks need notifications...');
+      final List<Map<String, dynamic>> unsentTasks = [];
+      
+      for (var task in notifyTasks) {
+        final taskId = task.scheduleTaskId;
+
+        final wasTriggered = await _notificationService.wasNotificationTriggeredToday(
+          widget.projectId,
+          taskId,
+        );
+
+        if (!wasTriggered) {
+          final type = task.isOverdue ? 'overdue' : 'starting_soon';
+          unsentTasks.add({
+            'task': task,
+            'type': type,
+          });
+          widget.logger.d('📝 Task "${task.taskName}" needs notification (type: $type)');
+        } else {
+          widget.logger.d('⏭️ Task "${task.taskName}" already notified today');
+        }
+      }
+
+      if (unsentTasks.isEmpty) {
+        widget.logger.i('✅ All tasks already notified today');
+        return;
+      }
+
+      widget.logger.i('🔔 Triggering ${unsentTasks.length} notifications');
+
+      // STEP 5: Trigger notifications
+      final FlutterLocalNotificationsPlugin notifications = 
+          _flutterLocalNotificationsPlugin ?? FlutterLocalNotificationsPlugin();
+
+      for (var item in unsentTasks) {
+        final task = item['task'] as ScheduleMonitorData;
+        final type = item['type'] as String;
+        final taskId = task.scheduleTaskId;
+
+        // Acquire lock to prevent duplicate notifications
+        final lockAcquired = await _notificationService.acquireLock(widget.projectId, taskId);
+        
+        if (!lockAcquired) {
+          widget.logger.w('⚠️ Could not acquire lock for task: ${task.taskName}');
+          continue;
+        }
+
+        try {
+          // Double-check after acquiring lock
+          final wasTriggered = await _notificationService.wasNotificationTriggeredToday(
+            widget.projectId,
+            taskId,
+          );
+
+          if (wasTriggered) {
+            widget.logger.i('⏭️ Task already notified (double-check), skipping: ${task.taskName}');
+            continue;
+          }
+
+          // Generate notification ID
+          final notifId = '${widget.projectId}_$taskId'.hashCode;
+          
+          // Get color for notification type
+          final color = _getNotificationColor(type);
+
+          // Build notification message
+          final String title = type == 'overdue' 
+              ? '⚠️ Overdue Task: ${task.taskName}'
+              : '📅 Starting Soon: ${task.taskName}';
+          
+          final String body = type == 'overdue'
+              ? 'This task is overdue and needs attention!'
+              : 'Starts in ${task.daysUntilStart} day(s)';
+
+          // Android notification details
+          final androidDetails = AndroidNotificationDetails(
+            'schedule_monitor_channel',
+            'Schedule Monitor Notifications',
+            channelDescription: 'Notifications for task schedule monitoring and reminders',
+            importance: Importance.high,
+            priority: Priority.high,
+            groupKey: 'com.almaworks.schedule_monitor',
+            setAsGroupSummary: false,
+            ongoing: false,
+            autoCancel: true,
+            color: color,
+            playSound: true,
+            enableVibration: true,
+            styleInformation: BigTextStyleInformation(body),
+            actions: <AndroidNotificationAction>[
+              AndroidNotificationAction('open', 'View Task'),
+            ],
+          );
+
+          final details = NotificationDetails(
+            android: androidDetails,
+            iOS: DarwinNotificationDetails(
+              presentAlert: true,
+              presentBadge: true,
+              presentSound: true,
+            ),
+          );
+
+          // Show notification
+          await notifications.show(
+            notifId,
+            title,
+            body,
+            details,
+            payload: '${widget.projectId}|$taskId|$type',
+          );
+
+          widget.logger.i('✅ Notification shown: ${task.taskName} (ID: $notifId)');
+
+          // Save to Firestore
+          final savedId = await _notificationService.saveNotification(
+            projectId: widget.projectId,
+            taskId: taskId,
+            taskName: task.taskName,
+            startDate: task.startDate,
+            message: body,
+            isTriggered: true,
+            triggerSource: 'foreground_app',
+            triggeredAt: now,
+            notificationId: notifId,
+            expiresAt: task.startDate,
+            type: type,
+          );
+
+          if (savedId != null) {
+            widget.logger.i('✅ Notification saved to Firestore: $savedId');
+          } else {
+            widget.logger.e('❌ Failed to save notification to Firestore');
+          }
+
+        } catch (e, stackTrace) {
+          widget.logger.e('❌ Error showing notification for task: ${task.taskName}', 
+                  error: e, stackTrace: stackTrace);
+        } finally {
+          // Always release lock
+          await _notificationService.releaseLock(widget.projectId, taskId);
+        }
+      }
+
+      // STEP 6: Show group summary if multiple notifications
+      if (unsentTasks.length > 1) {
+        widget.logger.d('📦 Creating group summary notification');
+        
+        final androidSummaryDetails = AndroidNotificationDetails(
+          'schedule_monitor_channel',
+          'Schedule Monitor Notifications',
+          channelDescription: 'Notifications for task schedule monitoring and reminders',
+          importance: Importance.high,
+          priority: Priority.high,
+          groupKey: 'com.almaworks.schedule_monitor',
+          setAsGroupSummary: true,
+          ongoing: false,
+          autoCancel: false,
+          color: Colors.blue,
+        );
+        
+        final summaryDetails = NotificationDetails(
+          android: androidSummaryDetails,
+          iOS: DarwinNotificationDetails(),
+        );
+        
+        await notifications.show(
+          widget.projectId.hashCode,
+          'Task Alerts',
+          '${unsentTasks.length} tasks need your attention',
+          summaryDetails,
+          payload: widget.projectId,
+        );
+        
+        widget.logger.i('✅ Group summary notification created');
+      }
+
+      // Play notification sound
+      if (!kIsWeb) {
+        FlutterRingtonePlayer().playNotification();
+      }
+
+      widget.logger.i('🎉 Notification check complete - sent ${unsentTasks.length} notifications');
+
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error during notification check', error: e, stackTrace: stackTrace);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCheckingNotifications = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _updateTaskStatus(ScheduleMonitorData task, String action) async {
+    try {
+      // REMOVED: final now = DateTime.now(); (was unused)
+      final firestore = FirebaseFirestore.instance;
+      final updateTime = DateTime.now(); // Use different name to avoid confusion
+      
+      // Determine new taskStatus and actual dates
+      String? newTaskStatus;
+      DateTime? newActualStart;
+      DateTime? newActualEnd;
+      
+      if (action == 'started') {
+        newTaskStatus = 'STARTED';
+        newActualStart = task.actualStartDate ?? updateTime;
+      } else if (action == 'completed') {
+        newTaskStatus = 'COMPLETED';
+        newActualStart = task.actualStartDate ?? updateTime;
+        newActualEnd = task.actualEndDate ?? updateTime;
+      }
+      
+      // Update Schedule collection (source of truth for taskStatus)
+      final scheduleUpdateData = {
+        if (newTaskStatus != null) 'taskStatus': newTaskStatus,
+        if (newActualStart != null) 'actualStartDate': Timestamp.fromDate(newActualStart),
+        if (newActualEnd != null) 'actualEndDate': Timestamp.fromDate(newActualEnd),
+        'updatedAt': Timestamp.now(),
+      };
+      
+      await firestore
+          .collection('Schedule')
+          .doc(task.scheduleTaskId)
+          .update(scheduleUpdateData);
+      
+      widget.logger.i('✅ Updated Schedule collection for task: ${task.taskName}');
+      
+      // Compute new status for ScheduleMonitor
+      final newStatus = ScheduleMonitorData.computeStatus(
+        startDate: task.startDate,
+        endDate: task.endDate,
+        actualStartDate: newActualStart,
+        actualEndDate: newActualEnd,
+        taskStatus: newTaskStatus,
+      );
+      
+      UpcomingCategory? newUpcomingCategory;
+      if (newStatus == MonitorStatus.upcoming) {
+        newUpcomingCategory = ScheduleMonitorData.computeUpcomingCategory(task.startDate);
+      }
+      
+      // Update ScheduleMonitor collection
+      final monitorUpdateData = {
+        'taskStatus': newTaskStatus,
+        'actualStartDate': newActualStart != null ? Timestamp.fromDate(newActualStart) : null,
+        'actualEndDate': newActualEnd != null ? Timestamp.fromDate(newActualEnd) : null,
+        'status': newStatus.toString().split('.').last.toUpperCase(),
+        'upcomingCategory': newUpcomingCategory?.toString().split('.').last.toUpperCase(),
+        'updatedAt': Timestamp.fromDate(updateTime),
+        'lastStatusUpdate': Timestamp.fromDate(updateTime),
+      };
+      
+      await firestore
+          .collection('ScheduleMonitor')
+          .doc(task.id)
+          .update(monitorUpdateData);
+      
+      widget.logger.i('✅ Updated ScheduleMonitor collection for task: ${task.taskName}');
+      
+      if (!mounted) return;
+      
+      ElegantNotification.success(
+        title: const Text('Task Updated'),
+        description: Text('${task.taskName} marked as $action'),
+      ).show(context);
+      
+    } catch (e, stackTrace) {
+      widget.logger.e('❌ Error updating task status', error: e, stackTrace: stackTrace);
+      if (!mounted) return;
+      ElegantNotification.error(
+        title: const Text('Error'),
+        description: const Text('Failed to update task status'),
+      ).show(context);
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    final Color overdueColor = Colors.red.shade700;
+    final Color ongoingColor = Colors.blue.shade600;
+    final Color startingSoonColor = Colors.orange.shade700;
+    final Color upcomingColor = Colors.grey.shade700;
+    final Color completedColor = Colors.green.shade600;
+
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('ScheduleMonitor')
+          .where('projectId', isEqualTo: widget.projectId)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          widget.logger.e('❌ ScheduleMonitor: Error in stream', error: snapshot.error);
+          return Center(
+            child: Text(
+              'Error loading data',
+              style: GoogleFonts.poppins(color: Colors.red),
+            ),
+          );
+        }
+
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        List<ScheduleMonitorData> allTasks = [];
+        for (var doc in snapshot.data!.docs) {
+          final data = doc.data() as Map<String, dynamic>;
+          final task = ScheduleMonitorData.fromFirestore(doc.id, data);
+          allTasks.add(task);
+        }
+
+        // Categorize tasks by status
+        final overdueTasks = allTasks.where((t) => t.isOverdue).toList();
+        final ongoingTasks = allTasks.where((t) => t.isOngoing).toList();
+        final startingSoonTasks = allTasks.where((t) => t.isUpcoming && t.isStartingSoon).toList();
+        final otherUpcomingTasks = allTasks.where((t) => t.isUpcoming && !t.isStartingSoon).toList();
+        final completedTasks = allTasks.where((t) => t.isCompleted).toList();
+
+        // Apply search filter
+        final filteredOverdue = _filterMonitorTasks(overdueTasks);
+        final filteredOngoing = _filterMonitorTasks(ongoingTasks);
+        final filteredStartingSoon = _filterMonitorTasks(startingSoonTasks);
+        final filteredOtherUpcoming = _filterMonitorTasks(otherUpcomingTasks);
+        final filteredCompleted = _filterMonitorTasks(completedTasks);
+        final upcomingCount = filteredStartingSoon.length + filteredOtherUpcoming.length;
+
+        _animationController.forward();
+
+        if (allTasks.isEmpty) return _buildEmptyState();
+
+        return DefaultTabController(
+          length: 4,
+          child: RefreshIndicator(
+            onRefresh: () async {
+              await _syncScheduleToMonitor();
+              _scheduleNotificationCheck();
+            },
+            child: Column(
+              children: [
+                // Search bar with notification icon
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            labelText: 'Search Tasks',
+                            suffixIcon: const Icon(Icons.search),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey.shade50,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Stack(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.notifications_outlined, size: 28),
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => NotificationCenterScreen(
+                                    projectId: widget.projectId,
+                                    notificationService: _notificationService,
+                                  ),
+                                ),
+                              );
+                            },
+                            tooltip: 'View Notifications',
+                          ),
+                          if (_unreadNotificationCount > 0)
+                            Positioned(
+                              right: 8,
+                              top: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade600,
+                                  shape: BoxShape.circle,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 18,
+                                  minHeight: 18,
+                                ),
+                                child: Text(
+                                  _unreadNotificationCount > 99 
+                                      ? '99+' 
+                                      : _unreadNotificationCount.toString(),
+                                  style: GoogleFonts.poppins(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                // Tabs
+                TabBar(
+                  tabs: [
+                    Tab(text: 'Overdue (${filteredOverdue.length})'),
+                    Tab(text: 'Ongoing (${filteredOngoing.length})'),
+                    Tab(text: 'Upcoming ($upcomingCount)'),
+                    Tab(text: 'Completed (${filteredCompleted.length})'),
+                  ],
+                ),
+                // Tab views
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      _buildMonitorCategoryView(filteredOverdue, overdueColor, 'Overdue'),
+                      _buildMonitorCategoryView(filteredOngoing, ongoingColor, 'Ongoing'),
+                      _buildMonitorUpcomingView(filteredStartingSoon, filteredOtherUpcoming, startingSoonColor, upcomingColor),
+                      _buildMonitorCategoryView(filteredCompleted, completedColor, 'Completed'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  List<ScheduleMonitorData> _filterMonitorTasks(List<ScheduleMonitorData> tasks) {
+    if (_searchQuery.isEmpty) return tasks;
+    return tasks.where((task) => task.taskName.toLowerCase().contains(_searchQuery)).toList();
+  }
+
+  Widget _buildMonitorCategoryView(List<ScheduleMonitorData> filteredTasks, Color color, String title) {
+    if (filteredTasks.isEmpty) {
+      return _buildNoTasksWidget(title);
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      children: [
+        FadeTransition(
+          opacity: _fadeAnimation,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildSectionHeader(title, color, filteredTasks.length),
+              ...filteredTasks.map((task) => _buildMonitorTaskItem(task, color)),
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMonitorUpcomingView(List<ScheduleMonitorData> filteredStartingSoon, List<ScheduleMonitorData> filteredOtherUpcoming, Color startingColor, Color upcomingColor) {
+    if (filteredStartingSoon.isEmpty && filteredOtherUpcoming.isEmpty) {
+      return _buildNoTasksWidget('Upcoming');
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      children: [
+        FadeTransition(
+          opacity: _fadeAnimation,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (filteredStartingSoon.isNotEmpty) ...[
+                _buildSectionHeader('Starting Soon (≤3 days)', startingColor, filteredStartingSoon.length),
+                ...filteredStartingSoon.map((task) => _buildMonitorTaskItem(task, startingColor)),
+              ],
+              if (filteredOtherUpcoming.isNotEmpty) ...[
+                _buildSectionHeader('Other Upcoming', upcomingColor, filteredOtherUpcoming.length),
+                ...filteredOtherUpcoming.map((task) => _buildMonitorTaskItem(task, upcomingColor)),
+              ],
+              const SizedBox(height: 24),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMonitorTaskItem(ScheduleMonitorData task, Color accentColor) {
+    final DateTime now = DateTime.now();
+    final int daysUntilStart = _calculateDaysBetween(now, task.startDate);
+    final int daysUntilEnd = _calculateDaysBetween(now, task.endDate);
+    
+  String urgencyText = '';
+    IconData urgencyIcon = Icons.info_outline;
+    
+    // Set distinguished colors based on status
+    Color itemColor = accentColor;
+    if (task.isOverdue) {
+      itemColor = Colors.red;
+      final overdueDays = _calculateDaysBetween(task.startDate, now).abs();
+      urgencyText = overdueDays == 0 ? 'Overdue today!' : 'Overdue by $overdueDays day${overdueDays == 1 ? '' : 's'}!';
+      urgencyIcon = Icons.warning_amber_outlined;
+    } else if (task.isStartingSoon) {
+      itemColor = Colors.orange;
+      urgencyText = daysUntilStart == 0 
+          ? 'Starting today!' 
+          : 'Starts in $daysUntilStart day${daysUntilStart == 1 ? '' : 's'}';
+      urgencyIcon = Icons.timer_outlined;
+    } else if (daysUntilEnd <= 3 && daysUntilEnd >= 0) {
+      urgencyText = daysUntilEnd == 0
+          ? 'Due today!'
+          : 'Due in $daysUntilEnd day${daysUntilEnd == 1 ? '' : 's'}';
+      urgencyIcon = Icons.warning_amber_outlined;
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: itemColor.withValues(alpha: 0.3), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: itemColor.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              Container(
+                width: 5,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      itemColor,
+                      itemColor.withValues(alpha: 0.7),
+                    ],
+                  ),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: itemColor,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              task.taskName,
+                              style: GoogleFonts.poppins(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 15,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                          ),
+                          Material(
+                            color: Colors.transparent,
+                            child: PopupMenuButton<String>(
+                              icon: Icon(
+                                Icons.more_vert,
+                                color: Colors.grey.shade600,
+                                size: 20,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              onSelected: (value) {
+                                _updateTaskStatus(task, value);
+                              },
+                              itemBuilder: (context) => [
+                                PopupMenuItem(
+                                  value: 'started',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.play_circle_outline, 
+                                          size: 20, 
+                                          color: Colors.blue.shade600),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        'Mark Started',
+                                        style: GoogleFonts.poppins(fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                PopupMenuItem(
+                                  value: 'completed',
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.check_circle_outline, 
+                                          size: 20, 
+                                          color: Colors.green.shade600),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        'Mark Completed',
+                                        style: GoogleFonts.poppins(fontSize: 14),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      
+                      Row(
+                        children: [
+                          Icon(Icons.calendar_today_outlined, 
+                              size: 14, 
+                              color: Colors.grey.shade600),
+                          const SizedBox(width: 6),
+                          Text(
+                            task.formattedDateRange,
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      
+                      Row(
+                        children: [
+                          Icon(Icons.timelapse_outlined, 
+                              size: 14, 
+                              color: Colors.grey.shade600),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Duration: ${task.duration} day${task.duration == 1 ? '' : 's'}',
+                            style: GoogleFonts.poppins(
+                              fontSize: 13,
+                              color: Colors.grey.shade600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      
+                      // Display actual dates if available
+                      if (task.actualStartDate != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(Icons.play_arrow_outlined, 
+                                size: 14, 
+                                color: Colors.blue.shade600),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Started: ${DateFormat('MMM dd, yyyy').format(task.actualStartDate!)}',
+                              style: GoogleFonts.poppins(
+                                fontSize: 13,
+                                color: Colors.blue.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (task.actualEndDate != null) ...[
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Icon(Icons.check_circle_outlined, 
+                                size: 14, 
+                                color: Colors.green.shade600),
+                            const SizedBox(width: 6),
+                            Text(
+                              'Completed: ${DateFormat('MMM dd, yyyy').format(task.actualEndDate!)}',
+                              style: GoogleFonts.poppins(
+                                fontSize: 13,
+                                color: Colors.green.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      
+                      // Display task status badge
+                      if (task.taskStatus != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: task.taskStatus == 'COMPLETED' 
+                                ? Colors.green.shade50 
+                                : Colors.blue.shade50,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: task.taskStatus == 'COMPLETED' 
+                                  ? Colors.green.shade300 
+                                  : Colors.blue.shade300,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                task.taskStatus == 'COMPLETED' 
+                                    ? Icons.check_circle 
+                                    : Icons.play_circle,
+                                size: 12,
+                                color: task.taskStatus == 'COMPLETED' 
+                                    ? Colors.green.shade700 
+                                    : Colors.blue.shade700,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                task.taskStatus == 'COMPLETED' ? 'Completed' : 'Started',
+                                style: GoogleFonts.poppins(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w500,
+                                  color: task.taskStatus == 'COMPLETED' 
+                                      ? Colors.green.shade700 
+                                      : Colors.blue.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      
+                      if (urgencyText.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: itemColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                              color: itemColor.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                urgencyIcon,
+                                size: 14,
+                                color: itemColor,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                urgencyText,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: itemColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  Widget _buildNoTasksWidget(String title) {
+    final bool isSearch = _searchQuery.isNotEmpty;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(isSearch ? Icons.search_off : Icons.timeline, size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            Text(
+              isSearch ? 'No tasks match your search' : 'No $title tasks',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, Color color, int count) {
+    return Container(
+      margin: const EdgeInsets.only(top: 16, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border(
+          left: BorderSide(
+            color: color,
+            width: 4,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.poppins(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: color.withValues(alpha: 0.9),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              count.toString(),
+              style: GoogleFonts.poppins(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.timeline, size: 80, color: Colors.grey.shade400),
+            const SizedBox(height: 24),
+            Text(
+              'No Schedule Data Available',
+              style: GoogleFonts.poppins(
+                fontSize: 24,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Add tasks in the Gantt Chart to see schedule monitoring',
+              style: GoogleFonts.poppins(
+                fontSize: 16,
+                color: Colors.grey.shade500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+}

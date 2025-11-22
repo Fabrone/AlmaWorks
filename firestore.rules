@@ -1,0 +1,141 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow read/write access to all documents for any request
+    // This is for development without authentication
+    match /{document=**} {
+      allow read, write: if true;
+    }
+        
+		// Rules for Projects collection
+    match /Projects/{projectId} {
+      allow read, write: if true;
+
+      // Allow access to subcollections
+      match /tasks/{taskId} {
+        allow read, write: if true;
+      }
+
+      match /activities/{activityId} {
+        allow read, write: if true;
+      }
+
+      match /photos/{photoId} {
+        allow read, write: if true;
+      }
+
+      match /Drawings/{drawingId} {
+        allow read, write: if true;
+      }
+    }
+
+    // Rules for Tasks collection
+    match /Tasks/{taskId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Users collection
+    match /Users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Rules for ActivityItems collection
+    match /ActivityItems/{activityId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Notifications collection
+    match /Notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Reports collection
+    match /Reports/{reportId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Settings collection
+    match /Settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Attendance collection
+    match /Attendance/{attendanceId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Weather collection
+    match /Weather/{weatherId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Financial collection
+    match /Financials/{financialId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Schedule collection
+    match /Schedule/{scheduleId} {
+      allow read, write: if true;
+    }
+
+    // Rules for Resources collection
+    match /Resources/{resourceId} {
+      allow read, write: if true;
+    }
+
+    match /ScheduleNotifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Rules for QualitySafety collection
+    match /QualitySafety/{qualitySafetyId} {
+      allow read, write: if true;
+    }
+
+    // Rules for BidManagement collection
+    match /BidManagement/{bidId} {
+      allow read, write: if true;
+    }
+
+    // Rules for DesignCoordination collection
+    match /DesignCoordination/{designId} {
+      allow read, write: if true;
+    }
+
+    // Rules for FieldProductivity collection
+    match /FieldProductivity/{productivityId} {
+      allow read, write: if true;
+    }
+
+    // Rules for RecentSearches collection
+    match /RecentSearches/{searchId} {
+      allow read, write: if true;
+    }
+
+    // Rules for UserProfiles collection
+    match /UserProfiles/{userId} {
+      allow read, write: if true;
+    }
+
+    // Rules for SystemLogs collection
+    match /SystemLogs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Rules for PurchaseplanResources collection
+    match /PurchaseplanResources/{resourceId} {
+      allow read, write: if true;
+    }
+
+    // Rules for PhotoGallery collection (top-level)
+    match /PhotoGallery/{photoId} {
+      allow read, write: if true;
+    }
+
+    // Rules for ProjectDocuments collection (top-level)
+    match /ProjectDocuments/{docId} {
+      allow read, write: if true;
+    }
+  }
+}

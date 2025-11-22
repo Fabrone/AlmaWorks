@@ -1,0 +1,61 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "almaworks-b9a2e",
+          "appId": "1:609637842223:android:160c47e87f5ea42e1c75da",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "almaworks-b9a2e",
+          "configurations": {
+            "android": "1:609637842223:android:160c47e87f5ea42e1c75da",
+            "web": "1:609637842223:web:1dc631278e259b301c75da",
+            "windows": "1:609637842223:web:d6670e9625fd936f1c75da"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "nam5",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": [
+    {
+      "site": "almaworks-b9a2e",
+      "public": "build/web",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    },
+    {
+      "site": "fabron-portfolio-98e69",
+      "public": "portfolio-build/web",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ]
+}
