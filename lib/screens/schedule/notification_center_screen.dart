@@ -3,12 +3,12 @@ import 'package:almaworks/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:logger/logger.dart'; // NEW: Import Logger for logging
+import 'package:logger/logger.dart'; 
 
 class NotificationCenterScreen extends StatelessWidget {
   final String projectId;
   final NotificationService notificationService;
-  final Logger _logger = Logger(); // NEW: Logger instance for tracing
+  final Logger _logger = Logger(); 
 
   NotificationCenterScreen({
     super.key,
@@ -86,7 +86,6 @@ class NotificationCenterScreen extends StatelessWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          // Force refresh by triggering a cleanup which will cause stream to update
           _logger.d('Manual refresh triggered');
           await notificationService.cleanupOldNotifications();
         },
@@ -149,10 +148,10 @@ class NotificationCenterScreen extends StatelessWidget {
               );
             }
 
-            final notifications = snapshot.data ?? [];
-            _logger.d('Received ${notifications.length} notifications from stream');
+            final allNotifications = snapshot.data ?? [];
+            _logger.d('Received ${allNotifications.length} notifications from stream');
 
-            if (notifications.isEmpty) {
+            if (allNotifications.isEmpty) {
               _logger.d('No notifications to display');
               return Center(
                 child: Column(
@@ -180,12 +179,16 @@ class NotificationCenterScreen extends StatelessWidget {
               );
             }
 
-            _logger.d('Building ListView with ${notifications.length} items');
+            // UPDATED: Sort notifications - Prioritize unread overdue, then unread starting soon, then by date
+            final sortedNotifications = _sortNotificationsByPriority(allNotifications);
+            
+            _logger.d('Building ListView with ${sortedNotifications.length} items (sorted by priority)');
+            
             return ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: notifications.length,
+              itemCount: sortedNotifications.length,
               itemBuilder: (context, index) {
-                final notification = notifications[index];
+                final notification = sortedNotifications[index];
                 _logger.d('Building item $index: Task ${notification.taskName}, Type: ${notification.type}, Read: ${notification.isRead}');
                 return _buildNotificationItem(context, notification);
               },
@@ -196,7 +199,25 @@ class NotificationCenterScreen extends StatelessWidget {
     );
   }
 
-  // UPDATED: Replaced withOpacity with withAlpha for deprecation fix, use type for distinguished colors
+  List<ScheduleNotification> _sortNotificationsByPriority(List<ScheduleNotification> notifications) {
+  _logger.d('Sorting ${notifications.length} notifications by priority');
+
+  // Separate into categories
+  final unreadOverdue = notifications.where((n) => !n.isRead && n.type == 'overdue').toList();
+  final unreadStartingSoon = notifications.where((n) => !n.isRead && n.type == 'starting_soon').toList();
+  final readNotifications = notifications.where((n) => n.isRead).toList();
+
+  // Sort each category by date (most recent first)
+  unreadOverdue.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  unreadStartingSoon.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+  readNotifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+  _logger.d('Sorted: ${unreadOverdue.length} unread overdue, ${unreadStartingSoon.length} unread starting soon, ${readNotifications.length} read');
+
+  // Combine in priority order
+  return [...unreadOverdue, ...unreadStartingSoon, ...readNotifications];
+  }
+
   Widget _buildNotificationItem(BuildContext context, ScheduleNotification notification) {
     final dateFormat = DateFormat('MMM dd, yyyy - HH:mm');
     

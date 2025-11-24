@@ -337,7 +337,6 @@ class NotificationService {
     }
   }
 
-  // FIXED: Batch check with proper whereIn usage (not arrayContainsAny) and chunking
   Future<Map<String, bool>> batchCheckNotificationsTriggeredToday(
     String projectId, 
     List<String> taskIds,
@@ -380,7 +379,7 @@ class NotificationService {
         Query query = _firestore
             .collection('ScheduleNotifications')
             .where('projectId', isEqualTo: projectId)
-            .where('taskId', whereIn: chunk) // FIXED: Use whereIn instead of arrayContainsAny
+            .where('taskId', whereIn: chunk)
             .where('deviceId', isEqualTo: _deviceId)
             .where('isTriggered', isEqualTo: true)
             .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay));

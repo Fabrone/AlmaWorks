@@ -1,7 +1,7 @@
-import 'dart:io';
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/schedule_monitor_model.dart';
 import 'package:almaworks/screens/schedule/notification_center_screen.dart';
+import 'package:almaworks/services/enhanced_notification_service.dart';
 import 'package:almaworks/services/notification_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -9,25 +9,12 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:elegant_notification/elegant_notification.dart';
-import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:timezone/data/latest.dart' as tzdata;
 import 'package:workmanager/workmanager.dart' hide TaskStatus;
 import 'dart:async';
 
 // NEW: Helper method for notification colors based on type
-Color _getNotificationColor(String type) {
-  switch (type) {
-    case 'overdue':
-      return Colors.red; // Distinguished color for Overdue
-    case 'starting_soon':
-      return Colors.orange; // Distinguished color for Starting Soon
-    default:
-      return Colors.blue; // Fallback
-  }
-}
 
 @pragma('vm:entry-point')
 void callbackDispatcher() {
@@ -49,7 +36,7 @@ void callbackDispatcher() {
 
       logger.d('📋 Background task processing project: $projectId');
 
-      // STEP 1: Initialize notification service
+      // STEP 1: Initialize services
       final notificationService = NotificationService(
         logger: logger,
         userId: userId,
@@ -58,7 +45,15 @@ void callbackDispatcher() {
       await notificationService.initialize();
       logger.i('✅ NotificationService initialized in background');
 
-      // STEP 2: Fetch tasks from ScheduleMonitor collection (not Schedule)
+      final enhancedNotificationService = EnhancedNotificationService(
+        logger: logger,
+        notificationService: notificationService,
+      );
+      
+      await enhancedNotificationService.initialize();
+      logger.i('✅ EnhancedNotificationService initialized in background');
+
+      // STEP 2: Fetch and update tasks from ScheduleMonitor
       logger.d('🔥 Fetching tasks from ScheduleMonitor...');
       final QuerySnapshot snapshot = await FirebaseFirestore.instance
           .collection('ScheduleMonitor')
@@ -78,13 +73,12 @@ void callbackDispatcher() {
 
       final DateTime now = DateTime.now();
 
-      // STEP 3: Update statuses in ScheduleMonitor (real-time sync)
+      // STEP 3: Update statuses in ScheduleMonitor
       logger.d('🔄 Updating task statuses...');
       int updatedCount = 0;
       final batch = FirebaseFirestore.instance.batch();
       
       for (var task in tasks) {
-        // Recompute status
         final newStatus = ScheduleMonitorData.computeStatus(
           startDate: task.startDate,
           endDate: task.endDate,
@@ -93,13 +87,11 @@ void callbackDispatcher() {
           taskStatus: task.taskStatus,
         );
         
-        // Recompute upcoming category
         UpcomingCategory? newUpcomingCategory;
         if (newStatus == MonitorStatus.upcoming) {
           newUpcomingCategory = ScheduleMonitorData.computeUpcomingCategory(task.startDate);
         }
         
-        // Update if status changed
         if (newStatus != task.status || newUpcomingCategory != task.upcomingCategory) {
           batch.update(
             FirebaseFirestore.instance.collection('ScheduleMonitor').doc(task.id),
@@ -116,7 +108,7 @@ void callbackDispatcher() {
       
       if (updatedCount > 0) {
         await batch.commit();
-        logger.i('✅ Updated $updatedCount task statuses in ScheduleMonitor');
+        logger.i('✅ Updated $updatedCount task statuses');
       }
 
       // Re-fetch updated tasks
@@ -129,14 +121,16 @@ void callbackDispatcher() {
           .map((doc) => ScheduleMonitorData.fromFirestore(doc.id, doc.data()))
           .toList();
 
-      // STEP 4: Categorize tasks for notifications
+      // STEP 4: Categorize and sort tasks
       final List<ScheduleMonitorData> overdueTasks = updatedTasks
           .where((task) => task.status == MonitorStatus.overdue)
-          .toList();
+          .toList()
+        ..sort((a, b) => a.startDate.compareTo(b.startDate));
 
       final List<ScheduleMonitorData> startingSoonTasks = updatedTasks
           .where((task) => task.status == MonitorStatus.upcoming && task.isStartingSoon)
-          .toList();
+          .toList()
+        ..sort((a, b) => a.daysUntilStart.compareTo(b.daysUntilStart));
 
       logger.i('📋 Found ${overdueTasks.length} overdue, ${startingSoonTasks.length} starting soon');
 
@@ -147,229 +141,93 @@ void callbackDispatcher() {
         return Future.value(true);
       }
 
-      // STEP 5: Check which tasks need notifications (with locking)
-      logger.d('🔍 Checking notification status for ${notifyTasks.length} tasks...');
+      // STEP 5: Batch check notification status
+      logger.d('🔍 Batch checking notification status...');
+      final taskIds = notifyTasks.map((t) => t.scheduleTaskId).toList();
+      final triggeredMap = await notificationService.batchCheckNotificationsTriggeredToday(
+        projectId,
+        taskIds,
+      );
+
       final List<Map<String, dynamic>> unsentTasks = [];
       
       for (var task in notifyTasks) {
-        final taskId = task.scheduleTaskId;
-
-        // Check if already triggered today
-        final wasTriggered = await notificationService.wasNotificationTriggeredToday(
-          projectId, 
-          taskId,
-        );
+        final wasTriggered = triggeredMap[task.scheduleTaskId] ?? false;
         
-        if (wasTriggered) {
-          logger.d('⏭️ Task "${task.taskName}" already notified today');
-          continue;
-        }
-        
-        // Acquire lock
-        final lockAcquired = await notificationService.acquireLock(projectId, taskId);
-        
-        if (!lockAcquired) {
-          logger.w('⚠️ Could not acquire lock for task: ${task.taskName}');
-          continue;
-        }
-
-        try {
-          // Double-check after lock
-          final stillNotTriggered = !await notificationService.wasNotificationTriggeredToday(
-            projectId, 
-            taskId,
-          );
-          
-          if (stillNotTriggered) {
-            final type = task.isOverdue ? 'overdue' : 'starting_soon';
-            unsentTasks.add({
-              'task': task,
-              'type': type,
-            });
-            logger.d('📝 Task "${task.taskName}" queued for notification');
-          }
-        } finally {
-          await notificationService.releaseLock(projectId, taskId);
+        if (!wasTriggered) {
+          final type = task.isOverdue ? 'overdue' : 'starting_soon';
+          unsentTasks.add({
+            'task': task,
+            'type': type,
+          });
+          logger.d('🔖 Task "${task.taskName}" queued for notification');
         }
       }
 
       if (unsentTasks.isEmpty) {
-        logger.i('✅ All tasks already notified or locked');
+        logger.i('✅ All tasks already notified');
         return Future.value(true);
       }
 
       logger.i('🔔 Triggering ${unsentTasks.length} notifications');
 
-      // STEP 6: Initialize notification plugin
-      final FlutterLocalNotificationsPlugin notifications = FlutterLocalNotificationsPlugin();
-      
-      // Create notification channel for Android
-      if (!kIsWeb && Platform.isAndroid) {
-        const AndroidNotificationChannel channel = AndroidNotificationChannel(
-          'schedule_monitor_channel',
-          'Schedule Monitor Notifications',
-          description: 'Notifications for task schedule monitoring and reminders',
-          importance: Importance.high,
-          playSound: true,
-          enableVibration: true,
-          showBadge: true,
-        );
-
-        await notifications
-            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-            ?.createNotificationChannel(channel);
-      }
-
-      const AndroidInitializationSettings androidInit = 
-          AndroidInitializationSettings('@mipmap/ic_launcher');
-      const DarwinInitializationSettings iosInit = DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      );
-      const InitializationSettings initSettings = 
-          InitializationSettings(android: androidInit, iOS: iosInit);
-      
-      await notifications.initialize(initSettings);
-      logger.i('✅ Notification plugin initialized');
-
-      // STEP 7: Show individual notifications
+      // STEP 6: Save and show notifications
       for (var item in unsentTasks) {
         final task = item['task'] as ScheduleMonitorData;
         final type = item['type'] as String;
-        final taskId = task.scheduleTaskId;
         
         try {
-          final notifId = '${projectId}_$taskId'.hashCode;
-          final color = _getNotificationColor(type);
-
-          final String title = type == 'overdue' 
-              ? '⚠️ Overdue: ${task.taskName}'
-              : '📅 Starting Soon: ${task.taskName}';
-          
-          final String body = type == 'overdue'
+          final body = type == 'overdue'
               ? 'This task is overdue and needs attention!'
               : 'Starts in ${task.daysUntilStart} day(s)';
-
-          final androidDetails = AndroidNotificationDetails(
-            'schedule_monitor_channel',
-            'Schedule Monitor Notifications',
-            channelDescription: 'Notifications for task schedule monitoring and reminders',
-            importance: Importance.high,
-            priority: Priority.high,
-            groupKey: 'com.almaworks.schedule_monitor',
-            setAsGroupSummary: false,
-            ongoing: false,
-            autoCancel: true,
-            color: color,
-            playSound: true,
-            enableVibration: true,
-            styleInformation: BigTextStyleInformation(body),
-            actions: <AndroidNotificationAction>[
-              AndroidNotificationAction('open', 'View Task'),
-            ],
-          );
-          
-          const iosDetails = DarwinNotificationDetails(
-            presentAlert: true,
-            presentBadge: true,
-            presentSound: true,
-          );
-          
-          final details = NotificationDetails(
-            android: androidDetails,
-            iOS: iosDetails,
-          );
-
-          await notifications.show(
-            notifId,
-            title,
-            body,
-            details,
-            payload: '$projectId|$taskId|$type',
-          );
-
-          logger.i('✅ Notification shown: ${task.taskName} (ID: $notifId)');
 
           // Save to Firestore
           final savedId = await notificationService.saveNotification(
             projectId: projectId,
-            taskId: taskId,
+            taskId: task.scheduleTaskId,
             taskName: task.taskName,
             startDate: task.startDate,
             message: body,
             isTriggered: true,
             triggerSource: 'background_task',
             triggeredAt: now,
-            notificationId: notifId,
+            notificationId: '$projectId}_${task.scheduleTaskId}'.hashCode,
             expiresAt: task.startDate,
             type: type,
           );
 
           if (savedId != null) {
-            logger.i('✅ Notification saved to Firestore: $savedId');
-          } else {
-            logger.e('❌ Failed to save notification to Firestore');
+            // Show notification
+            await enhancedNotificationService.showTaskNotification(
+              projectId: projectId,
+              task: task,
+              type: type,
+              firestoreNotificationId: savedId,
+            );
+            
+            logger.i('✅ Notification shown and saved: ${task.taskName}');
+            
+            // Small delay for floating effect
+            await Future.delayed(const Duration(milliseconds: 300));
           }
-
         } catch (e, stackTrace) {
           logger.e('❌ Error showing notification for ${task.taskName}', 
                    error: e, stackTrace: stackTrace);
         }
       }
 
-      // STEP 8: Show group summary if multiple notifications
+      // STEP 7: Show group summary if multiple notifications
       if (unsentTasks.length > 1) {
         logger.d('📦 Creating group summary notification');
         
-        final taskNames = unsentTasks
-            .map((item) => (item['task'] as ScheduleMonitorData).taskName)
-            .join(', ');
-        
-        final androidSummaryDetails = AndroidNotificationDetails(
-          'schedule_monitor_channel',
-          'Schedule Monitor Notifications',
-          channelDescription: 'Notifications for task schedule monitoring and reminders',
-          importance: Importance.high,
-          priority: Priority.high,
-          groupKey: 'com.almaworks.schedule_monitor',
-          setAsGroupSummary: true,
-          ongoing: false,
-          autoCancel: false,
-          color: Colors.blue,
-          styleInformation: BigTextStyleInformation(
-            '${unsentTasks.length} tasks need attention: $taskNames',
-          ),
+        await enhancedNotificationService.showGroupedNotification(
+          projectId: projectId,
+          taskGroups: unsentTasks,
+          totalCount: unsentTasks.length,
         );
-        
-        const iosSummaryDetails = DarwinNotificationDetails();
-        
-        final summaryDetails = NotificationDetails(
-          android: androidSummaryDetails,
-          iOS: iosSummaryDetails,
-        );
-        
-        await notifications.show(
-          projectId.hashCode,
-          'Task Alerts',
-          '${unsentTasks.length} tasks need your attention',
-          summaryDetails,
-          payload: projectId,
-        );
-        
-        logger.i('✅ Group summary notification created');
       }
 
-      // Play notification sound
-      if (!kIsWeb) {
-        try {
-          FlutterRingtonePlayer().playNotification();
-        } catch (e) {
-          logger.w('⚠️ Could not play notification sound', error: e);
-        }
-      }
-
-      logger.i('🎉 Background task completed successfully - sent ${unsentTasks.length} notifications');
+      logger.i('🎉 Background task completed - sent ${unsentTasks.length} notifications');
       return Future.value(true);
 
     } catch (e, stackTrace) {
@@ -402,7 +260,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
   late NotificationService _notificationService;
   int _unreadNotificationCount = 0;
   bool _isCheckingNotifications = false;
-  FlutterLocalNotificationsPlugin? _flutterLocalNotificationsPlugin;
+  late EnhancedNotificationService _enhancedNotificationService;
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -423,12 +281,22 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       userId: null,
     );
     
-    // Initialize service and setup listeners
-    _notificationService.initialize().then((_) {
+    // UPDATED: Initialize enhanced notification service
+    _enhancedNotificationService = EnhancedNotificationService(
+      logger: widget.logger,
+      notificationService: _notificationService,
+    );
+    
+    // Initialize services
+    _notificationService.initialize().then((_) async {
       widget.logger.i('✅ NotificationService initialized successfully');
       
+      // Initialize enhanced notifications
+      await _enhancedNotificationService.initialize();
+      widget.logger.i('✅ EnhancedNotificationService initialized successfully');
+      
       // Sync Schedule to ScheduleMonitor collection
-      _syncScheduleToMonitor();
+      await _syncScheduleToMonitor();
       
       if (mounted && !kIsWeb) {
         widget.logger.i('📱 Platform supports notifications, scheduling initial check');
@@ -476,7 +344,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     
     // Platform-specific initialization
     if (!kIsWeb) {
-      _initializeNotifications();
       _initializeBackgroundTasks();
     }
 
@@ -702,247 +569,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     widget.logger.i('✅ Background task registered for project ${widget.projectId}');
   }
 
-  Future<void> _initializeNotifications() async {
-    widget.logger.i('🔔 Initializing notifications system...');
-    
-    try {
-      _flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
-
-      // FIXED: Create notification channel FIRST (Android 8.0+)
-      if (!kIsWeb && (Platform.isAndroid)) {
-        widget.logger.d('📱 Creating Android notification channel');
-        
-        const AndroidNotificationChannel channel = AndroidNotificationChannel(
-          'schedule_monitor_channel',
-          'Schedule Monitor Notifications',
-          description: 'Notifications for task schedule monitoring and reminders',
-          importance: Importance.high,
-          playSound: true,
-          enableVibration: true,
-          showBadge: true,
-        );
-
-        await _flutterLocalNotificationsPlugin!
-            .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-            ?.createNotificationChannel(channel);
-        
-        widget.logger.i('✅ Android notification channel created');
-      }
-
-      // Initialize settings
-      const AndroidInitializationSettings androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-      final DarwinInitializationSettings iosInit = DarwinInitializationSettings(
-        requestAlertPermission: true,
-        requestBadgePermission: true,
-        requestSoundPermission: true,
-        notificationCategories: [
-          DarwinNotificationCategory(
-            'actions',
-            actions: <DarwinNotificationAction>[
-              DarwinNotificationAction.plain('snooze', 'Snooze (1 day)'),
-              DarwinNotificationAction.plain('open', 'Open App'),
-            ],
-          ),
-        ],
-      );
-      final InitializationSettings initSettings = InitializationSettings(
-        android: androidInit, 
-        iOS: iosInit,
-      );
-
-      await _flutterLocalNotificationsPlugin!.initialize(
-        initSettings,
-        onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
-        onDidReceiveBackgroundNotificationResponse: _onDidReceiveBackgroundNotificationResponse,
-      );
-      
-      widget.logger.i('✅ Notification plugin initialized');
-
-      // FIXED: Request and verify permissions
-      final permissionStatus = await Permission.notification.request();
-      
-      if (permissionStatus.isGranted) {
-        widget.logger.i('✅ Notification permission GRANTED');
-      } else if (permissionStatus.isDenied) {
-        widget.logger.w('⚠️ Notification permission DENIED');
-        
-        // Show user a dialog explaining why notifications are needed
-        if (mounted) {
-          _showPermissionDialog();
-        }
-      } else if (permissionStatus.isPermanentlyDenied) {
-        widget.logger.e('❌ Notification permission PERMANENTLY DENIED');
-        
-        // Guide user to settings
-        if (mounted) {
-          _showPermissionPermanentlyDeniedDialog();
-        }
-      }
-    } catch (e, stackTrace) {
-      widget.logger.e('❌ Error initializing notifications', error: e, stackTrace: stackTrace);
-    }
-  }
-
-  void _showPermissionDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Notification Permission Required',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-        content: Text(
-          'This app needs notification permission to alert you about overdue tasks and upcoming deadlines. '
-          'You can enable it now or later in your device settings.',
-          style: GoogleFonts.poppins(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text('Later', style: GoogleFonts.poppins()),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              final status = await Permission.notification.request();
-              if (status.isGranted) {
-                widget.logger.i('✅ User granted notification permission');
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0A2E5A),
-            ),
-            child: Text('Enable', style: GoogleFonts.poppins(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showPermissionPermanentlyDeniedDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Notification Permission Disabled',
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-        ),
-        content: Text(
-          'Notification permission has been permanently disabled. '
-          'To receive task alerts, please enable notifications in your device settings.',
-          style: GoogleFonts.poppins(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: Text('Cancel', style: GoogleFonts.poppins()),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.of(context).pop();
-              await openAppSettings();
-              widget.logger.i('📱 Opened app settings for user');
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF0A2E5A),
-            ),
-            child: Text('Open Settings', style: GoogleFonts.poppins(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _onDidReceiveNotificationResponse(NotificationResponse response) async {
-    if (!kIsWeb) {
-      FlutterRingtonePlayer().playNotification();
-    }
-    final payload = response.payload;
-    if (payload != null && mounted) {
-      final parts = payload.split('|');
-      final projectId = parts[0];
-      String? taskId = parts.length > 1 ? parts[1] : null;
-      String? type = parts.length > 2 ? parts[2] : null;
-      
-      if (response.actionId == 'snooze') {
-        widget.logger.i('Snoozed notification for project $projectId');
-        // Implement snooze (e.g., reschedule for next day)
-      } else {
-        // UPDATED: Open notification center and mark as read/opened
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => NotificationCenterScreen(
-              projectId: projectId,
-              notificationService: _notificationService,
-            ),
-          ),
-        );
-        
-        if (taskId != null) {
-          final firestore = FirebaseFirestore.instance;
-          Query query = firestore
-              .collection('ScheduleNotifications')
-              .where('projectId', isEqualTo: projectId)
-              .where('taskId', isEqualTo: taskId)
-              .orderBy('createdAt', descending: true)
-              .limit(1);
-          
-          final snapshot = await query.get();
-          if (snapshot.docs.isNotEmpty) {
-            final notifId = snapshot.docs.first.id;
-            await _notificationService.markAsOpened(notifId);
-            await _notificationService.markAsRead(notifId, readSource: 'system_tray');
-          }
-        } else {
-          // If group summary, mark all unread as read
-          await _notificationService.markAllAsRead(projectId);
-        }
-        
-        widget.logger.i('Opened from notification for project $projectId (type: $type)');
-      }
-    }
-  }
-
-  @pragma('vm:entry-point')
-  static Future<void> _onDidReceiveBackgroundNotificationResponse(NotificationResponse response) async {
-    if (!kIsWeb) {
-      FlutterRingtonePlayer().playNotification();
-    }
-    final payload = response.payload;
-    if (payload != null) {
-      final parts = payload.split('|');
-      final projectId = parts[0];
-      String? taskId = parts.length > 1 ? parts[1] : null;
-      
-      if (response.actionId == 'snooze') {
-        // Handle snooze in background
-      } else {
-        // UPDATED: Cannot navigate, but mark as opened/read via service (assume service initialized)
-        final notificationService = NotificationService(logger: Logger());
-        await notificationService.initialize();
-        
-        if (taskId != null) {
-          Query query = FirebaseFirestore.instance
-              .collection('ScheduleNotifications')
-              .where('projectId', isEqualTo: projectId)
-              .where('taskId', isEqualTo: taskId)
-              .orderBy('createdAt', descending: true)
-              .limit(1);
-          
-          final snapshot = await query.get();
-          if (snapshot.docs.isNotEmpty) {
-            final notifId = snapshot.docs.first.id;
-            await notificationService.markAsOpened(notifId);
-            await notificationService.markAsRead(notifId, readSource: 'system_tray');
-          }
-        } else {
-          await notificationService.markAllAsRead(projectId);
-        }
-      }
-    }
-  }
-
   Future<void> _scheduleNotificationCheck() async {
     if (_isCheckingNotifications) {
       widget.logger.w('⚠️ Notification check already in progress, skipping');
@@ -957,14 +583,18 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
     try {
       // STEP 1: Verify notification permissions
-      final permissionStatus = await Permission.notification.status;
-      if (!permissionStatus.isGranted) {
-        widget.logger.w('⚠️ Notification permission not granted, aborting check');
-        return;
+      final permissionsGranted = await _enhancedNotificationService.areNotificationsEnabled();
+      if (!permissionsGranted) {
+        widget.logger.w('⚠️ Notification permission not granted, requesting...');
+        final granted = await _enhancedNotificationService.requestPermissions();
+        if (!granted) {
+          widget.logger.w('⚠️ User denied notification permissions');
+          return;
+        }
       }
       widget.logger.d('✅ Permission verified');
 
-      // STEP 2: Fetch tasks from ScheduleMonitor collection (not Schedule)
+      // STEP 2: Fetch tasks from ScheduleMonitor collection
       widget.logger.d('🔥 Fetching tasks from ScheduleMonitor...');
       final QuerySnapshot snapshot = await FirebaseFirestore.instance
           .collection('ScheduleMonitor')
@@ -982,49 +612,53 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       
       widget.logger.d('📊 Loaded ${allTasks.length} tasks from ScheduleMonitor');
 
-      // STEP 3: Filter tasks that need notifications (Overdue or Starting Soon)
-      final DateTime now = DateTime.now();
-      final List<ScheduleMonitorData> notifyTasks = [];
+      // STEP 3: Filter and categorize tasks that need notifications
+      final List<ScheduleMonitorData> overdueTasks = [];
+      final List<ScheduleMonitorData> startingSoonTasks = [];
 
       for (var task in allTasks) {
-        // Overdue tasks
         if (task.status == MonitorStatus.overdue) {
-          notifyTasks.add(task);
-        }
-        // Starting soon tasks (within 3 days)
-        else if (task.status == MonitorStatus.upcoming && task.isStartingSoon) {
-          notifyTasks.add(task);
+          overdueTasks.add(task);
+        } else if (task.status == MonitorStatus.upcoming && task.isStartingSoon) {
+          startingSoonTasks.add(task);
         }
       }
 
-      widget.logger.i('📋 Found ${notifyTasks.where((t) => t.isOverdue).length} overdue, ${notifyTasks.where((t) => t.isStartingSoon).length} starting soon');
+      // Sort: Overdue by start date (earliest first), Starting Soon by days until start
+      overdueTasks.sort((a, b) => a.startDate.compareTo(b.startDate));
+      startingSoonTasks.sort((a, b) => a.daysUntilStart.compareTo(b.daysUntilStart));
+
+      widget.logger.i('📋 Found ${overdueTasks.length} overdue, ${startingSoonTasks.length} starting soon');
+
+      final List<ScheduleMonitorData> notifyTasks = [...overdueTasks, ...startingSoonTasks];
 
       if (notifyTasks.isEmpty) {
         widget.logger.i('✅ No tasks require notifications');
         return;
       }
 
-      // STEP 4: Check which tasks haven't been notified today
-      widget.logger.d('🔍 Checking which tasks need notifications...');
+      // STEP 4: Check which tasks haven't been notified today using batch check
+      widget.logger.d('🔍 Batch checking notification status...');
+      final taskIds = notifyTasks.map((t) => t.scheduleTaskId).toList();
+      final triggeredMap = await _notificationService.batchCheckNotificationsTriggeredToday(
+        widget.projectId,
+        taskIds,
+      );
+
       final List<Map<String, dynamic>> unsentTasks = [];
       
       for (var task in notifyTasks) {
-        final taskId = task.scheduleTaskId;
-
-        final wasTriggered = await _notificationService.wasNotificationTriggeredToday(
-          widget.projectId,
-          taskId,
-        );
-
+        final wasTriggered = triggeredMap[task.scheduleTaskId] ?? false;
+        
         if (!wasTriggered) {
           final type = task.isOverdue ? 'overdue' : 'starting_soon';
           unsentTasks.add({
             'task': task,
             'type': type,
           });
-          widget.logger.d('📝 Task "${task.taskName}" needs notification (type: $type)');
+          widget.logger.d('🔖 Task "${task.taskName}" needs notification (type: $type)');
         } else {
-          widget.logger.d('⏭️ Task "${task.taskName}" already notified today');
+          widget.logger.d('⭐ Task "${task.taskName}" already notified today');
         }
       }
 
@@ -1035,156 +669,65 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
       widget.logger.i('🔔 Triggering ${unsentTasks.length} notifications');
 
-      // STEP 5: Trigger notifications
-      final FlutterLocalNotificationsPlugin notifications = 
-          _flutterLocalNotificationsPlugin ?? FlutterLocalNotificationsPlugin();
+      // STEP 5: Save all notifications to Firestore first, then show them
+      final now = DateTime.now();
 
       for (var item in unsentTasks) {
         final task = item['task'] as ScheduleMonitorData;
         final type = item['type'] as String;
-        final taskId = task.scheduleTaskId;
-
-        // Acquire lock to prevent duplicate notifications
-        final lockAcquired = await _notificationService.acquireLock(widget.projectId, taskId);
         
-        if (!lockAcquired) {
-          widget.logger.w('⚠️ Could not acquire lock for task: ${task.taskName}');
-          continue;
-        }
+        final body = type == 'overdue'
+            ? 'This task is overdue and needs attention!'
+            : 'Starts in ${task.daysUntilStart} day(s)';
 
-        try {
-          // Double-check after acquiring lock
-          final wasTriggered = await _notificationService.wasNotificationTriggeredToday(
-            widget.projectId,
-            taskId,
-          );
+        // Save to Firestore
+        final savedId = await _notificationService.saveNotification(
+          projectId: widget.projectId,
+          taskId: task.scheduleTaskId,
+          taskName: task.taskName,
+          startDate: task.startDate,
+          message: body,
+          isTriggered: true,
+          triggerSource: 'foreground_app',
+          triggeredAt: now,
+          notificationId: '${widget.projectId}_${task.scheduleTaskId}'.hashCode,
+          expiresAt: task.startDate,
+          type: type,
+        );
 
-          if (wasTriggered) {
-            widget.logger.i('⏭️ Task already notified (double-check), skipping: ${task.taskName}');
-            continue;
-          }
-
-          // Generate notification ID
-          final notifId = '${widget.projectId}_$taskId'.hashCode;
-          
-          // Get color for notification type
-          final color = _getNotificationColor(type);
-
-          // Build notification message
-          final String title = type == 'overdue' 
-              ? '⚠️ Overdue Task: ${task.taskName}'
-              : '📅 Starting Soon: ${task.taskName}';
-          
-          final String body = type == 'overdue'
-              ? 'This task is overdue and needs attention!'
-              : 'Starts in ${task.daysUntilStart} day(s)';
-
-          // Android notification details
-          final androidDetails = AndroidNotificationDetails(
-            'schedule_monitor_channel',
-            'Schedule Monitor Notifications',
-            channelDescription: 'Notifications for task schedule monitoring and reminders',
-            importance: Importance.high,
-            priority: Priority.high,
-            groupKey: 'com.almaworks.schedule_monitor',
-            setAsGroupSummary: false,
-            ongoing: false,
-            autoCancel: true,
-            color: color,
-            playSound: true,
-            enableVibration: true,
-            styleInformation: BigTextStyleInformation(body),
-            actions: <AndroidNotificationAction>[
-              AndroidNotificationAction('open', 'View Task'),
-            ],
-          );
-
-          final details = NotificationDetails(
-            android: androidDetails,
-            iOS: DarwinNotificationDetails(
-              presentAlert: true,
-              presentBadge: true,
-              presentSound: true,
-            ),
-          );
-
-          // Show notification
-          await notifications.show(
-            notifId,
-            title,
-            body,
-            details,
-            payload: '${widget.projectId}|$taskId|$type',
-          );
-
-          widget.logger.i('✅ Notification shown: ${task.taskName} (ID: $notifId)');
-
-          // Save to Firestore
-          final savedId = await _notificationService.saveNotification(
-            projectId: widget.projectId,
-            taskId: taskId,
-            taskName: task.taskName,
-            startDate: task.startDate,
-            message: body,
-            isTriggered: true,
-            triggerSource: 'foreground_app',
-            triggeredAt: now,
-            notificationId: notifId,
-            expiresAt: task.startDate,
-            type: type,
-          );
-
-          if (savedId != null) {
-            widget.logger.i('✅ Notification saved to Firestore: $savedId');
-          } else {
-            widget.logger.e('❌ Failed to save notification to Firestore');
-          }
-
-        } catch (e, stackTrace) {
-          widget.logger.e('❌ Error showing notification for task: ${task.taskName}', 
-                  error: e, stackTrace: stackTrace);
-        } finally {
-          // Always release lock
-          await _notificationService.releaseLock(widget.projectId, taskId);
+        if (savedId != null) {
+          item['firestoreNotificationId'] = savedId;
+          widget.logger.i('✅ Notification saved to Firestore: $savedId');
         }
       }
 
-      // STEP 6: Show group summary if multiple notifications
+      // STEP 6: Show individual notifications using EnhancedNotificationService
+      for (var item in unsentTasks) {
+        if (item.containsKey('firestoreNotificationId')) {
+          final task = item['task'] as ScheduleMonitorData;
+          final type = item['type'] as String;
+          
+          await _enhancedNotificationService.showTaskNotification(
+            projectId: widget.projectId,
+            task: task,
+            type: type,
+            firestoreNotificationId: item['firestoreNotificationId'],
+          );
+          
+          // Add small delay between notifications for floating effect
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+
+      // STEP 7: Show grouped summary if multiple notifications
       if (unsentTasks.length > 1) {
         widget.logger.d('📦 Creating group summary notification');
         
-        final androidSummaryDetails = AndroidNotificationDetails(
-          'schedule_monitor_channel',
-          'Schedule Monitor Notifications',
-          channelDescription: 'Notifications for task schedule monitoring and reminders',
-          importance: Importance.high,
-          priority: Priority.high,
-          groupKey: 'com.almaworks.schedule_monitor',
-          setAsGroupSummary: true,
-          ongoing: false,
-          autoCancel: false,
-          color: Colors.blue,
+        await _enhancedNotificationService.showGroupedNotification(
+          projectId: widget.projectId,
+          taskGroups: unsentTasks,
+          totalCount: unsentTasks.length,
         );
-        
-        final summaryDetails = NotificationDetails(
-          android: androidSummaryDetails,
-          iOS: DarwinNotificationDetails(),
-        );
-        
-        await notifications.show(
-          widget.projectId.hashCode,
-          'Task Alerts',
-          '${unsentTasks.length} tasks need your attention',
-          summaryDetails,
-          payload: widget.projectId,
-        );
-        
-        widget.logger.i('✅ Group summary notification created');
-      }
-
-      // Play notification sound
-      if (!kIsWeb) {
-        FlutterRingtonePlayer().playNotification();
       }
 
       widget.logger.i('🎉 Notification check complete - sent ${unsentTasks.length} notifications');
