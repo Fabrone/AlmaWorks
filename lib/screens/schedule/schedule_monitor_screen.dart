@@ -373,6 +373,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       widget.logger.i('🔄 Syncing Schedule to ScheduleMonitor collection...');
       
       final firestore = FirebaseFirestore.instance;
+      final now = DateTime.now();
       
       // Get all tasks from Schedule collection for this project (only TaskType = "Task")
       final scheduleSnapshot = await firestore
@@ -414,11 +415,55 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
           continue;
         }
         
-        // Create or update ScheduleMonitor document
-        final monitorData = ScheduleMonitorData.fromScheduleData(
-          scheduleTaskId: scheduleDoc.id,
-          scheduleData: scheduleData,
+        // Extract dates and normalize them
+        final startDate = _normalizeToMidnight((scheduleData['startDate'] as Timestamp).toDate());
+        final endDate = _normalizeToMidnight((scheduleData['endDate'] as Timestamp).toDate());
+        final actualStartDate = scheduleData['actualStartDate'] != null 
+            ? _normalizeToMidnight((scheduleData['actualStartDate'] as Timestamp).toDate())
+            : null;
+        final actualEndDate = scheduleData['actualEndDate'] != null 
+            ? _normalizeToMidnight((scheduleData['actualEndDate'] as Timestamp).toDate())
+            : null;
+        final taskStatus = scheduleData['taskStatus'] as String?;
+        
+        // Compute status using normalized dates
+        final status = _computeStatusWithNormalizedDates(
+          startDate: startDate,
+          endDate: endDate,
+          actualStartDate: actualStartDate,
+          actualEndDate: actualEndDate,
+          taskStatus: taskStatus,
+          now: now,
         );
+        
+        // Compute upcoming category if status is upcoming
+        UpcomingCategory? upcomingCategory;
+        if (status == MonitorStatus.upcoming) {
+          upcomingCategory = _computeUpcomingCategoryWithNormalizedDates(startDate, now);
+        }
+        
+        // Compute duration
+        final duration = _calculateDaysBetween(startDate, endDate) + 1;
+        
+        // Create monitor data map
+        final monitorData = {
+          'scheduleTaskId': scheduleDoc.id,
+          'projectId': scheduleData['projectId'],
+          'projectName': scheduleData['projectName'],
+          'taskName': scheduleData['taskName'],
+          'startDate': Timestamp.fromDate(startDate),
+          'endDate': Timestamp.fromDate(endDate),
+          'actualStartDate': actualStartDate != null ? Timestamp.fromDate(actualStartDate) : null,
+          'actualEndDate': actualEndDate != null ? Timestamp.fromDate(actualEndDate) : null,
+          'taskStatus': taskStatus,
+          'status': status.toString().split('.').last.toUpperCase(),
+          'upcomingCategory': upcomingCategory?.toString().split('.').last.toUpperCase(),
+          'duration': duration,
+          'resourceId': scheduleData['resourceId'],
+          'resourceQuantity': scheduleData['resourceQuantity'],
+          'updatedAt': Timestamp.fromDate(now),
+          'lastStatusUpdate': Timestamp.fromDate(now),
+        };
         
         // Check if document exists using the map
         if (existingMonitorMap.containsKey(scheduleDoc.id)) {
@@ -426,13 +471,14 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
           final monitorDocId = existingMonitorMap[scheduleDoc.id]!;
           batch.update(
             firestore.collection('ScheduleMonitor').doc(monitorDocId),
-            monitorData.toFirestore(),
+            monitorData,
           );
           updateCount++;
         } else {
-          // Create new document
+          // Create new document with createdAt
           final newDocRef = firestore.collection('ScheduleMonitor').doc();
-          batch.set(newDocRef, monitorData.toFirestore());
+          monitorData['createdAt'] = Timestamp.fromDate(now);
+          batch.set(newDocRef, monitorData);
           createCount++;
         }
       }
@@ -458,6 +504,52 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     }
   }
 
+  /// Computes status with normalized dates for accurate day calculation
+  MonitorStatus _computeStatusWithNormalizedDates({
+    required DateTime startDate,
+    required DateTime endDate,
+    DateTime? actualStartDate,
+    DateTime? actualEndDate,
+    String? taskStatus,
+    required DateTime now,
+  }) {
+    final normalizedNow = _normalizeToMidnight(now);
+    final normalizedStart = _normalizeToMidnight(startDate);
+    
+    // Priority 1: Check if completed (user marked as completed OR has actualEndDate)
+    if (taskStatus == 'COMPLETED' || actualEndDate != null) {
+      return MonitorStatus.completed;
+    }
+    
+    // Priority 2: Check if started (user marked as started OR has actualStartDate)
+    if (taskStatus == 'STARTED' || actualStartDate != null) {
+      return MonitorStatus.ongoing;
+    }
+    
+    // Priority 3: Check if overdue (start date passed but not started)
+    if (normalizedStart.isBefore(normalizedNow)) {
+      return MonitorStatus.overdue;
+    }
+    
+    // Priority 4: Default to upcoming (future start date, not started)
+    return MonitorStatus.upcoming;
+  }
+
+  /// Computes upcoming category with normalized dates
+  UpcomingCategory? _computeUpcomingCategoryWithNormalizedDates(DateTime startDate, DateTime now) {
+    final normalizedNow = _normalizeToMidnight(now);
+    final normalizedStart = _normalizeToMidnight(startDate);
+    final daysUntilStart = _calculateDaysBetween(normalizedNow, normalizedStart);
+    
+    if (daysUntilStart <= 3 && daysUntilStart > 0) {
+      return UpcomingCategory.startingSoon;
+    } else if (daysUntilStart > 3) {
+      return UpcomingCategory.otherUpcoming;
+    }
+    
+    return null;
+  }
+
   /// Normalizes a DateTime to midnight in the device's local timezone
   DateTime _normalizeToMidnight(DateTime date) {
     return DateTime(date.year, date.month, date.day);
@@ -481,6 +573,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       try {
         final firestore = FirebaseFirestore.instance;
         final now = DateTime.now();
+        final normalizedNow = _normalizeToMidnight(now);
         
         // Get all ScheduleMonitor documents for this project
         final snapshot = await firestore
@@ -492,25 +585,55 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
         int updateCount = 0;
         
         for (var doc in snapshot.docs) {
-          final monitorData = ScheduleMonitorData.fromFirestore(doc.id, doc.data());
+          final data = doc.data();
           
-          // Recompute status
-          final newStatus = ScheduleMonitorData.computeStatus(
-            startDate: monitorData.startDate,
-            endDate: monitorData.endDate,
-            actualStartDate: monitorData.actualStartDate,
-            actualEndDate: monitorData.actualEndDate,
-            taskStatus: monitorData.taskStatus,
+          // Extract and normalize dates
+          final startDate = _normalizeToMidnight((data['startDate'] as Timestamp).toDate());
+          final endDate = _normalizeToMidnight((data['endDate'] as Timestamp).toDate());
+          final actualStartDate = data['actualStartDate'] != null
+              ? _normalizeToMidnight((data['actualStartDate'] as Timestamp).toDate())
+              : null;
+          final actualEndDate = data['actualEndDate'] != null
+              ? _normalizeToMidnight((data['actualEndDate'] as Timestamp).toDate())
+              : null;
+          final taskStatus = data['taskStatus'] as String?;
+          
+          // Get current status from document
+          final currentStatusStr = data['status'] as String?;
+          final currentStatus = currentStatusStr != null
+              ? MonitorStatus.values.firstWhere(
+                  (e) => e.toString().split('.').last.toUpperCase() == currentStatusStr,
+                  orElse: () => MonitorStatus.upcoming,
+                )
+              : MonitorStatus.upcoming;
+          
+          // Recompute status with normalized dates
+          final newStatus = _computeStatusWithNormalizedDates(
+            startDate: startDate,
+            endDate: endDate,
+            actualStartDate: actualStartDate,
+            actualEndDate: actualEndDate,
+            taskStatus: taskStatus,
+            now: now,
           );
           
           // Recompute upcoming category
           UpcomingCategory? newUpcomingCategory;
           if (newStatus == MonitorStatus.upcoming) {
-            newUpcomingCategory = ScheduleMonitorData.computeUpcomingCategory(monitorData.startDate);
+            newUpcomingCategory = _computeUpcomingCategoryWithNormalizedDates(startDate, now);
           }
           
-          // Update if status changed
-          if (newStatus != monitorData.status || newUpcomingCategory != monitorData.upcomingCategory) {
+          // Get current upcoming category
+          final currentUpcomingCategoryStr = data['upcomingCategory'] as String?;
+          final currentUpcomingCategory = currentUpcomingCategoryStr != null
+              ? UpcomingCategory.values.firstWhere(
+                  (e) => e.toString().split('.').last.toUpperCase() == currentUpcomingCategoryStr,
+                  orElse: () => UpcomingCategory.otherUpcoming,
+                )
+              : null;
+          
+          // Update if status or category changed
+          if (newStatus != currentStatus || newUpcomingCategory != currentUpcomingCategory) {
             batch.update(doc.reference, {
               'status': newStatus.toString().split('.').last.toUpperCase(),
               'upcomingCategory': newUpcomingCategory?.toString().split('.').last.toUpperCase(),
@@ -518,6 +641,8 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
               'lastStatusUpdate': Timestamp.fromDate(now),
             });
             updateCount++;
+            
+            widget.logger.d('📊 Status changed for "${data['taskName']}": $currentStatus -> $newStatus (Days until start: ${_calculateDaysBetween(normalizedNow, startDate)})');
           }
         }
         
@@ -1044,17 +1169,22 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
   Widget _buildMonitorTaskItem(ScheduleMonitorData task, Color accentColor) {
     final DateTime now = DateTime.now();
-    final int daysUntilStart = _calculateDaysBetween(now, task.startDate);
-    final int daysUntilEnd = _calculateDaysBetween(now, task.endDate);
+    final normalizedNow = _normalizeToMidnight(now);
+    final normalizedStartDate = _normalizeToMidnight(task.startDate);
+    final normalizedEndDate = _normalizeToMidnight(task.endDate);
     
-  String urgencyText = '';
+    // Use normalized dates for accurate day calculations
+    final int daysUntilStart = _calculateDaysBetween(normalizedNow, normalizedStartDate);
+    final int daysUntilEnd = _calculateDaysBetween(normalizedNow, normalizedEndDate);
+    
+    String urgencyText = '';
     IconData urgencyIcon = Icons.info_outline;
     
     // Set distinguished colors based on status
     Color itemColor = accentColor;
     if (task.isOverdue) {
       itemColor = Colors.red;
-      final overdueDays = _calculateDaysBetween(task.startDate, now).abs();
+      final overdueDays = _calculateDaysBetween(normalizedStartDate, normalizedNow);
       urgencyText = overdueDays == 0 ? 'Overdue today!' : 'Overdue by $overdueDays day${overdueDays == 1 ? '' : 's'}!';
       urgencyIcon = Icons.warning_amber_outlined;
     } else if (task.isStartingSoon) {
@@ -1063,11 +1193,14 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
           ? 'Starting today!' 
           : 'Starts in $daysUntilStart day${daysUntilStart == 1 ? '' : 's'}';
       urgencyIcon = Icons.timer_outlined;
-    } else if (daysUntilEnd <= 3 && daysUntilEnd >= 0) {
+    } else if (task.isOngoing && daysUntilEnd <= 3 && daysUntilEnd >= 0) {
       urgencyText = daysUntilEnd == 0
           ? 'Due today!'
           : 'Due in $daysUntilEnd day${daysUntilEnd == 1 ? '' : 's'}';
       urgencyIcon = Icons.warning_amber_outlined;
+    } else if (task.isUpcoming && daysUntilStart > 0) {
+      urgencyText = 'Starts in $daysUntilStart day${daysUntilStart == 1 ? '' : 's'}';
+      urgencyIcon = Icons.schedule_outlined;
     }
 
     return Container(
@@ -1344,7 +1477,6 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
       ),
     );
   }
-
 
   Widget _buildNoTasksWidget(String title) {
     final bool isSearch = _searchQuery.isNotEmpty;
