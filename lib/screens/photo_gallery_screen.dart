@@ -243,10 +243,25 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
                                 CachedNetworkImage(
                                   imageUrl: photo.url,
                                   fit: BoxFit.cover,
-                                  placeholder: (context, url) => Center(child: CircularProgressIndicator()),
-                                  errorWidget: (context, url, error) => _buildErrorWidget(error),
+                                  placeholder: (context, url) => Center(
+                                    child: CircularProgressIndicator(
+                                      color: const Color(0xFF0A2E5A),
+                                    ),
+                                  ),
+                                  errorWidget: (context, url, error) {
+                                    widget.logger.e('🖼️ Image load error for ${photo.id}: $error');
+                                    return _buildErrorWidget(error, photo);
+                                  },
                                   fadeInDuration: const Duration(milliseconds: 300),
                                   fadeOutDuration: const Duration(milliseconds: 300),
+                                  // Add retry mechanism
+                                  maxHeightDiskCache: 1000,
+                                  maxWidthDiskCache: 1000,
+                                  // Force refresh on error
+                                  cacheKey: photo.url,
+                                  httpHeaders: {
+                                    'Cache-Control': 'no-cache',
+                                  },
                                 ),
                                 Positioned(
                                   bottom: 0,
@@ -287,14 +302,33 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     );
   }
 
-  Widget _buildErrorWidget(dynamic error) {
+  Widget _buildErrorWidget(dynamic error, PhotoModel photo) {
     widget.logger.e('🖼️ Image load error: $error');
-    return Center(
+    return Container(
+      color: Colors.grey[300],
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error, color: Colors.red),
-          Text('Error loading image', style: GoogleFonts.poppins(color: Colors.red)),
+          Icon(Icons.broken_image, color: Colors.grey[600], size: 32),
+          const SizedBox(height: 8),
+          Text(
+            'Image unavailable',
+            style: GoogleFonts.poppins(color: Colors.grey[700], fontSize: 10),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          ElevatedButton(
+            onPressed: () {
+              widget.logger.i('🔄 Retrying image load for ${photo.id}');
+              // Force widget rebuild to retry image loading
+              setState(() {});
+            },
+            style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: const Size(50, 24),
+            ),
+            child: Text('Retry', style: GoogleFonts.poppins(fontSize: 10)),
+          ),
         ],
       ),
     );
@@ -716,32 +750,55 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
         final file = selectedFiles[i];
         final title = titles[i];
         Uint8List? bytes;
+        
         if (!kIsWeb) {
           bytes = await File(file.path).readAsBytes();
         } else {
           bytes = await file.readAsBytes();
         }
 
-        final timestamp = DateTime.now().millisecondsSinceEpoch + i; // Unique for each
-        final fileName = title.endsWith('.jpg') ? title : '${title.split('.').first}_$timestamp.jpg';
+        // Detect actual mime type from file extension
+        String mimeType = 'image/jpeg';
+        final extension = file.name.toLowerCase().split('.').last;
+        if (extension == 'png') {
+          mimeType = 'image/png';
+        } else if (extension == 'jpg' || extension == 'jpeg') {
+          mimeType = 'image/jpeg';
+        } else if (extension == 'webp') {
+          mimeType = 'image/webp';
+        }
+
+        final timestamp = DateTime.now().millisecondsSinceEpoch + i;
+        final fileName = title.contains('.') ? title : '${title}_$timestamp.$extension';
         final storageRef = FirebaseStorage.instance
             .ref()
             .child(widget.project.id)
             .child('PhotoGallery')
             .child(fileName);
 
-        final uploadTask = storageRef.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+        widget.logger.i('📤 Uploading image $i: $fileName with type $mimeType');
+
+        final uploadTask = storageRef.putData(
+          bytes,
+          SettableMetadata(
+            contentType: mimeType,
+            cacheControl: 'public, max-age=31536000',
+          ),
+        );
 
         uploadTask.snapshotEvents.listen((snapshot) {
           if (mounted) {
             setState(() {
-              _uploadProgress = (i / selectedFiles.length) + (snapshot.bytesTransferred / snapshot.totalBytes / selectedFiles.length);
+              _uploadProgress = (i / selectedFiles.length) + 
+                  (snapshot.bytesTransferred / snapshot.totalBytes / selectedFiles.length);
             });
           }
         });
 
         await uploadTask;
         final url = await storageRef.getDownloadURL();
+        
+        widget.logger.i('✅ Image uploaded successfully: $fileName, URL: $url');
 
         await FirebaseFirestore.instance
             .collection('PhotoGallery')
@@ -767,15 +824,14 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       if (mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e', style: GoogleFonts.poppins())),
+          SnackBar(
+            content: Text('Upload error: $e', style: GoogleFonts.poppins()),
+            action: SnackBarAction(
+              label: 'Retry',
+              onPressed: _startAddPhotoFlow,
+            ),
+          ),
         );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _uploadProgress = null;
-        });
       }
     }
   }
