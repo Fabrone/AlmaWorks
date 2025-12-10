@@ -247,42 +247,144 @@ class _TodoWidgetState extends State<TodoWidget> {
   }
 
   Widget _buildTasksList(bool isMobile) {
-    // Display: Overdue > Starting Soon > Ongoing > Other Upcoming
+    final totalTasks = _overdueTasks.length +
+        _startingSoonTasks.length +
+        _ongoingTasks.length +
+        _otherUpcomingTasks.length;
+
+    if (totalTasks == 0) {
+      return _buildEmptyState(isMobile);
+    }
+
+    // Priority display: Fill up to 6 items from available categories
+    // Priority order: Overdue > Starting Soon > Ongoing > Other Upcoming
     List<Widget> priorityItems = [];
-    
-    // Add overdue tasks (highest priority)
-    if (_overdueTasks.isNotEmpty) {
+
+    const int maxInitialDisplay = 6;
+    int remainingSlots = maxInitialDisplay;
+
+    int overdueToShow = _overdueTasks.length.clamp(0, remainingSlots);
+    remainingSlots -= overdueToShow;
+
+    int startingSoonToShow = _startingSoonTasks.length.clamp(0, remainingSlots);
+    remainingSlots -= startingSoonToShow;
+
+    int ongoingToShow = _ongoingTasks.length.clamp(0, remainingSlots);
+    remainingSlots -= ongoingToShow;
+
+    int otherUpcomingToShow = _otherUpcomingTasks.length.clamp(0, remainingSlots);
+    remainingSlots -= otherUpcomingToShow;
+
+    // Redistribute remaining slots if possible
+    while (remainingSlots > 0) {
+      bool addedAny = false;
+
+      if (overdueToShow < _overdueTasks.length && remainingSlots > 0) {
+        overdueToShow++;
+        remainingSlots--;
+        addedAny = true;
+      }
+
+      if (startingSoonToShow < _startingSoonTasks.length && remainingSlots > 0) {
+        startingSoonToShow++;
+        remainingSlots--;
+        addedAny = true;
+      }
+
+      if (ongoingToShow < _ongoingTasks.length && remainingSlots > 0) {
+        ongoingToShow++;
+        remainingSlots--;
+        addedAny = true;
+      }
+
+      if (otherUpcomingToShow < _otherUpcomingTasks.length && remainingSlots > 0) {
+        otherUpcomingToShow++;
+        remainingSlots--;
+        addedAny = true;
+      }
+
+      if (!addedAny) break;
+    }
+
+    // Build priority items with headers
+    if (overdueToShow > 0) {
       priorityItems.add(_buildCategoryHeader(
         'Overdue',
+        overdueToShow,
+        Colors.red.shade700,
+        isMobile,
+      ));
+      for (var task in _overdueTasks.take(overdueToShow)) {
+        priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+
+    if (startingSoonToShow > 0) {
+      priorityItems.add(_buildCategoryHeader(
+        'Starting Soon (≤3 days)',
+        startingSoonToShow,
+        Colors.orange.shade700,
+        isMobile,
+      ));
+      for (var task in _startingSoonTasks.take(startingSoonToShow)) {
+        priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+
+    if (ongoingToShow > 0) {
+      priorityItems.add(_buildCategoryHeader(
+        'Ongoing',
+        ongoingToShow,
+        Colors.blue.shade600,
+        isMobile,
+      ));
+      for (var task in _ongoingTasks.take(ongoingToShow)) {
+        priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+
+    if (otherUpcomingToShow > 0) {
+      priorityItems.add(_buildCategoryHeader(
+        'Other Upcoming',
+        otherUpcomingToShow,
+        Colors.grey.shade700,
+        isMobile,
+      ));
+      for (var task in _otherUpcomingTasks.take(otherUpcomingToShow)) {
+        priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+      }
+    }
+
+    // Prepare expandable items: All tasks grouped by category
+    List<Widget> expandedItems = [];
+
+    if (_overdueTasks.isNotEmpty) {
+      expandedItems.add(_buildCategoryHeader(
+        'All Overdue',
         _overdueTasks.length,
         Colors.red.shade700,
         isMobile,
       ));
       for (var task in _overdueTasks) {
-        priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+        expandedItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
       }
     }
-    
-    // Add starting soon tasks (within 3 days)
+
     if (_startingSoonTasks.isNotEmpty) {
-      priorityItems.add(_buildCategoryHeader(
-        'Starting Soon (≤3 days)',
+      expandedItems.add(_buildCategoryHeader(
+        'All Starting Soon (≤3 days)',
         _startingSoonTasks.length,
         Colors.orange.shade700,
         isMobile,
       ));
       for (var task in _startingSoonTasks) {
-        priorityItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
+        expandedItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
       }
     }
 
-    // Prepare expandable items
-    List<Widget> expandedItems = [];
-    
-    // Add ongoing tasks
     if (_ongoingTasks.isNotEmpty) {
       expandedItems.add(_buildCategoryHeader(
-        'Ongoing',
+        'All Ongoing',
         _ongoingTasks.length,
         Colors.blue.shade600,
         isMobile,
@@ -291,11 +393,10 @@ class _TodoWidgetState extends State<TodoWidget> {
         expandedItems.add(_buildTodoItem(task, isMobile, widget.showAllProjects));
       }
     }
-    
-    // Add other upcoming tasks (>3 days away)
+
     if (_otherUpcomingTasks.isNotEmpty) {
       expandedItems.add(_buildCategoryHeader(
-        'Other Upcoming',
+        'All Other Upcoming',
         _otherUpcomingTasks.length,
         Colors.grey.shade700,
         isMobile,
@@ -305,26 +406,19 @@ class _TodoWidgetState extends State<TodoWidget> {
       }
     }
 
-    final totalTasks = _overdueTasks.length +
-        _startingSoonTasks.length +
-        _ongoingTasks.length +
-        _otherUpcomingTasks.length;
+    final displayedCount = overdueToShow +
+        startingSoonToShow +
+        ongoingToShow +
+        otherUpcomingToShow;
 
-    final hasHiddenTasks = expandedItems.isNotEmpty;
-
-    if (priorityItems.isEmpty && expandedItems.isEmpty) {
-      return _buildEmptyState(isMobile);
-    }
+    final hasHiddenTasks = totalTasks > displayedCount;
 
     return Column(
       children: [
         Expanded(
           child: ListView(
             children: [
-              // Priority section (always visible)
-              ...priorityItems,
-              // Expanded items (shown when _isExpanded is true)
-              if (_isExpanded) ...expandedItems,
+              if (_isExpanded) ...expandedItems else ...priorityItems,
             ],
           ),
         ),
