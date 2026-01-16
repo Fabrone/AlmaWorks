@@ -1,3 +1,4 @@
+import 'package:almaworks/authentication/registration_screen.dart';
 import 'package:almaworks/screens/utils/app_theme.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
@@ -5,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
-import 'screens/dashboard_screen.dart';
+//import 'screens/dashboard_screen.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -160,7 +161,8 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
       navigatorKey: navigatorKey,
       title: 'AlmaWorks',
       theme: AppTheme.lightTheme,
-      home: DashboardScreen(logger: widget.logger),
+      //home: DashboardScreen(logger: widget.logger),
+      home: RegistrationScreen(logger: widget.logger),
       debugShowCheckedModeBanner: false,
     );
   }
