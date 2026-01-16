@@ -13,11 +13,13 @@ import 'package:google_fonts/google_fonts.dart';
 class ProjectsMainScreen extends StatefulWidget {
   final Logger logger;
   final int initialTabIndex;
+  final List<String>? clientProjectIds;
   
   const ProjectsMainScreen({
     super.key,
     required this.logger,
     this.initialTabIndex = 0,
+    this.clientProjectIds,
   });
 
   @override

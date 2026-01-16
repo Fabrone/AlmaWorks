@@ -1,5 +1,6 @@
 // welcome_screen.dart
 import 'package:almaworks/authentication/login_screen.dart';
+import 'package:almaworks/rbacsystem/auth_service.dart';
 import 'package:almaworks/screens/dashboard_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -23,6 +24,7 @@ class WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProviderS
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
+  final AuthService _authService = AuthService();
 
   @override
   void initState() {
@@ -73,6 +75,7 @@ class WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProviderS
             setState(() {
               _currentRole = newRole;
             });
+            // ignore: use_build_context_synchronously
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text('Your role has been updated to $newRole'),
@@ -87,6 +90,7 @@ class WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProviderS
         }
       },
       onError: (error) {
+        // ignore: use_build_context_synchronously
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $error')),
         );
@@ -355,12 +359,15 @@ class WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProviderS
 
   Widget _buildLogoutButton() {
     return TextButton.icon(
-      onPressed: () {
-        FirebaseAuth.instance.signOut();
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const LoginScreen()),
-        );
+      onPressed: () async {
+        await _authService.logout();
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+            (route) => false,
+          );
+        }
       },
       icon: const Icon(Icons.logout, color: Color(0xFF0A2E5A)),
       label: const Text(

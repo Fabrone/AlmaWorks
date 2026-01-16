@@ -1,6 +1,7 @@
 // login_screen.dart
 import 'package:almaworks/authentication/registration_screen.dart';
 import 'package:almaworks/authentication/welcome_screen.dart';
+import 'package:almaworks/rbacsystem/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -17,6 +18,7 @@ class LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final AuthService _authService = AuthService();
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
@@ -54,6 +56,9 @@ class LoginScreenState extends State<LoginScreen> {
       final userData = querySnapshot.docs.first.data();
       final username = querySnapshot.docs.first.id; // Doc ID is Username
       final role = userData['role'] as String? ?? 'Client'; // Fallback to Client
+
+      // Set persistent login state
+      await _authService.setLoginState(true);
 
       if (mounted) {
         Navigator.of(context).pushReplacement(

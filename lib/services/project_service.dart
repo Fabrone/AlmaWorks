@@ -476,4 +476,111 @@ class ProjectService {
     
     _logger.i('✅ ProjectService: Resources disposed successfully');
   }
+  
+  // Get projects count for client (filtered by grantedProjects)
+  Future<int> getClientProjectsCount(List<String> grantedProjectIds) async {
+    if (grantedProjectIds.isEmpty) return 0;
+    
+    try {
+      final snapshot = await _firestore
+          .collection('projects')
+          .where(FieldPath.documentId, whereIn: grantedProjectIds)
+          .get();
+      
+      return snapshot.docs.length;
+    } catch (e) {
+      _logger.e('Error getting client projects count: $e');
+      return 0;
+    }
+  }
+
+  // Get active projects count for client
+  Future<int> getClientActiveProjectsCount(List<String> grantedProjectIds) async {
+    if (grantedProjectIds.isEmpty) return 0;
+    
+    try {
+      final snapshot = await _firestore
+          .collection('projects')
+          .where(FieldPath.documentId, whereIn: grantedProjectIds)
+          .where('status', isEqualTo: 'active')
+          .get();
+      
+      return snapshot.docs.length;
+    } catch (e) {
+      _logger.e('Error getting client active projects count: $e');
+      return 0;
+    }
+  }
+
+  // Get completed projects count for client
+  Future<int> getClientCompletedProjectsCount(List<String> grantedProjectIds) async {
+    if (grantedProjectIds.isEmpty) return 0;
+    
+    try {
+      final snapshot = await _firestore
+          .collection('projects')
+          .where(FieldPath.documentId, whereIn: grantedProjectIds)
+          .where('status', isEqualTo: 'completed')
+          .get();
+      
+      return snapshot.docs.length;
+    } catch (e) {
+      _logger.e('Error getting client completed projects count: $e');
+      return 0;
+    }
+  }
+
+  // Stream all client projects
+  Stream<List<Map<String, dynamic>>> streamClientProjects(List<String> grantedProjectIds) {
+    if (grantedProjectIds.isEmpty) {
+      return Stream.value([]);
+    }
+    
+    return _firestore
+        .collection('projects')
+        .where(FieldPath.documentId, whereIn: grantedProjectIds)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) {
+              final data = doc.data();
+              data['id'] = doc.id;
+              return data;
+            }).toList());
+  }
+
+  // Stream active client projects
+  Stream<List<Map<String, dynamic>>> streamClientActiveProjects(List<String> grantedProjectIds) {
+    if (grantedProjectIds.isEmpty) {
+      return Stream.value([]);
+    }
+    
+    return _firestore
+        .collection('projects')
+        .where(FieldPath.documentId, whereIn: grantedProjectIds)
+        .where('status', isEqualTo: 'active')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) {
+              final data = doc.data();
+              data['id'] = doc.id;
+              return data;
+            }).toList());
+  }
+
+  // Stream completed client projects
+  Stream<List<Map<String, dynamic>>> streamClientCompletedProjects(List<String> grantedProjectIds) {
+    if (grantedProjectIds.isEmpty) {
+      return Stream.value([]);
+    }
+    
+    return _firestore
+        .collection('projects')
+        .where(FieldPath.documentId, whereIn: grantedProjectIds)
+        .where('status', isEqualTo: 'completed')
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) {
+              final data = doc.data();
+              data['id'] = doc.id;
+              return data;
+            }).toList());
+  }
+
 }

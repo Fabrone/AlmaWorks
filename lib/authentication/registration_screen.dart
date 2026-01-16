@@ -1,6 +1,7 @@
 // registration_screen.dart
 import 'package:almaworks/authentication/login_screen.dart';
 import 'package:almaworks/authentication/welcome_screen.dart';
+import 'package:almaworks/rbacsystem/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -19,6 +20,7 @@ class RegistrationScreenState extends State<RegistrationScreen> {
   final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final AuthService _authService = AuthService();
   bool _isLoading = false;
   bool _obscurePassword = true;
   String? _errorMessage;
@@ -64,6 +66,9 @@ class RegistrationScreenState extends State<RegistrationScreen> {
       };
 
       await FirebaseFirestore.instance.collection('Users').doc(username).set(userData);
+
+      // Set persistent login state
+      await _authService.setLoginState(true);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

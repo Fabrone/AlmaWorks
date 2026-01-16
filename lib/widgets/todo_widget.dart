@@ -17,7 +17,7 @@ class TodoWidget extends StatefulWidget {
     this.projectId,
     this.project,
     this.logger,
-    this.showAllProjects = false,
+    this.showAllProjects = false, required List<String> projectIds,
   });
 
   @override

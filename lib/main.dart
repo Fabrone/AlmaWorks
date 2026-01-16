@@ -1,12 +1,16 @@
-import 'package:almaworks/authentication/registration_screen.dart';
+import 'package:almaworks/authentication/login_screen.dart';
+import 'package:almaworks/authentication/welcome_screen.dart';
+//import 'package:almaworks/authentication/registration_screen.dart';
+import 'package:almaworks/rbacsystem/auth_service.dart';
+//import 'package:almaworks/screens/dashboard_screen.dart';
 import 'package:almaworks/screens/utils/app_theme.dart';
+import 'package:almaworks/services/notification_service.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
-//import 'screens/dashboard_screen.dart';
 import 'firebase_options.dart';
 
 void main() async {
@@ -39,7 +43,7 @@ void main() async {
     );
     logger.i('✅ Firestore settings configured');
 
-    // UPDATED: Initialize Awesome Notifications early
+    // Initialize Awesome Notifications for schedule/task notifications
     await AwesomeNotifications().initialize(
       null, // Use default app icon
       [
@@ -76,10 +80,31 @@ void main() async {
           playSound: true,
           enableVibration: true,
         ),
+        // NEW: Added channel for client access requests
+        NotificationChannel(
+          channelKey: 'client_requests',
+          channelName: 'Client Access Requests',
+          channelDescription: 'Notifications for client access requests',
+          defaultColor: const Color(0xFF0A2E5A),
+          ledColor: const Color(0xFF0A2E5A),
+          importance: NotificationImportance.Max,
+          channelShowBadge: true,
+          playSound: true,
+          enableVibration: true,
+        ),
       ],
       debug: false,
     );
     logger.i('✅ Awesome Notifications initialized successfully');
+
+    // NEW: Initialize Flutter Local Notifications Service for client requests
+    try {
+      await NotificationService(logger: logger).initialize();
+      logger.i('✅ Notification Service initialized successfully');
+    } catch (e) {
+      logger.w('⚠️ Notification Service initialization failed (non-critical): $e');
+      // Non-critical - app can continue without notification service
+    }
 
     runApp(AlmaWorksApp(logger: logger));
     logger.i('✅ AlmaWorks app started successfully');
@@ -90,7 +115,6 @@ void main() async {
   }
 }
 
-// UPDATED: Changed to StatefulWidget to handle notification actions
 class AlmaWorksApp extends StatefulWidget {
   final Logger logger;
   
@@ -109,38 +133,47 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
     
     widget.logger.i('🔔 Setting up notification action listeners');
     
-    // ADDED: Listen to notification actions when user taps from system tray
+    // Listen to notification actions when user taps from system tray
     AwesomeNotifications().setListeners(
       onActionReceivedMethod: (ReceivedAction receivedAction) async {
         widget.logger.i('👆 User tapped notification: ${receivedAction.id}');
         
-        // Handle different button actions
+        // Handle different notification types
         if (receivedAction.payload != null) {
-          final projectId = receivedAction.payload!['projectId'];
-          final taskId = receivedAction.payload!['taskId'];
-          final notificationId = receivedAction.payload!['notificationId'];
+          final notificationType = receivedAction.payload!['type'];
           
-          widget.logger.d('Payload: projectId=$projectId, taskId=$taskId, notifId=$notificationId');
-          
-          // Mark as read and opened when user taps
-          if (notificationId != null) {
-            try {
-              await FirebaseFirestore.instance
-                  .collection('ScheduleNotifications')
-                  .doc(notificationId)
-                  .update({
-                    'isRead': true,
-                    'openedFromTray': true,
-                    'openedAt': FieldValue.serverTimestamp(),
-                    'readSource': 'system_tray',
-                  });
-              widget.logger.i('✅ Marked notification as read from system tray');
-            } catch (e) {
-              widget.logger.e('Error marking notification as read', error: e);
+          // Handle schedule/task notifications
+          if (notificationType == 'schedule' || notificationType == null) {
+            final projectId = receivedAction.payload!['projectId'];
+            final taskId = receivedAction.payload!['taskId'];
+            final notificationId = receivedAction.payload!['notificationId'];
+            
+            widget.logger.d('Schedule notification: projectId=$projectId, taskId=$taskId, notifId=$notificationId');
+            
+            // Mark as read and opened when user taps
+            if (notificationId != null) {
+              try {
+                await FirebaseFirestore.instance
+                    .collection('ScheduleNotifications')
+                    .doc(notificationId)
+                    .update({
+                      'isRead': true,
+                      'openedFromTray': true,
+                      'openedAt': FieldValue.serverTimestamp(),
+                      'readSource': 'system_tray',
+                    });
+                widget.logger.i('✅ Marked notification as read from system tray');
+              } catch (e) {
+                widget.logger.e('Error marking notification as read', error: e);
+              }
             }
           }
           
-          // The notification center will show all notifications when opened
+          // NEW: Handle client request notifications
+          else if (notificationType == 'client_request') {
+            widget.logger.d('Client request notification tapped');
+            // Navigation will be handled by the NotificationService
+          }
         }
       },
     );
@@ -161,10 +194,126 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
       navigatorKey: navigatorKey,
       title: 'AlmaWorks',
       theme: AppTheme.lightTheme,
-      //home: DashboardScreen(logger: widget.logger),
-      home: RegistrationScreen(logger: widget.logger),
       debugShowCheckedModeBanner: false,
+      // NEW: Use AuthenticationWrapper instead of direct screen
+      home: AuthenticationWrapper(logger: widget.logger),
     );
+  }
+}
+
+// NEW: Authentication wrapper to handle persistent login
+class AuthenticationWrapper extends StatefulWidget {
+  final Logger logger;
+  
+  const AuthenticationWrapper({super.key, required this.logger});
+
+  @override
+  State<AuthenticationWrapper> createState() => _AuthenticationWrapperState();
+}
+
+class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
+  final AuthService _authService = AuthService();
+  bool _isLoading = true;
+  bool _isLoggedIn = false;
+  String _username = '';
+  String _role = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAuthenticationStatus();
+  }
+
+  Future<void> _checkAuthenticationStatus() async {
+    try {
+      widget.logger.i('🔍 Checking authentication status...');
+      
+      final isLoggedIn = await _authService.isUserLoggedIn();
+      
+      if (isLoggedIn) {
+        widget.logger.i('✅ User is logged in, fetching user data...');
+        
+        final userData = await _authService.getUserData();
+        
+        if (userData != null) {
+          setState(() {
+            _isLoggedIn = true;
+            _username = userData['username'] ?? '';
+            _role = userData['role'] ?? 'Client';
+            _isLoading = false;
+          });
+          
+          widget.logger.i('✅ User data loaded: $_username ($_role)');
+        } else {
+          widget.logger.w('⚠️ User data not found, redirecting to login');
+          setState(() {
+            _isLoggedIn = false;
+            _isLoading = false;
+          });
+        }
+      } else {
+        widget.logger.i('❌ User not logged in');
+        setState(() {
+          _isLoggedIn = false;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      widget.logger.e('❌ Error checking authentication: $e');
+      setState(() {
+        _isLoggedIn = false;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0A2E5A),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(
+                valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'AlmaWorks',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Site Management System',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.8),
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_isLoggedIn) {
+      // User is logged in - show welcome screen first, then they can navigate to dashboard
+      widget.logger.i('🎯 Routing to WelcomeScreen for $_username');
+      return WelcomeScreen(
+        username: _username,
+        initialRole: _role,
+      );
+    } else {
+      // User not logged in - show login screen
+      widget.logger.i('🎯 Routing to LoginScreen');
+      return const LoginScreen();
+    }
   }
 }
 

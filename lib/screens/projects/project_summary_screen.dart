@@ -516,7 +516,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
           projectId: widget.project.id,
           project: widget.project,
           logger: widget.logger,
-          showAllProjects: false,
+          showAllProjects: false, projectIds: [],
         ),
       ),
       SizedBox(
@@ -526,7 +526,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
           projectId: widget.project.id,  // <-- FIX: Added missing projectId
           project: widget.project,        // <-- FIX: Added missing project
           logger: widget.logger,          // <-- FIX: Added missing logger
-          showAllProjects: false,
+          showAllProjects: false, projectIds: [],
         ),
       ),
       SizedBox(
