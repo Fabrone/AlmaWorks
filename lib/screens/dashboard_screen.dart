@@ -12,6 +12,8 @@ import 'package:almaworks/widgets/weather_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DashboardScreen extends StatefulWidget {
   final Logger logger;
@@ -28,6 +30,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   late final ProjectService _projectService;
   late final Logger _logger;
+  String _userRole = '';
+  bool _isLoadingRole = true;
 
   @override
   void initState() {
@@ -35,6 +39,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _logger = widget.logger;
     _projectService = ProjectService();
     _logger.i('🏗️ DashboardScreen: Initialized with logger and project service');
+    _fetchUserRole();
+  }
+
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        _logger.e('❌ DashboardScreen: No authenticated user found');
+        setState(() => _isLoadingRole = false);
+        return;
+      }
+
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('Users')
+          .where('uid', isEqualTo: user.uid)
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        final userData = querySnapshot.docs.first.data();
+        final role = userData['role'] as String? ?? 'Client';
+        
+        setState(() {
+          _userRole = role;
+          _isLoadingRole = false;
+        });
+        
+        _logger.i('✅ DashboardScreen: User role fetched: $role');
+      } else {
+        _logger.w('⚠️ DashboardScreen: User document not found');
+        setState(() {
+          _userRole = 'Client';
+          _isLoadingRole = false;
+        });
+      }
+    } catch (e) {
+      _logger.e('❌ DashboardScreen: Error fetching user role: $e');
+      setState(() {
+        _userRole = 'Client';
+        _isLoadingRole = false;
+      });
+    }
   }
 
   void navigateToProjects({int initialTab = 0}) {
@@ -51,6 +97,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     _logger.d('🎨 DashboardScreen: Building with selectedIndex: $_selectedIndex');
+    
+    if (_isLoadingRole) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0A2E5A),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              Text(
+                'Loading Dashboard...',
+                style: const TextStyle(color: Colors.white, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
     
     return ChangeNotifierProvider(
       create: (context) {
@@ -260,21 +325,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   }
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.folder),
-                title: const Text('Projects'),
-                selected: _selectedIndex == 1,
-                onTap: () {
-                  _logger.i('📁 DashboardScreen: Projects menu item tapped');
-                  setState(() {
-                    _selectedIndex = 1;
-                    _projectsInitialTab = 0;
-                  });
-                  if (Navigator.canPop(context)) {
-                    Navigator.pop(context);
-                  }
-                },
-              ),
+              if (_userRole == 'MainAdmin' || _userRole == 'Admin')
+                ListTile(
+                  leading: const Icon(Icons.folder),
+                  title: const Text('Projects'),
+                  selected: _selectedIndex == 1,
+                  onTap: () {
+                    _logger.i('📁 DashboardScreen: Projects menu item tapped');
+                    setState(() {
+                      _selectedIndex = 1;
+                      _projectsInitialTab = 0;
+                    });
+                    if (Navigator.canPop(context)) {
+                      Navigator.pop(context);
+                    }
+                  },
+                ),
             ],
           ),
         ),
@@ -288,19 +354,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       switch (_selectedIndex) {
         case 0:
-          final screen = MainDashboard(
-            projectService: _projectService, 
-            logger: _logger,
-            onNavigateToProjects: navigateToProjects,
-          );
-          _logger.d('✅ DashboardScreen: Returning general dashboard screen');
-          return screen;
+          if (_userRole == 'Client') {
+            return _buildClientDashboard();
+          } else {
+            final screen = MainDashboard(
+              projectService: _projectService, 
+              logger: _logger,
+              onNavigateToProjects: navigateToProjects,
+            );
+            _logger.d('✅ DashboardScreen: Returning general dashboard screen');
+            return screen;
+          }
         case 1:
-          _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen with initialTab: $_projectsInitialTab');
-          return ProjectsMainScreen(
-            logger: _logger,
-            initialTabIndex: _projectsInitialTab,
-          );
+          if (_userRole == 'MainAdmin' || _userRole == 'Admin') {
+            _logger.d('✅ DashboardScreen: Returning ProjectsMainScreen with initialTab: $_projectsInitialTab');
+            return ProjectsMainScreen(
+              logger: _logger,
+              initialTabIndex: _projectsInitialTab,
+            );
+          } else {
+            return _buildClientDashboard();
+          }
         default:
           return MainDashboard(
             projectService: _projectService, 
@@ -313,6 +387,81 @@ class _DashboardScreenState extends State<DashboardScreen> {
         error: e, stackTrace: stackTrace);
       return _buildErrorScreen('Error loading screen', e.toString());
     }
+  }
+
+  Widget _buildClientDashboard() {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.construction,
+                size: 100,
+                color: const Color(0xFF0A2E5A).withValues(alpha: 0.5),
+              ),
+              const SizedBox(height: 24),
+              const Text(
+                'Client Dashboard',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0A2E5A),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF0A2E5A).withValues(alpha: 0.2)),
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.hourglass_empty,
+                      color: const Color(0xFF0A2E5A),
+                      size: 48,
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Under Development',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF0A2E5A),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'The Client Dashboard is currently being developed.\nCheck back soon for updates!',
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: Colors.grey[700],
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Thank you for your patience.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildErrorScreen(String title, String error) {
@@ -500,7 +649,7 @@ class _MainDashboardState extends State<MainDashboard> {
     }
   }
 
-Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
+  Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
     final screenWidth = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
@@ -514,15 +663,15 @@ Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, 
         height: widgetHeight,
         child: TodoWidget(
           showAllProjects: true,
-          logger: widget.logger,  // <-- Added logger for consistency
+          logger: widget.logger,
         ),
       ),
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
         child: ActivityFeed(
-          showAllProjects: true,  // <-- FIX: Added missing showAllProjects parameter
-          logger: widget.logger,   // <-- FIX: Added missing logger parameter
+          showAllProjects: true,
+          logger: widget.logger,
         ),
       ),
       SizedBox(

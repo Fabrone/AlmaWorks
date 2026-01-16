@@ -7,7 +7,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 // ignore: implementation_imports
 import 'package:logger/src/logger.dart';
 
-
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key, required Logger logger});
 
@@ -68,7 +67,10 @@ class RegistrationScreenState extends State<RegistrationScreen> {
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Registration successful!')),
+          const SnackBar(
+            content: Text('Registration successful! Welcome to AlmaWorks.'),
+            backgroundColor: Colors.green,
+          ),
         );
 
         Navigator.of(context).pushReplacement(
@@ -81,21 +83,28 @@ class RegistrationScreenState extends State<RegistrationScreen> {
       setState(() {
         switch (e.code) {
           case 'email-already-in-use':
-            _errorMessage = 'The email address is already in use.';
+            _errorMessage = 'This email address is already registered. Please login instead.';
             break;
           case 'invalid-email':
-            _errorMessage = 'The email address is invalid.';
+            _errorMessage = 'The email address format is invalid. Please enter a valid email.';
             break;
           case 'weak-password':
-            _errorMessage = 'The password is too weak.';
+            _errorMessage = 'Password is too weak. Please use at least 6 characters with a mix of letters and numbers.';
+            break;
+          case 'operation-not-allowed':
+            _errorMessage = 'Email/password accounts are not enabled. Please contact support.';
             break;
           default:
-            _errorMessage = 'Registration failed: ${e.message}';
+            _errorMessage = 'Registration failed: ${e.message ?? "Unknown error occurred"}';
         }
       });
     } catch (e) {
       setState(() {
-        _errorMessage = 'An unexpected error occurred: $e';
+        if (e.toString().contains('Username already taken')) {
+          _errorMessage = 'This username is already taken. Please choose a different one.';
+        } else {
+          _errorMessage = 'An unexpected error occurred. Please try again later.';
+        }
       });
     } finally {
       if (mounted) {
@@ -118,45 +127,76 @@ class RegistrationScreenState extends State<RegistrationScreen> {
     final contentWidth = screenWidth > 800 ? screenWidth * 0.5 : screenWidth * 0.9;
 
     return Scaffold(
-      backgroundColor: Colors.blueGrey[50],
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text('Create Account', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        backgroundColor: const Color(0xFF0A2E5A),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
             child: Container(
               constraints: BoxConstraints(maxWidth: contentWidth),
-              padding: const EdgeInsets.symmetric(horizontal: 20.0),
+              padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 20.0),
               child: Form(
                 key: _formKey,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Join Us',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blueGrey,
+                    Center(
+                      child: Icon(
+                        Icons.person_add_outlined,
+                        size: 80,
+                        color: const Color(0xFF0A2E5A),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Register to get started.',
-                      style: TextStyle(fontSize: 16, color: Colors.blueGrey),
+                    const SizedBox(height: 20),
+                    const Center(
+                      child: Text(
+                        'Join AlmaWorks',
+                        style: TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0A2E5A),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Center(
+                      child: Text(
+                        'Create your account to get started',
+                        style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                      ),
                     ),
                     const SizedBox(height: 30),
                     TextFormField(
                       controller: _usernameController,
                       decoration: InputDecoration(
                         labelText: 'Username',
-                        hintText: 'Enter your username',
+                        hintText: 'Choose a unique username',
+                        prefixIcon: const Icon(Icons.account_circle_outlined, color: Color(0xFF0A2E5A)),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFF0A2E5A), width: 2),
+                        ),
                         filled: true,
                         fillColor: Colors.white,
                       ),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
-                          return 'Please enter a username';
+                          return 'Username is required';
+                        }
+                        if (value.trim().length < 3) {
+                          return 'Username must be at least 3 characters';
+                        }
+                        if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value.trim())) {
+                          return 'Username can only contain letters, numbers, and underscores';
                         }
                         return null;
                       },
@@ -167,14 +207,22 @@ class RegistrationScreenState extends State<RegistrationScreen> {
                       decoration: InputDecoration(
                         labelText: 'Email',
                         hintText: 'Enter your email address',
+                        prefixIcon: const Icon(Icons.email_outlined, color: Color(0xFF0A2E5A)),
                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFF0A2E5A), width: 2),
+                        ),
                         filled: true,
                         fillColor: Colors.white,
                       ),
                       keyboardType: TextInputType.emailAddress,
                       validator: (value) {
-                        if (value == null || value.isEmpty || !RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(value)) {
-                          return 'Please enter a valid email address';
+                        if (value == null || value.isEmpty) {
+                          return 'Email is required';
+                        }
+                        if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(value)) {
+                          return 'Enter a valid email address';
                         }
                         return null;
                       },
@@ -185,20 +233,28 @@ class RegistrationScreenState extends State<RegistrationScreen> {
                       obscureText: _obscurePassword,
                       decoration: InputDecoration(
                         labelText: 'Password',
-                        hintText: 'Enter your password',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        filled: true,
-                        fillColor: Colors.white,
+                        hintText: 'Create a strong password',
+                        prefixIcon: const Icon(Icons.lock_outlined, color: Color(0xFF0A2E5A)),
                         suffixIcon: IconButton(
                           icon: Icon(
                             _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                            color: Colors.blueGrey,
+                            color: const Color(0xFF0A2E5A),
                           ),
                           onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                         ),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: Color(0xFF0A2E5A), width: 2),
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
                       ),
                       validator: (value) {
-                        if (value == null || value.isEmpty || value.length < 6) {
+                        if (value == null || value.isEmpty) {
+                          return 'Password is required';
+                        }
+                        if (value.length < 6) {
                           return 'Password must be at least 6 characters';
                         }
                         return null;
@@ -211,12 +267,19 @@ class RegistrationScreenState extends State<RegistrationScreen> {
                         decoration: BoxDecoration(
                           color: Colors.red[50],
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.red[200]!),
+                          border: Border.all(color: Colors.red[300]!),
                         ),
-                        child: Text(
-                          _errorMessage!,
-                          style: TextStyle(color: Colors.red[700]),
-                          textAlign: TextAlign.center,
+                        child: Row(
+                          children: [
+                            Icon(Icons.error_outline, color: Colors.red[700], size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _errorMessage!,
+                                style: TextStyle(color: Colors.red[700], fontSize: 14),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     const SizedBox(height: 20),
@@ -225,35 +288,45 @@ class RegistrationScreenState extends State<RegistrationScreen> {
                       child: ElevatedButton(
                         onPressed: _isLoading ? null : _signUp,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.blueGrey,
+                          backgroundColor: const Color(0xFF0A2E5A),
                           padding: const EdgeInsets.symmetric(vertical: 16),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          elevation: 2,
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(color: Colors.white)
                             : const Text(
                                 'Sign Up',
-                                style: TextStyle(fontSize: 18, color: Colors.white),
+                                style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold),
                               ),
                       ),
                     ),
                     const SizedBox(height: 20),
                     Center(
-                      child: GestureDetector(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (context) => const LoginScreen()),
-                          );
-                        },
-                        child: const Text(
-                          'Already have an account? Log In',
-                          style: TextStyle(
-                            fontSize: 16,
-                            color: Colors.blueGrey,
-                            decoration: TextDecoration.underline,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Already have an account? ',
+                            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
                           ),
-                        ),
+                          TextButton(
+                            onPressed: () {
+                              Navigator.pushReplacement(
+                                context,
+                                MaterialPageRoute(builder: (context) => const LoginScreen()),
+                              );
+                            },
+                            child: const Text(
+                              'Log In',
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: Color(0xFF0A2E5A),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
