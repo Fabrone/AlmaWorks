@@ -41,6 +41,8 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
   
   List<QueryDocumentSnapshot> _allProjects = [];
 
+  bool get _isClientView => widget.clientProjectIds != null;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -67,7 +69,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         break;
     }
     
-    _logger.i('🏗️ ProjectsMainScreen: Initialized with ${_tabController.length} tabs, initial index: ${widget.initialTabIndex}, filter: $_statusFilter');
+    _logger.i('🏗️ ProjectsMainScreen: Initialized - isClientView: $_isClientView, clientProjects: ${widget.clientProjectIds?.length ?? 0}');
   }
 
   @override
@@ -78,7 +80,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Projects',
+          _isClientView ? 'My Projects' : 'Projects',
           style: GoogleFonts.poppins(
             fontWeight: FontWeight.bold,
             color: Colors.white,
@@ -96,23 +98,25 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          _logger.i('➕ ProjectsMainScreen: Add project button pressed');
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => AddProjectScreen(logger: _logger),
+      floatingActionButton: _isClientView
+          ? null
+          : FloatingActionButton(
+              onPressed: () async {
+                _logger.i('➕ ProjectsMainScreen: Add project button pressed');
+                final result = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => AddProjectScreen(logger: _logger),
+                  ),
+                );
+                
+                if (result == true) {
+                  _logger.d('🔄 ProjectsMainScreen: Project added successfully');
+                }
+              },
+              backgroundColor: const Color(0xFF0A2E5A),
+              child: const Icon(Icons.add, color: Colors.white),
             ),
-          );
-          
-          if (result == true) {
-            _logger.d('🔄 ProjectsMainScreen: Project added successfully, stream will auto-update');
-          }
-        },
-        backgroundColor: const Color(0xFF0A2E5A),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
     );
   }
 
@@ -122,7 +126,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
+            color: Colors.grey.withValues(alpha:0.1),
             blurRadius: 4,
             offset: const Offset(0, 2),
           ),
@@ -301,8 +305,16 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
           );
         }
         
-        _allProjects = snapshot.data!.docs;
+        // Apply client project filtering if needed
+        _allProjects = _isClientView
+            ? snapshot.data!.docs.where((doc) {
+                return widget.clientProjectIds!.contains(doc.id);
+              }).toList()
+            : snapshot.data!.docs;
+        
         _isLoading = false;
+        
+        _logger.d('📊 ProjectsMainScreen: Filtered projects count: ${_allProjects.length}');
         
         _updateStatusCounts(_allProjects);
         
@@ -310,8 +322,12 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         
         if (filteredProjects.isEmpty) {
           final filterText = _statusFilter == 'All'
-              ? 'No projects found'
-              : 'No $_statusFilter projects';
+              ? (_isClientView 
+                  ? 'No projects assigned to you yet' 
+                  : 'No projects found')
+              : (_isClientView
+                  ? 'No $_statusFilter projects assigned to you'
+                  : 'No $_statusFilter projects');
           
           return _buildContentWithFooter(
             child: Center(
@@ -333,15 +349,18 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
                         color: Colors.grey[600],
                         fontWeight: FontWeight.w500,
                       ),
+                      textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Tap the + button to create your first project',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[500],
+                    if (!_isClientView) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tap the + button to create your first project',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -474,10 +493,12 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
           _logger.i('👆 ProjectsMainScreen: Project tapped: ${project.name}');
           _navigateToProjectSummary(project, context);
         },
-        onLongPress: () {
-          _logger.i('👆 ProjectsMainScreen: Project long pressed: ${project.name}');
-          _showProjectOptions(context, project);
-        },
+        onLongPress: _isClientView
+            ? null
+            : () {
+                _logger.i('👆 ProjectsMainScreen: Project long pressed: ${project.name}');
+                _showProjectOptions(context, project);
+              },
         borderRadius: BorderRadius.circular(8),
         child: Padding(
           padding: const EdgeInsets.all(12),
@@ -578,7 +599,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     if (status == null) {
       return Chip(
         label: const Text('Untracked'),
-        backgroundColor: Colors.grey.withValues(alpha: 0.1),
+        backgroundColor: Colors.grey.withValues(alpha:0.1),
         labelStyle: const TextStyle(color: Colors.grey, fontSize: 10),
         materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         visualDensity: VisualDensity.compact,
@@ -587,7 +608,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     
     return Chip(
       label: Text(_getStatusText(status)),
-      backgroundColor: _getStatusColor(status).withValues(alpha: 0.1),
+      backgroundColor: _getStatusColor(status).withValues(alpha:0.1),
       labelStyle: TextStyle(
         color: _getStatusColor(status),
         fontSize: 10,
@@ -604,7 +625,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
       final provider = Provider.of<SelectedProjectProvider>(context, listen: false);
       provider.selectProject(project);
     } catch (e) {
-      _logger.w('⚠️ ProjectsMainScreen: Provider not found in current context, will handle in summary screen');
+      _logger.w('⚠️ ProjectsMainScreen: Provider not found in current context');
     }
     
     Navigator.push(
@@ -621,7 +642,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
     ).then((_) {
       _logger.d('🔙 ProjectsMainScreen: Returned from project summary');
     }).catchError((error) {
-      _logger.e('❌ ProjectsMainScreen: Error navigating to project summary: $error');
+      _logger.e('❌ ProjectsMainScreen: Error navigating: $error');
       if (mounted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -690,7 +711,7 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
       ),
     ).then((result) {
       if (result == true) {
-        _logger.d('🔄 ProjectsMainScreen: Project edited successfully, stream will auto-update');
+        _logger.d('🔄 ProjectsMainScreen: Project edited successfully');
       }
     });
   }

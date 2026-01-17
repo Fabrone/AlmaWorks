@@ -677,9 +677,13 @@ class _ClientAccessRequestsScreenState
 
   Future<List<Map<String, dynamic>>> _fetchAvailableProjects() async {
     try {
+      widget.logger.i('📋 Fetching available projects for approval dialog');
+      
       final snapshot = await FirebaseFirestore.instance
-          .collection('projects')
+          .collection('Projects')  
           .get();
+
+      widget.logger.i('✅ Found ${snapshot.docs.length} projects');
 
       return snapshot.docs.map((doc) {
         final data = doc.data();
@@ -689,7 +693,7 @@ class _ClientAccessRequestsScreenState
         };
       }).toList();
     } catch (e) {
-      widget.logger.e('Error fetching projects: $e');
+      widget.logger.e('❌ Error fetching projects: $e');
       return [];
     }
   }

@@ -476,61 +476,364 @@ class ProjectService {
     
     _logger.i('✅ ProjectService: Resources disposed successfully');
   }
-  
-  // Get projects count for client (filtered by grantedProjects)
+
   Future<int> getClientProjectsCount(List<String> grantedProjectIds) async {
-    if (grantedProjectIds.isEmpty) return 0;
+    _logger.i('🔢 ProjectService: Getting client projects count for ${grantedProjectIds.length} projects');
+    
+    if (grantedProjectIds.isEmpty) {
+      _logger.d('ℹ️ ProjectService: No granted projects for client');
+      return 0;
+    }
     
     try {
-      final snapshot = await _firestore
-          .collection('projects')
-          .where(FieldPath.documentId, whereIn: grantedProjectIds)
-          .get();
+      await _ensureInitialized();
       
-      return snapshot.docs.length;
+      // Firestore has a limit of 10 items in 'whereIn' queries
+      if (grantedProjectIds.length <= 10) {
+        final snapshot = await _firestore
+            .collection(_collection) // Use the correct collection name
+            .where(FieldPath.documentId, whereIn: grantedProjectIds)
+            .get();
+        
+        final count = snapshot.docs.length;
+        _logger.i('✅ ProjectService: Client has access to $count projects');
+        return count;
+      } else {
+        // Batch queries for more than 10 IDs
+        _logger.d('📦 ProjectService: Batching queries for ${grantedProjectIds.length} projects');
+        int totalCount = 0;
+        
+        for (int i = 0; i < grantedProjectIds.length; i += 10) {
+          final batch = grantedProjectIds.skip(i).take(10).toList();
+          final snapshot = await _firestore
+              .collection(_collection)
+              .where(FieldPath.documentId, whereIn: batch)
+              .get();
+          totalCount += snapshot.docs.length;
+        }
+        
+        _logger.i('✅ ProjectService: Client has access to $totalCount projects (batched)');
+        return totalCount;
+      }
     } catch (e) {
-      _logger.e('Error getting client projects count: $e');
+      _logger.e('❌ ProjectService: Error getting client projects count: $e');
       return 0;
     }
   }
 
-  // Get active projects count for client
   Future<int> getClientActiveProjectsCount(List<String> grantedProjectIds) async {
-    if (grantedProjectIds.isEmpty) return 0;
+    _logger.i('🔢 ProjectService: Getting client active projects count');
+    
+    if (grantedProjectIds.isEmpty) {
+      return 0;
+    }
     
     try {
-      final snapshot = await _firestore
-          .collection('projects')
-          .where(FieldPath.documentId, whereIn: grantedProjectIds)
-          .where('status', isEqualTo: 'active')
-          .get();
+      await _ensureInitialized();
       
-      return snapshot.docs.length;
+      if (grantedProjectIds.length <= 10) {
+        final snapshot = await _firestore
+            .collection(_collection)
+            .where(FieldPath.documentId, whereIn: grantedProjectIds)
+            .where('status', isEqualTo: 'active')
+            .get();
+        
+        final count = snapshot.docs.length;
+        _logger.i('✅ ProjectService: Client has $count active projects');
+        return count;
+      } else {
+        // Batch queries for more than 10 IDs
+        int totalCount = 0;
+        
+        for (int i = 0; i < grantedProjectIds.length; i += 10) {
+          final batch = grantedProjectIds.skip(i).take(10).toList();
+          final snapshot = await _firestore
+              .collection(_collection)
+              .where(FieldPath.documentId, whereIn: batch)
+              .where('status', isEqualTo: 'active')
+              .get();
+          totalCount += snapshot.docs.length;
+        }
+        
+        _logger.i('✅ ProjectService: Client has $totalCount active projects (batched)');
+        return totalCount;
+      }
     } catch (e) {
-      _logger.e('Error getting client active projects count: $e');
+      _logger.e('❌ ProjectService: Error getting client active projects count: $e');
       return 0;
     }
   }
 
-  // Get completed projects count for client
   Future<int> getClientCompletedProjectsCount(List<String> grantedProjectIds) async {
-    if (grantedProjectIds.isEmpty) return 0;
+    _logger.i('🔢 ProjectService: Getting client completed projects count');
+    
+    if (grantedProjectIds.isEmpty) {
+      return 0;
+    }
     
     try {
-      final snapshot = await _firestore
-          .collection('projects')
-          .where(FieldPath.documentId, whereIn: grantedProjectIds)
-          .where('status', isEqualTo: 'completed')
-          .get();
+      await _ensureInitialized();
       
-      return snapshot.docs.length;
+      if (grantedProjectIds.length <= 10) {
+        final snapshot = await _firestore
+            .collection(_collection)
+            .where(FieldPath.documentId, whereIn: grantedProjectIds)
+            .where('status', isEqualTo: 'completed')
+            .get();
+        
+        final count = snapshot.docs.length;
+        _logger.i('✅ ProjectService: Client has $count completed projects');
+        return count;
+      } else {
+        // Batch queries for more than 10 IDs
+        int totalCount = 0;
+        
+        for (int i = 0; i < grantedProjectIds.length; i += 10) {
+          final batch = grantedProjectIds.skip(i).take(10).toList();
+          final snapshot = await _firestore
+              .collection(_collection)
+              .where(FieldPath.documentId, whereIn: batch)
+              .where('status', isEqualTo: 'completed')
+              .get();
+          totalCount += snapshot.docs.length;
+        }
+        
+        _logger.i('✅ ProjectService: Client has $totalCount completed projects (batched)');
+        return totalCount;
+      }
     } catch (e) {
-      _logger.e('Error getting client completed projects count: $e');
+      _logger.e('❌ ProjectService: Error getting client completed projects count: $e');
       return 0;
     }
   }
 
-  // Stream all client projects
+  Stream<List<ProjectModel>> getClientProjectsStream(List<String> grantedProjectIds) {
+    final streamKey = 'client_projects_${grantedProjectIds.join("_")}';
+    _logger.i('📡 ProjectService: Getting client projects stream for ${grantedProjectIds.length} projects');
+    
+    if (grantedProjectIds.isEmpty) {
+      _logger.d('ℹ️ ProjectService: No granted projects, returning empty stream');
+      return Stream.value(<ProjectModel>[]);
+    }
+    
+    // Return existing stream if available
+    if (_streamControllers.containsKey(streamKey) && 
+        !_streamControllers[streamKey]!.isClosed) {
+      _logger.d('♻️ ProjectService: Returning existing client projects stream');
+      return _streamControllers[streamKey]!.stream;
+    }
+    
+    // Clean up any existing controller and subscription
+    _cleanupStream(streamKey);
+    
+    // Create new stream controller
+    final controller = StreamController<List<ProjectModel>>.broadcast();
+    _streamControllers[streamKey] = controller;
+    
+    _createClientProjectsSubscription(controller, grantedProjectIds);
+    
+    return controller.stream;
+  }
+
+  void _createClientProjectsSubscription(
+    StreamController<List<ProjectModel>> controller,
+    List<String> grantedProjectIds,
+  ) async {
+    try {
+      await _ensureInitialized();
+      
+      // Firestore limitation: can only use whereIn with up to 10 items
+      final idsToQuery = grantedProjectIds.length > 10 
+          ? grantedProjectIds.take(10).toList()
+          : grantedProjectIds;
+      
+      if (grantedProjectIds.length > 10) {
+        _logger.w('⚠️ ProjectService: Client has ${grantedProjectIds.length} projects. Only showing first 10 in stream due to Firestore limitations.');
+      }
+      
+      _logger.d('📡 ProjectService: Creating client projects subscription');
+      
+      final subscription = _firestore
+          .collection(_collection)
+          .where(FieldPath.documentId, whereIn: idsToQuery)
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              _logger.d('🔥 ProjectService: Received ${snapshot.docs.length} client projects from Firestore');
+              
+              final projects = snapshot.docs
+                  .map((doc) {
+                    try {
+                      return ProjectModel.fromFirestore(doc);
+                    } catch (e) {
+                      _logger.w('⚠️ ProjectService: Error parsing client project ${doc.id}: $e');
+                      return null;
+                    }
+                  })
+                  .where((project) => project != null)
+                  .cast<ProjectModel>()
+                  .toList();
+              
+              _logger.i('✅ ProjectService: Successfully parsed ${projects.length} client projects');
+              controller.add(projects);
+            },
+            onError: (error) {
+              _logger.e('❌ ProjectService: Error in client projects stream: $error');
+              controller.add(<ProjectModel>[]);
+            },
+          );
+      
+      _subscriptions['client_projects'] = subscription;
+      
+    } catch (e) {
+      _logger.e('❌ ProjectService: Failed to create client projects subscription: $e');
+      controller.add(<ProjectModel>[]);
+    }
+  }
+
+  Stream<List<ProjectModel>> getClientActiveProjectsStream(List<String> grantedProjectIds) {
+    final streamKey = 'client_active_projects_${grantedProjectIds.join("_")}';
+    _logger.i('📡 ProjectService: Getting client active projects stream');
+    
+    if (grantedProjectIds.isEmpty) {
+      return Stream.value(<ProjectModel>[]);
+    }
+    
+    if (_streamControllers.containsKey(streamKey) && 
+        !_streamControllers[streamKey]!.isClosed) {
+      return _streamControllers[streamKey]!.stream;
+    }
+    
+    _cleanupStream(streamKey);
+    
+    final controller = StreamController<List<ProjectModel>>.broadcast();
+    _streamControllers[streamKey] = controller;
+    
+    _createClientActiveProjectsSubscription(controller, grantedProjectIds);
+    
+    return controller.stream;
+  }
+
+  void _createClientActiveProjectsSubscription(
+    StreamController<List<ProjectModel>> controller,
+    List<String> grantedProjectIds,
+  ) async {
+    try {
+      await _ensureInitialized();
+      
+      final idsToQuery = grantedProjectIds.length > 10 
+          ? grantedProjectIds.take(10).toList()
+          : grantedProjectIds;
+      
+      final subscription = _firestore
+          .collection(_collection)
+          .where(FieldPath.documentId, whereIn: idsToQuery)
+          .where('status', isEqualTo: 'active')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              final projects = snapshot.docs
+                  .map((doc) {
+                    try {
+                      return ProjectModel.fromFirestore(doc);
+                    } catch (e) {
+                      _logger.w('⚠️ ProjectService: Error parsing active project ${doc.id}: $e');
+                      return null;
+                    }
+                  })
+                  .where((project) => project != null)
+                  .cast<ProjectModel>()
+                  .toList();
+              
+              controller.add(projects);
+            },
+            onError: (error) {
+              _logger.e('❌ ProjectService: Error in client active projects stream: $error');
+              controller.add(<ProjectModel>[]);
+            },
+          );
+      
+      _subscriptions['client_active_projects'] = subscription;
+    } catch (e) {
+      _logger.e('❌ ProjectService: Failed to create client active projects subscription: $e');
+      controller.add(<ProjectModel>[]);
+    }
+  }
+
+  /// Get stream of completed projects a client has access to
+  Stream<List<ProjectModel>> getClientCompletedProjectsStream(List<String> grantedProjectIds) {
+    final streamKey = 'client_completed_projects_${grantedProjectIds.join("_")}';
+    _logger.i('📡 ProjectService: Getting client completed projects stream');
+    
+    if (grantedProjectIds.isEmpty) {
+      return Stream.value(<ProjectModel>[]);
+    }
+    
+    if (_streamControllers.containsKey(streamKey) && 
+        !_streamControllers[streamKey]!.isClosed) {
+      return _streamControllers[streamKey]!.stream;
+    }
+    
+    _cleanupStream(streamKey);
+    
+    final controller = StreamController<List<ProjectModel>>.broadcast();
+    _streamControllers[streamKey] = controller;
+    
+    _createClientCompletedProjectsSubscription(controller, grantedProjectIds);
+    
+    return controller.stream;
+  }
+
+  void _createClientCompletedProjectsSubscription(
+    StreamController<List<ProjectModel>> controller,
+    List<String> grantedProjectIds,
+  ) async {
+    try {
+      await _ensureInitialized();
+      
+      final idsToQuery = grantedProjectIds.length > 10 
+          ? grantedProjectIds.take(10).toList()
+          : grantedProjectIds;
+      
+      final subscription = _firestore
+          .collection(_collection)
+          .where(FieldPath.documentId, whereIn: idsToQuery)
+          .where('status', isEqualTo: 'completed')
+          .orderBy('createdAt', descending: true)
+          .snapshots()
+          .listen(
+            (snapshot) {
+              final projects = snapshot.docs
+                  .map((doc) {
+                    try {
+                      return ProjectModel.fromFirestore(doc);
+                    } catch (e) {
+                      _logger.w('⚠️ ProjectService: Error parsing completed project ${doc.id}: $e');
+                      return null;
+                    }
+                  })
+                  .where((project) => project != null)
+                  .cast<ProjectModel>()
+                  .toList();
+              
+              controller.add(projects);
+            },
+            onError: (error) {
+              _logger.e('❌ ProjectService: Error in client completed projects stream: $error');
+              controller.add(<ProjectModel>[]);
+            },
+          );
+      
+      _subscriptions['client_completed_projects'] = subscription;
+    } catch (e) {
+      _logger.e('❌ ProjectService: Failed to create client completed projects subscription: $e');
+      controller.add(<ProjectModel>[]);
+    }
+  }
+
+ /* // Stream all client projects
   Stream<List<Map<String, dynamic>>> streamClientProjects(List<String> grantedProjectIds) {
     if (grantedProjectIds.isEmpty) {
       return Stream.value([]);
@@ -581,6 +884,6 @@ class ProjectService {
               data['id'] = doc.id;
               return data;
             }).toList());
-  }
+  }*/
 
 }
