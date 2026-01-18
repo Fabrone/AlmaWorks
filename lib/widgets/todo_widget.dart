@@ -1,6 +1,6 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/schedule_monitor_model.dart';
-import 'package:almaworks/screens/schedule/schedule_screen.dart';
+// import 'package:almaworks/screens/schedule/schedule_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -11,13 +11,15 @@ class TodoWidget extends StatefulWidget {
   final ProjectModel? project;
   final Logger? logger;
   final bool showAllProjects;
+  final List<String> projectIds; // Client's granted project IDs
 
   const TodoWidget({
     super.key,
     this.projectId,
     this.project,
     this.logger,
-    this.showAllProjects = false, required List<String> projectIds,
+    this.showAllProjects = false,
+    required this.projectIds, // Now properly required
   });
 
   @override
@@ -48,27 +50,11 @@ class _TodoWidgetState extends State<TodoWidget> {
   List<ScheduleMonitorData> _otherUpcomingTasks = [];
 
   Stream<List<ScheduleMonitorData>> _getTasksStream() {
-    if (widget.showAllProjects) {
-      // Show tasks from all projects
-      return _firestore.collection('ScheduleMonitor').snapshots().map((snapshot) {
-        List<ScheduleMonitorData> tasks = [];
-
-        for (var doc in snapshot.docs) {
-          final data = doc.data();
-          try {
-            final task = ScheduleMonitorData.fromFirestore(doc.id, data);
-            // No null check needed - ScheduleMonitorData ensures non-null dates
-            tasks.add(task);
-          } catch (e) {
-            // Skip malformed documents
-            continue;
-          }
-        }
-
-        return tasks;
-      });
-    } else if (widget.projectId != null && widget.projectId!.isNotEmpty) {
-      // Show tasks for specific project
+    widget.logger?.d('📡 TodoWidget: Getting tasks stream, showAllProjects: ${widget.showAllProjects}, projectId: ${widget.projectId}, projectIds count: ${widget.projectIds.length}');
+    
+    // Case 1: Specific project view (single project selected)
+    if (widget.projectId != null && widget.projectId!.isNotEmpty) {
+      widget.logger?.d('📡 TodoWidget: Fetching tasks for projectId: ${widget.projectId}');
       return _firestore
           .collection('ScheduleMonitor')
           .where('projectId', isEqualTo: widget.projectId)
@@ -80,20 +66,101 @@ class _TodoWidgetState extends State<TodoWidget> {
           final data = doc.data();
           try {
             final task = ScheduleMonitorData.fromFirestore(doc.id, data);
-            // No null check needed - ScheduleMonitorData ensures non-null dates
             tasks.add(task);
           } catch (e) {
-            // Skip malformed documents
             continue;
           }
         }
 
+        widget.logger?.i('📊 TodoWidget: Total tasks for project: ${tasks.length}');
         return tasks;
       });
-    } else {
-      // No project selected and not showing all projects
-      return Stream.value([]);
     }
+    
+    // Case 2: Dashboard view with filtering (clients with granted projects OR admins with all)
+    if (widget.showAllProjects) {
+      // If projectIds is NOT empty, filter by those IDs (client view)
+      if (widget.projectIds.isNotEmpty) {
+        widget.logger?.d('📡 TodoWidget: Fetching tasks for filtered projects: ${widget.projectIds.length} projects');
+        
+        // Firestore limitation: whereIn supports max 10 items
+        if (widget.projectIds.length <= 10) {
+          return _firestore
+              .collection('ScheduleMonitor')
+              .where('projectId', whereIn: widget.projectIds)
+              .snapshots()
+              .map((snapshot) {
+            widget.logger?.d('📦 TodoWidget: Received ${snapshot.docs.length} documents from filtered projects');
+            List<ScheduleMonitorData> tasks = [];
+
+            for (var doc in snapshot.docs) {
+              final data = doc.data();
+              try {
+                final task = ScheduleMonitorData.fromFirestore(doc.id, data);
+                tasks.add(task);
+              } catch (e) {
+                widget.logger?.e('❌ TodoWidget: Error parsing task: $e');
+                continue;
+              }
+            }
+
+            widget.logger?.i('📊 TodoWidget: Total valid tasks from filtered projects: ${tasks.length}');
+            return tasks;
+          });
+        } else {
+          // For more than 10 projects, fetch all and filter in memory
+          widget.logger?.w('⚠️ TodoWidget: Filtering ${widget.projectIds.length} projects in memory');
+          return _firestore
+              .collection('ScheduleMonitor')
+              .snapshots()
+              .map((snapshot) {
+            List<ScheduleMonitorData> tasks = [];
+
+            for (var doc in snapshot.docs) {
+              final data = doc.data();
+              try {
+                final task = ScheduleMonitorData.fromFirestore(doc.id, data);
+                
+                // Filter by granted project IDs
+                if (widget.projectIds.contains(task.projectId)) {
+                  tasks.add(task);
+                }
+              } catch (e) {
+                continue;
+              }
+            }
+
+            widget.logger?.i('📊 TodoWidget: Filtered ${tasks.length} tasks');
+            return tasks;
+          });
+        }
+      }
+      
+      // If projectIds IS empty, show all projects (admin view)
+      else {
+        widget.logger?.d('📡 TodoWidget: Fetching all projects tasks');
+        return _firestore.collection('ScheduleMonitor').snapshots().map((snapshot) {
+          List<ScheduleMonitorData> tasks = [];
+
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            try {
+              final task = ScheduleMonitorData.fromFirestore(doc.id, data);
+              tasks.add(task);
+            } catch (e) {
+              continue;
+            }
+          }
+
+          widget.logger?.i('📊 TodoWidget: Total tasks from all projects: ${tasks.length}');
+          return tasks;
+        });
+      }
+    }
+    
+    // Case 3: No project selected
+    widget.logger?.w('⚠️ TodoWidget: No valid configuration, returning empty stream');
+    return Stream.value([]);
   }
 
   void _categorizeTasks(List<ScheduleMonitorData> tasks) {
@@ -180,10 +247,8 @@ class _TodoWidgetState extends State<TodoWidget> {
     final screenWidth = MediaQuery.of(context).size.width;
     final isMobile = screenWidth < 600;
 
-    if (!widget.showAllProjects &&
-        (widget.projectId == null || widget.projectId!.isEmpty)) {
-      return _buildNoProjectState(isMobile);
-    }
+    // Remove the check that shows "no project selected" for dashboard view
+    // The widget should always try to load data when showAllProjects is true
 
     return StreamBuilder<List<ScheduleMonitorData>>(
       stream: _getTasksStream(),
@@ -234,7 +299,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            widget.showAllProjects ? 'Tasks Overview' : 'Project Tasks',
+            'Tasks Overview', // Always use "Tasks Overview" for unified interface
             style: TextStyle(
               fontSize: isMobile ? 16 : 18,
               fontWeight: FontWeight.bold,
@@ -544,7 +609,7 @@ class _TodoWidgetState extends State<TodoWidget> {
     );
   }
 
-  Widget _buildNoProjectState(bool isMobile) {
+  /*Widget _buildNoProjectState(bool isMobile) {
     return Card(
       elevation: 2,
       child: Container(
@@ -571,99 +636,43 @@ class _TodoWidgetState extends State<TodoWidget> {
         ),
       ),
     );
-  }
+  }*/
 
   Widget _buildEmptyState(bool isMobile) {
-    if (widget.showAllProjects) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.check_circle,
-              size: isMobile ? 40 : 48,
-              color: Colors.grey[400],
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.check_circle,
+            size: isMobile ? 40 : 48,
+            color: Colors.grey[400],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'No active tasks',
+            style: TextStyle(
+              color: Colors.grey[600],
+              fontSize: isMobile ? 12 : 14,
+              fontWeight: FontWeight.w500,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'No active tasks',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: isMobile ? 12 : 14,
-                fontWeight: FontWeight.w500,
-              ),
-              textAlign: TextAlign.center,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'All tasks are on track or completed!',
+            style: TextStyle(
+              color: Colors.grey[500],
+              fontSize: isMobile ? 10 : 12,
             ),
-            const SizedBox(height: 4),
-            Text(
-              'All tasks are on track or completed!',
-              style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: isMobile ? 10 : 12,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    } else {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.calendar_today,
-              size: isMobile ? 40 : 48,
-              color: Colors.grey[400],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'No active tasks',
-              style: TextStyle(
-                color: Colors.grey[700],
-                fontSize: isMobile ? 13 : 15,
-                fontWeight: FontWeight.w600,
-              ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Text(
-                'Add tasks from the Gantt Chart to track your project',
-                style: TextStyle(
-                  color: Colors.grey[500],
-                  fontSize: isMobile ? 11 : 12,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: () {
-                _navigateToGanttChart();
-              },
-              icon: Icon(Icons.timeline, size: isMobile ? 16 : 18),
-              label: Text(
-                'Go to Gantt Chart',
-                style: TextStyle(fontSize: isMobile ? 12 : 13),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF0A2E5A),
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(
-                  horizontal: isMobile ? 12 : 16,
-                  vertical: isMobile ? 8 : 10,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
   }
 
-  void _navigateToGanttChart() {
+  /*void _navigateToGanttChart() {
     if (widget.project == null) {
       return;
     }
@@ -676,7 +685,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         ),
       ),
     );
-  }
+  }*/
 
   Widget _buildTodoItem(ScheduleMonitorData task, bool isMobile, bool showAllProjects) {
     final statusColor = _getStatusColor(task.status);

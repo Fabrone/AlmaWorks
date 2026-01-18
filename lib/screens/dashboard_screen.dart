@@ -45,7 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _logger = widget.logger;
     _projectService = ProjectService();
     _requestService = ClientRequestService();
-    _logger.i('🏗️ DashboardScreen: Initialized with logger and project service');
+    _logger.i('🗂️ DashboardScreen: Initialized with logger and project service');
     _fetchUserRoleAndAccess();
   }
 
@@ -81,7 +81,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _isLoadingRole = false;
         });
         
-        _logger.i('✅ DashboardScreen: User role fetched: $role');
+        _logger.i('✅ DashboardScreen: User role fetched: $role, Granted Projects: ${grantedIds.length}');
       } else {
         _logger.w('⚠️ DashboardScreen: User document not found');
         setState(() {
@@ -169,7 +169,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildMainDashboard() {
     return ChangeNotifierProvider(
       create: (context) {
-        _logger.d('🏗️ DashboardScreen: Creating SelectedProjectProvider');
+        _logger.d('🗂️ DashboardScreen: Creating SelectedProjectProvider');
         return SelectedProjectProvider();
       },
       child: Consumer<SelectedProjectProvider>(
@@ -941,7 +941,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
     final isTablet = screenWidth >= 600 && screenWidth < 1200;
     final isDesktop = screenWidth >= 1200;
 
-    widget.logger.d('🏗️ UnifiedDashboard: Building dashboard, isClient: $_isClient');
+    widget.logger.d('🗂️ UnifiedDashboard: Building dashboard, isClient: $_isClient, grantedProjects: ${widget.grantedProjectIds.length}');
 
     return SingleChildScrollView(
       child: Column(
@@ -1068,25 +1068,29 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     const double widgetHeight = 400.0;
 
-    widget.logger.d('🗳️ Dashboard: Building content section');
+    widget.logger.d('🗳️ Dashboard: Building content section, isClient: $_isClient, projectIds: ${widget.grantedProjectIds}');
 
+    // CRITICAL FIX: Always set showAllProjects to true for unified interface
+    // Filtering is handled by passing projectIds:
+    // - For clients: Pass their granted project IDs
+    // - For admins: Pass empty list (widgets treat this as "show all")
     final widgets = [
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
         child: TodoWidget(
-          showAllProjects: !_isClient,
+          showAllProjects: true, // Always true for unified interface
           logger: widget.logger,
-          projectIds: _isClient ? widget.grantedProjectIds : [],
+          projectIds: _isClient ? widget.grantedProjectIds : [], // Filter by IDs
         ),
       ),
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
         child: ActivityFeed(
-          showAllProjects: !_isClient,
+          showAllProjects: true, // Always true for unified interface
           logger: widget.logger,
-          projectIds: _isClient ? widget.grantedProjectIds : [],
+          projectIds: _isClient ? widget.grantedProjectIds : [], // Filter by IDs
         ),
       ),
       SizedBox(

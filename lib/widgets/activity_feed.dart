@@ -10,13 +10,15 @@ class ActivityFeed extends StatefulWidget {
   final ProjectModel? project;
   final Logger? logger;
   final bool showAllProjects;
+  final List<String> projectIds; // Client's granted project IDs
 
   const ActivityFeed({
     super.key,
     this.projectId,
     this.project,
     this.logger,
-    this.showAllProjects = false, required List<String> projectIds,
+    this.showAllProjects = false,
+    required this.projectIds, // Now properly required
   });
 
   @override
@@ -34,36 +36,10 @@ class _ActivityFeedState extends State<ActivityFeed> {
   List<GanttRowData> _otherUpcomingActivities = [];
 
   Stream<List<GanttRowData>> _getTasksStream() {
-    widget.logger?.d('📡 ActivityFeed: Getting tasks stream, showAllProjects: ${widget.showAllProjects}, projectId: ${widget.projectId}');
+    widget.logger?.d('📡 ActivityFeed: Getting tasks stream, showAllProjects: ${widget.showAllProjects}, projectId: ${widget.projectId}, projectIds count: ${widget.projectIds.length}');
     
-    if (widget.showAllProjects) {
-      widget.logger?.d('📡 ActivityFeed: Fetching all projects tasks');
-      return _firestore.collection('Schedule').snapshots().map((snapshot) {
-        widget.logger?.d('📦 ActivityFeed: Received ${snapshot.docs.length} documents from all projects');
-        List<GanttRowData> tasks = [];
-        
-        for (var doc in snapshot.docs) {
-          final data = doc.data();
-          try {
-            final task = GanttRowData.fromFirebaseMap(doc.id, data);
-            widget.logger?.d('✅ ActivityFeed: Parsed task: ${task.taskName}, status: ${task.status}, hasData: ${task.hasData}');
-            
-            if (task.hasData && task.startDate != null && task.endDate != null) {
-              tasks.add(task);
-              widget.logger?.d('✅ ActivityFeed: Added task to list: ${task.taskName}');
-            } else {
-              widget.logger?.w('⚠️ ActivityFeed: Skipped task due to missing data - hasData: ${task.hasData}, startDate: ${task.startDate}, endDate: ${task.endDate}');
-            }
-          } catch (e) {
-            widget.logger?.e('❌ ActivityFeed: Error parsing task: $e');
-            continue;
-          }
-        }
-        
-        widget.logger?.i('📊 ActivityFeed: Total valid tasks from all projects: ${tasks.length}');
-        return tasks;
-      });
-    } else if (widget.projectId != null && widget.projectId!.isNotEmpty) {
+    // Case 1: Specific project view (single project selected)
+    if (widget.projectId != null && widget.projectId!.isNotEmpty) {
       widget.logger?.d('📡 ActivityFeed: Fetching tasks for projectId: ${widget.projectId}');
       return _firestore
           .collection('Schedule')
@@ -81,9 +57,6 @@ class _ActivityFeedState extends State<ActivityFeed> {
             
             if (task.hasData && task.startDate != null && task.endDate != null) {
               tasks.add(task);
-              widget.logger?.d('✅ ActivityFeed: Added project task to list: ${task.taskName}');
-            } else {
-              widget.logger?.w('⚠️ ActivityFeed: Skipped project task due to missing data');
             }
           } catch (e) {
             widget.logger?.e('❌ ActivityFeed: Error parsing project task: $e');
@@ -94,10 +67,104 @@ class _ActivityFeedState extends State<ActivityFeed> {
         widget.logger?.i('📊 ActivityFeed: Total valid tasks for project: ${tasks.length}');
         return tasks;
       });
-    } else {
-      widget.logger?.w('⚠️ ActivityFeed: No project selected, returning empty stream');
-      return Stream.value([]);
     }
+    
+    // Case 2: Dashboard view with filtering (clients with granted projects OR admins with all)
+    if (widget.showAllProjects) {
+      // If projectIds is NOT empty, filter by those IDs (client view)
+      if (widget.projectIds.isNotEmpty) {
+        widget.logger?.d('📡 ActivityFeed: Fetching tasks for filtered projects: ${widget.projectIds.length} projects');
+        
+        // Firestore limitation: whereIn supports max 10 items
+        if (widget.projectIds.length <= 10) {
+          return _firestore
+              .collection('Schedule')
+              .where('projectId', whereIn: widget.projectIds)
+              .snapshots()
+              .map((snapshot) {
+            widget.logger?.d('📦 ActivityFeed: Received ${snapshot.docs.length} documents from filtered projects');
+            List<GanttRowData> tasks = [];
+            
+            for (var doc in snapshot.docs) {
+              final data = doc.data();
+              try {
+                final task = GanttRowData.fromFirebaseMap(doc.id, data);
+                
+                if (task.hasData && task.startDate != null && task.endDate != null) {
+                  tasks.add(task);
+                }
+              } catch (e) {
+                widget.logger?.e('❌ ActivityFeed: Error parsing task: $e');
+                continue;
+              }
+            }
+            
+            widget.logger?.i('📊 ActivityFeed: Total valid tasks from filtered projects: ${tasks.length}');
+            return tasks;
+          });
+        } else {
+          // For more than 10 projects, fetch all and filter in memory
+          widget.logger?.w('⚠️ ActivityFeed: Filtering ${widget.projectIds.length} projects in memory');
+          return _firestore
+              .collection('Schedule')
+              .snapshots()
+              .map((snapshot) {
+            List<GanttRowData> tasks = [];
+            
+            for (var doc in snapshot.docs) {
+              final data = doc.data();
+              try {
+                final task = GanttRowData.fromFirebaseMap(doc.id, data);
+                
+                // Filter by granted project IDs
+                if (task.projectId != null && 
+                    widget.projectIds.contains(task.projectId) &&
+                    task.hasData && 
+                    task.startDate != null && 
+                    task.endDate != null) {
+                  tasks.add(task);
+                }
+              } catch (e) {
+                continue;
+              }
+            }
+            
+            widget.logger?.i('📊 ActivityFeed: Filtered ${tasks.length} tasks');
+            return tasks;
+          });
+        }
+      }
+      
+      // If projectIds IS empty, show all projects (admin view)
+      else {
+        widget.logger?.d('📡 ActivityFeed: Fetching all projects tasks');
+        return _firestore.collection('Schedule').snapshots().map((snapshot) {
+          widget.logger?.d('📦 ActivityFeed: Received ${snapshot.docs.length} documents from all projects');
+          List<GanttRowData> tasks = [];
+          
+          for (var doc in snapshot.docs) {
+            final data = doc.data();
+            try {
+              final task = GanttRowData.fromFirebaseMap(doc.id, data);
+              
+              if (task.hasData && task.startDate != null && task.endDate != null) {
+                tasks.add(task);
+              }
+            } catch (e) {
+              widget.logger?.e('❌ ActivityFeed: Error parsing task: $e');
+              continue;
+            }
+          }
+          
+          widget.logger?.i('📊 ActivityFeed: Total valid tasks from all projects: ${tasks.length}');
+          return tasks;
+        });
+      }
+    }
+    
+    // Case 3: No project selected
+    widget.logger?.w('⚠️ ActivityFeed: No valid configuration, returning empty stream');
+    return Stream.value([]);
   }
 
   void _categorizeActivities(List<GanttRowData> tasks) {
@@ -281,12 +348,9 @@ class _ActivityFeedState extends State<ActivityFeed> {
 
     widget.logger?.d('🎨 ActivityFeed: Building widget, isMobile: $isMobile');
 
-    if (!widget.showAllProjects &&
-        (widget.projectId == null || widget.projectId!.isEmpty)) {
-      widget.logger?.w('⚠️ ActivityFeed: No project selected, showing no project state');
-      return _buildNoProjectState(isMobile);
-    }
-
+    // Remove the check that shows "no project selected" for dashboard view
+    // The widget should always try to load data when showAllProjects is true
+    
     return StreamBuilder<List<GanttRowData>>(
       stream: _getTasksStream(),
       builder: (context, snapshot) {
@@ -340,7 +404,7 @@ class _ActivityFeedState extends State<ActivityFeed> {
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            widget.showAllProjects ? 'Recent Activity' : 'Project Activity',
+            'Recent Activity', // Always use "Recent Activity" for unified interface
             style: TextStyle(
               fontSize: isMobile ? 16 : 18,
               fontWeight: FontWeight.bold,
@@ -827,7 +891,7 @@ class _ActivityFeedState extends State<ActivityFeed> {
     );
   }
 
-  Widget _buildNoProjectState(bool isMobile) {
+  /*Widget _buildNoProjectState(bool isMobile) {
     return Card(
       elevation: 2,
       child: Container(
@@ -854,7 +918,7 @@ class _ActivityFeedState extends State<ActivityFeed> {
         ),
       ),
     );
-  }
+  }*/
 
   Widget _buildEmptyState(bool isMobile) {
     return Center(
@@ -868,9 +932,7 @@ class _ActivityFeedState extends State<ActivityFeed> {
           ),
           const SizedBox(height: 8),
           Text(
-            widget.showAllProjects 
-                ? 'No activities yet'
-                : 'No project activities',
+            'No activities yet',
             style: TextStyle(
               color: Colors.grey[600],
               fontSize: isMobile ? 12 : 14,
@@ -882,9 +944,7 @@ class _ActivityFeedState extends State<ActivityFeed> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
-              widget.showAllProjects
-                  ? 'Start working on tasks or schedule upcoming work'
-                  : 'Add and manage tasks to track activity',
+              'Start working on tasks or schedule upcoming work',
               style: TextStyle(
                 color: Colors.grey[500],
                 fontSize: isMobile ? 10 : 12,
