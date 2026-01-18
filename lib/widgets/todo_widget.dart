@@ -1,6 +1,6 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/schedule_monitor_model.dart';
-// import 'package:almaworks/screens/schedule/schedule_screen.dart';
+import 'package:almaworks/screens/schedule/schedule_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
@@ -609,42 +609,18 @@ class _TodoWidgetState extends State<TodoWidget> {
     );
   }
 
-  /*Widget _buildNoProjectState(bool isMobile) {
-    return Card(
-      elevation: 2,
-      child: Container(
-        width: double.infinity,
-        height: double.infinity,
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(isMobile),
-            const SizedBox(height: 12),
-            Expanded(
-              child: Center(
-                child: Text(
-                  'Select a project to view tasks',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: isMobile ? 12 : 14,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }*/
-
   Widget _buildEmptyState(bool isMobile) {
+    // Check if we're viewing a specific project (not dashboard)
+    final bool isSpecificProjectView = widget.project != null && 
+                                      widget.projectId != null && 
+                                      widget.projectId!.isNotEmpty;
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.check_circle,
+            isSpecificProjectView ? Icons.calendar_today : Icons.check_circle,
             size: isMobile ? 40 : 48,
             color: Colors.grey[400],
           ),
@@ -659,24 +635,54 @@ class _TodoWidgetState extends State<TodoWidget> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 4),
-          Text(
-            'All tasks are on track or completed!',
-            style: TextStyle(
-              color: Colors.grey[500],
-              fontSize: isMobile ? 10 : 12,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              isSpecificProjectView
+                  ? 'Add tasks from the Gantt Chart to track your project'
+                  : 'All tasks are on track or completed!',
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: isMobile ? 10 : 12,
+              ),
+              textAlign: TextAlign.center,
             ),
-            textAlign: TextAlign.center,
           ),
+          // Show "Go to Gantt Chart" button only for specific project view
+          if (isSpecificProjectView) ...[
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              onPressed: () {
+                _navigateToGanttChart();
+              },
+              icon: Icon(Icons.timeline, size: isMobile ? 16 : 18),
+              label: Text(
+                'Go to Gantt Chart',
+                style: TextStyle(fontSize: isMobile ? 12 : 13),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A2E5A),
+                foregroundColor: Colors.white,
+                padding: EdgeInsets.symmetric(
+                  horizontal: isMobile ? 12 : 16,
+                  vertical: isMobile ? 8 : 10,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  /*void _navigateToGanttChart() {
+  void _navigateToGanttChart() {
     if (widget.project == null) {
+      widget.logger?.w('⚠️ TodoWidget: Cannot navigate to Gantt Chart - no project provided');
       return;
     }
 
+    widget.logger?.i('🧭 TodoWidget: Navigating to Gantt Chart for project: ${widget.project!.name}');
+    
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => ScheduleScreen(
@@ -685,7 +691,7 @@ class _TodoWidgetState extends State<TodoWidget> {
         ),
       ),
     );
-  }*/
+  }
 
   Widget _buildTodoItem(ScheduleMonitorData task, bool isMobile, bool showAllProjects) {
     final statusColor = _getStatusColor(task.status);
