@@ -2,6 +2,7 @@ import 'package:almaworks/models/project_model.dart';
 //import 'package:almaworks/models/financial_document_model.dart';
 import 'package:almaworks/screens/projects/edit_project_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -41,6 +42,8 @@ class _FinancialScreenState extends State<FinancialScreen> with TickerProviderSt
   late ProjectModel _currentProject;
   String? _selectedSubcontractor;
   String? _selectedSupplier;
+  String? _userRole;
+  bool _isLoadingUserData = true;
 
   final List<String> _mainTabs = ['Client', 'Subcontractor', 'Supplier'];
 
@@ -48,8 +51,14 @@ class _FinancialScreenState extends State<FinancialScreen> with TickerProviderSt
   void initState() {
     super.initState();
     _currentProject = widget.project;
+    
+    // Initialize tab controller immediately with default values
     _mainTabController = TabController(length: _mainTabs.length, vsync: this);
+    
     widget.logger.i('💰 FinancialScreen: Initialized for project: ${_currentProject.name}');
+    
+    // Fetch user role asynchronously
+    _fetchUserRole();
   }
 
   @override
@@ -83,6 +92,23 @@ class _FinancialScreenState extends State<FinancialScreen> with TickerProviderSt
   Widget build(BuildContext context) {
     widget.logger.d('🎨 FinancialScreen: Building UI');
 
+    // Show loading indicator while fetching user data
+    if (_isLoadingUserData) {
+      return BaseLayout(
+        title: '${_currentProject.name} - Financials',
+        project: _currentProject,
+        logger: widget.logger,
+        selectedMenuItem: 'Financials',
+        onMenuItemSelected: (_) {},
+        child: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    // Determine if user is a client
+    final bool isClient = _userRole == 'Client';
+
     return BaseLayout(
       title: '${_currentProject.name} - Financials',
       project: _currentProject,
@@ -107,23 +133,27 @@ class _FinancialScreenState extends State<FinancialScreen> with TickerProviderSt
                 children: [
                   Column(
                     children: [
-                      TabBar(
-                        controller: _mainTabController,
-                        tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
-                        labelColor: const Color(0xFF0A2E5A),
-                        unselectedLabelColor: Colors.grey,
-                        labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                      ),
-                      SizedBox(
-                        height: constraints.maxHeight - 48 - 48,
-                        child: TabBarView(
+                      // Show TabBar only for Admin/MainAdmin users
+                      if (!isClient)
+                        TabBar(
                           controller: _mainTabController,
-                          children: [
-                            _buildFinancialList('Client', memberName: null),
-                            _buildSubcontractorContent(),
-                            _buildSupplierContent(),
-                          ],
+                          tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
+                          labelColor: const Color(0xFF0A2E5A),
+                          unselectedLabelColor: Colors.grey,
+                          labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                         ),
+                      SizedBox(
+                        height: constraints.maxHeight - (isClient ? 0 : 48) - 48,
+                        child: isClient
+                            ? _buildFinancialList('Client', memberName: null)
+                            : TabBarView(
+                                controller: _mainTabController,
+                                children: [
+                                  _buildFinancialList('Client', memberName: null),
+                                  _buildSubcontractorContent(),
+                                  _buildSupplierContent(),
+                                ],
+                              ),
                       ),
                     ],
                   ),
@@ -416,33 +446,95 @@ Widget _buildFinancialList(String role, {String? memberName}) {
     );
   }
 
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        widget.logger.e('❌ FinancialScreen: No authenticated user found');
+        setState(() {
+          _userRole = 'Client';
+          _isLoadingUserData = false;
+        });
+        return;
+      }
+
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('Users')
+          .where('uid', isEqualTo: user.uid)
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        final userData = querySnapshot.docs.first.data();
+        final role = userData['role'] as String? ?? 'Client';
+        
+        if (mounted) {
+          setState(() {
+            _userRole = role;
+            _isLoadingUserData = false;
+          });
+        }
+        
+        widget.logger.i('✅ FinancialScreen: User role fetched: $role');
+      } else {
+        widget.logger.w('⚠️ FinancialScreen: User document not found');
+        if (mounted) {
+          setState(() {
+            _userRole = 'Client';
+            _isLoadingUserData = false;
+          });
+        }
+      }
+    } catch (e) {
+      widget.logger.e('❌ FinancialScreen: Error fetching user role: $e');
+      if (mounted) {
+        setState(() {
+          _userRole = 'Client';
+          _isLoadingUserData = false;
+        });
+      }
+    }
+  }
+
   Future<void> _addFinancialDocument() async {
-    final roleIndex = _mainTabController.index;
-    final role = _mainTabs[roleIndex];
+    // Determine if user is a client
+    final bool isClient = _userRole == 'Client';
+    
+    String role;
     String? teamMemberName;
 
-    if (role == 'Client') {
+    if (isClient) {
+      // Clients can only upload to Client tab
+      role = 'Client';
       teamMemberName = null;
-    } else if (role == 'Subcontractor') {
-      if (_selectedSubcontractor == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please select a subcontractor first')),
-          );
+    } else {
+      // Admins can upload to any tab
+      final roleIndex = _mainTabController.index;
+      role = _mainTabs[roleIndex];
+
+      if (role == 'Client') {
+        teamMemberName = null;
+      } else if (role == 'Subcontractor') {
+        if (_selectedSubcontractor == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Please select a subcontractor first')),
+            );
+          }
+          return;
         }
-        return;
-      }
-      teamMemberName = _selectedSubcontractor;
-    } else { // Supplier
-      if (_selectedSupplier == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please select a supplier first')),
-          );
+        teamMemberName = _selectedSubcontractor;
+      } else { // Supplier
+        if (_selectedSupplier == null) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Please select a supplier first')),
+            );
+          }
+          return;
         }
-        return;
+        teamMemberName = _selectedSupplier;
       }
-      teamMemberName = _selectedSupplier;
     }
 
     widget.logger.i('📤 FinancialScreen: Initiating add document to $role${teamMemberName != null ? ' - $teamMemberName' : ''}');
