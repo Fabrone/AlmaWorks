@@ -693,15 +693,19 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
   }
 
   String _formatDate(dynamic date) {
-    DateTime dateTime;
-    if (date is Timestamp) {
-      dateTime = date.toDate();
-    } else if (date is DateTime) {
-      dateTime = date;
-    } else {
-      return '';
+    try {
+      DateTime dateTime;
+      if (date is Timestamp) {
+        dateTime = date.toDate();
+      } else if (date is DateTime) {
+        dateTime = date;
+      } else {
+        return 'Just now';
+      }
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+    } catch (e) {
+      return 'Just now';
     }
-    return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
   }
 
   String _getViewerUrl(String url, String type) {

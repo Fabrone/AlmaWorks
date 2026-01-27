@@ -21,13 +21,29 @@ class ScheduleDocument {
   });
 
   factory ScheduleDocument.fromFirestore(Map<String, dynamic> data, String id) {
+    // Handle the case where uploadedAt might be null (during initial write with serverTimestamp)
+    DateTime uploadedAtDate;
+    try {
+      final uploadedAtField = data['uploadedAt'];
+      if (uploadedAtField == null) {
+        // If null, use current time as fallback
+        uploadedAtDate = DateTime.now();
+      } else if (uploadedAtField is Timestamp) {
+        uploadedAtDate = uploadedAtField.toDate();
+      } else {
+        uploadedAtDate = DateTime.now();
+      }
+    } catch (e) {
+      uploadedAtDate = DateTime.now();
+    }
+
     return ScheduleDocument(
       id: id,
       title: data['title'] ?? '',
       fileName: data['fileName'] ?? '',
       url: data['url'] ?? '',
       fileExtension: data['fileExtension'] ?? '',
-      uploadedAt: (data['uploadedAt'] as Timestamp).toDate(),
+      uploadedAt: uploadedAtDate,
     );
   }
 
