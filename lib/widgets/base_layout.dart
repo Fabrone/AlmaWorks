@@ -346,18 +346,20 @@ class _BaseLayoutState extends State<BaseLayout> {
                   logger: widget.logger,
                 ),
               ),
-              _buildProtectedMenuItem(
-                context: context,
-                icon: Icons.insert_chart,
-                title: 'Reports',
-                selectedItem: 'Reports',
-                isMobile: isMobile,
-                isClient: isClient,
-                onNavigate: () => ReportsScreen(
-                  project: widget.project!,
-                  logger: widget.logger,
+              // Only show Reports for Admin and MainAdmin users
+              if (!isClient)
+                _buildProtectedMenuItem(
+                  context: context,
+                  icon: Icons.insert_chart,
+                  title: 'Reports',
+                  selectedItem: 'Reports',
+                  isMobile: isMobile,
+                  isClient: isClient,
+                  onNavigate: () => ReportsScreen(
+                    project: widget.project!,
+                    logger: widget.logger,
+                  ),
                 ),
-              ),
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.photo_library,
