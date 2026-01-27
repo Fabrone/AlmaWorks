@@ -88,7 +88,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                   Icon(Icons.calendar_today, size: 64, color: Colors.grey[400]),
                   const SizedBox(height: 16),
                   Text(
-                    'No general schedule documents uploaded yet',
+                    'No schedule uploaded yet',
                     style: GoogleFonts.poppins(
                       fontSize: 18,
                       color: Colors.grey[600],
@@ -97,7 +97,7 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Tap the upload button to add schedule documents',
+                    'Tap the upload button to add into schedule',
                     style: GoogleFonts.poppins(
                       fontSize: 14,
                       color: Colors.grey[500],
