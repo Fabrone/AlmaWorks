@@ -157,5 +157,10 @@ service cloud.firestore {
     match /Drawings/{drawingId} {
       allow read, write: if true;
     }
+    
+    // Rules for GeneralSchedules collection (NEW)
+    match /GeneralSchedules/{scheduleId} {
+      allow read, write: if true;
+    }
   }
 }
