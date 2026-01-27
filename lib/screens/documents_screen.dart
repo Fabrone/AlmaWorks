@@ -223,7 +223,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
       padding: EdgeInsets.all(isMobile ? 12 : 16),
       color: const Color(0xFF0A2E5A),
       child: Text(
-        '© 2025 JV Alma C.I.S Site Management System',
+        '© 2026 JV Alma C.I.S Site Management System',
         style: TextStyle(
           color: Colors.white,
           fontSize: isMobile ? 12 : 14,

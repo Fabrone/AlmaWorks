@@ -1070,10 +1070,6 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
 
     widget.logger.d('🗳️ Dashboard: Building content section, isClient: $_isClient, projectIds: ${widget.grantedProjectIds}');
 
-    // CRITICAL FIX: Always set showAllProjects to true for unified interface
-    // Filtering is handled by passing projectIds:
-    // - For clients: Pass their granted project IDs
-    // - For admins: Pass empty list (widgets treat this as "show all")
     final widgets = [
       SizedBox(
         width: availableWidth,
@@ -1196,7 +1192,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
       padding: EdgeInsets.all(isMobile ? 12 : 16),
       color: const Color(0xFF0A2E5A),
       child: Text(
-        '© 2025 JV Alma C.I.S Site Management System',
+        '© 2026 JV Alma C.I.S Site Management System',
         style: TextStyle(
           color: Colors.white,
           fontSize: isMobile ? 12 : 14,
