@@ -1,6 +1,7 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/screens/projects/edit_project_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -42,6 +43,8 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   late ProjectModel _currentProject;
   String? _selectedSubcontractor;
   String? _selectedSupplier;
+  String? _userRole;
+  bool _isLoadingUserData = true;
 
   final List<String> _mainTabs = ['Client', 'Sub-Contractor', 'Supplier'];
   final List<String> _subSections = ['Contract', 'Communication'];
@@ -50,11 +53,17 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   void initState() {
     super.initState();
     _currentProject = widget.project;
+    
+    // Initialize tab controllers immediately with default values
     _mainTabController = TabController(length: _mainTabs.length, vsync: this);
     _clientSubTabController = TabController(length: _subSections.length, vsync: this);
     _subContractorSubTabController = TabController(length: _subSections.length, vsync: this);
     _supplierSubTabController = TabController(length: _subSections.length, vsync: this);
+    
     widget.logger.i('📂 DocumentsScreen: Initialized for project: ${_currentProject.name}');
+    
+    // Fetch user role asynchronously
+    _fetchUserRole();
   }
 
   @override
@@ -91,33 +100,61 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
   Widget build(BuildContext context) {
     widget.logger.d('🎨 DocumentsScreen: Building UI');
 
+    // Show loading indicator while fetching user data
+    if (_isLoadingUserData) {
+      return BaseLayout(
+        title: '${_currentProject.name} - Documents',
+        project: _currentProject,
+        logger: widget.logger,
+        selectedMenuItem: 'Documents',
+        onMenuItemSelected: (_) {},
+        child: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    // Determine if user is a client
+    final bool isClient = _userRole == 'Client';
+    
     return BaseLayout(
       title: '${_currentProject.name} - Documents',
       project: _currentProject,
       logger: widget.logger,
       selectedMenuItem: 'Documents',
-      onMenuItemSelected: (_) {}, // Empty callback as navigation is handled by BaseLayout
+      onMenuItemSelected: (_) {},
       floatingActionButton: FloatingActionButton(
         onPressed: _isLoading ? null : () {
-          String role = _mainTabs[_mainTabController.index];
+          String role;
           TabController subController;
           String? memberName;
-          switch (role) {
-            case 'Client':
-              subController = _clientSubTabController;
-              memberName = null;
-              break;
-            case 'Sub-Contractor':
-              subController = _subContractorSubTabController;
-              memberName = _selectedSubcontractor;
-              break;
-            case 'Supplier':
-              subController = _supplierSubTabController;
-              memberName = _selectedSupplier;
-              break;
-            default:
-              return;
+          
+          if (isClient) {
+            // Client can only access Client tab
+            role = 'Client';
+            subController = _clientSubTabController;
+            memberName = null;
+          } else {
+            // Admin/MainAdmin can access all tabs
+            role = _mainTabs[_mainTabController.index];
+            switch (role) {
+              case 'Client':
+                subController = _clientSubTabController;
+                memberName = null;
+                break;
+              case 'Sub-Contractor':
+                subController = _subContractorSubTabController;
+                memberName = _selectedSubcontractor;
+                break;
+              case 'Supplier':
+                subController = _supplierSubTabController;
+                memberName = _selectedSupplier;
+                break;
+              default:
+                return;
+            }
           }
+          
           if ((role == 'Sub-Contractor' || role == 'Supplier') && memberName == null) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -145,23 +182,27 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
                 children: [
                   Column(
                     children: [
-                      TabBar(
-                        controller: _mainTabController,
-                        tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
-                        labelColor: const Color(0xFF0A2E5A),
-                        unselectedLabelColor: Colors.grey,
-                        labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-                      ),
-                      SizedBox(
-                        height: constraints.maxHeight - 48 - 48, // Subtract TabBar and footer height
-                        child: TabBarView(
+                      // Show TabBar only for Admin/MainAdmin users
+                      if (!isClient)
+                        TabBar(
                           controller: _mainTabController,
-                          children: [
-                            _buildRoleSection('Client', _clientSubTabController, memberName: null),
-                            _buildSubcontractorContent(),
-                            _buildSupplierContent(),
-                          ],
+                          tabs: _mainTabs.map((tab) => Tab(text: tab)).toList(),
+                          labelColor: const Color(0xFF0A2E5A),
+                          unselectedLabelColor: Colors.grey,
+                          labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                         ),
+                      SizedBox(
+                        height: constraints.maxHeight - (isClient ? 0 : 48) - 48,
+                        child: isClient
+                            ? _buildRoleSection('Client', _clientSubTabController, memberName: null)
+                            : TabBarView(
+                                controller: _mainTabController,
+                                children: [
+                                  _buildRoleSection('Client', _clientSubTabController, memberName: null),
+                                  _buildSubcontractorContent(),
+                                  _buildSupplierContent(),
+                                ],
+                              ),
                       ),
                     ],
                   ),
@@ -441,6 +482,56 @@ class _DocumentsScreenState extends State<DocumentsScreen> with TickerProviderSt
         );
       },
     );
+  }
+
+  Future<void> _fetchUserRole() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        widget.logger.e('❌ DocumentsScreen: No authenticated user found');
+        setState(() {
+          _userRole = 'Client';
+          _isLoadingUserData = false;
+        });
+        return;
+      }
+
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('Users')
+          .where('uid', isEqualTo: user.uid)
+          .limit(1)
+          .get();
+
+      if (querySnapshot.docs.isNotEmpty) {
+        final userData = querySnapshot.docs.first.data();
+        final role = userData['role'] as String? ?? 'Client';
+        
+        if (mounted) {
+          setState(() {
+            _userRole = role;
+            _isLoadingUserData = false;
+          });
+        }
+        
+        widget.logger.i('✅ DocumentsScreen: User role fetched: $role');
+      } else {
+        widget.logger.w('⚠️ DocumentsScreen: User document not found');
+        if (mounted) {
+          setState(() {
+            _userRole = 'Client';
+            _isLoadingUserData = false;
+          });
+        }
+      }
+    } catch (e) {
+      widget.logger.e('❌ DocumentsScreen: Error fetching user role: $e');
+      if (mounted) {
+        setState(() {
+          _userRole = 'Client';
+          _isLoadingUserData = false;
+        });
+      }
+    }
   }
 
   // Updated _addDocument method (fixed List<int> to Uint8List)
