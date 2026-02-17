@@ -3,6 +3,7 @@ import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/gestures.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
 import 'dart:io';
@@ -16,6 +17,45 @@ import 'package:intl/intl.dart';
 import 'package:photo_view/photo_view.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Selection state – ValueNotifier-based so toggling a photo never triggers a
+// full StreamBuilder / gallery rebuild.
+// ─────────────────────────────────────────────────────────────────────────────
+class _SelectionState extends ChangeNotifier {
+  bool _multiSelectMode = false;
+  final Set<String> _selected = {};
+
+  bool get multiSelectMode => _multiSelectMode;
+  Set<String> get selected => Set.unmodifiable(_selected);
+  int get count => _selected.length;
+  bool isSelected(String id) => _selected.contains(id);
+
+  void startMultiSelect(String photoId) {
+    _multiSelectMode = true;
+    _selected.add(photoId);
+    notifyListeners();
+  }
+
+  void toggle(String photoId) {
+    if (_selected.contains(photoId)) {
+      _selected.remove(photoId);
+      if (_selected.isEmpty) _multiSelectMode = false;
+    } else {
+      _selected.add(photoId);
+    }
+    notifyListeners();
+  }
+
+  void exitMultiSelect() {
+    _multiSelectMode = false;
+    _selected.clear();
+    notifyListeners();
+  }
+
+  List<String> snapshot() => List<String>.from(_selected);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 class PhotoGalleryScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
@@ -31,83 +71,180 @@ class PhotoGalleryScreen extends StatefulWidget {
 }
 
 class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
+  final _SelectionState _selection = _SelectionState();
+
   bool _isLoading = false;
-  double? _uploadProgress;
-  bool _multiSelectMode = false;
-  final Set<String> _selectedPhotoIds = {};
 
   @override
-  void initState() {
-    super.initState();
-    widget.logger.i('📸 PhotoGalleryScreen: Initialized for project: ${widget.project.name} [Project ID: ${widget.project.id}]');
-    widget.logger.d('🔧 Using Firebase Storage bucket: gs://almaworks-b9a2e.firebasestorage.app');
+  void dispose() {
+    _selection.dispose();
+    super.dispose();
+  }
+
+  // ── Snackbar helper ──────────────────────────────────────────────────────────
+  void _showSnackBar(
+    String message, {
+    Color backgroundColor = Colors.black87,
+    Duration duration = const Duration(seconds: 4),
+    SnackBarAction? action,
+  }) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.poppins(color: Colors.white)),
+        backgroundColor: backgroundColor,
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        action: action,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    widget.logger.d('🎨 PhotoGalleryScreen: Building UI for project: ${widget.project.name} [Multi-select: $_multiSelectMode, Selected: ${_selectedPhotoIds.length}]');
+    return ListenableBuilder(
+      listenable: _selection,
+      builder: (context, _) {
+        return BaseLayout(
+          title: '${widget.project.name} - Photo Gallery',
+          project: widget.project,
+          logger: widget.logger,
+          selectedMenuItem: 'Photo Gallery',
+          onMenuItemSelected: (_) {},
+          floatingActionButton: !_selection.multiSelectMode
+              ? FloatingActionButton(
+                  onPressed: _isLoading ? null : _startAddPhotoFlow,
+                  backgroundColor: const Color(0xFF0A2E5A),
+                  foregroundColor: Colors.white,
+                  child: const Icon(Icons.add_photo_alternate),
+                )
+              : null,
+          child: Column(
+            children: [
+              Expanded(
+                child: CustomScrollView(
+                  slivers: [
+                    if (_selection.multiSelectMode)
+                      SliverToBoxAdapter(child: _buildSelectionHeader()),
+                    _buildPhotoGallerySlivers(),
+                  ],
+                ),
+              ),
+              _buildFooter(context),
+              if (_selection.multiSelectMode) _buildMultiSelectActionBar(),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
-    return BaseLayout(
-      title: '${widget.project.name} - Photo Gallery',
-      project: widget.project,
-      logger: widget.logger,
-      selectedMenuItem: 'Photo Gallery',
-      onMenuItemSelected: (_) {},
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _startAddPhotoFlow,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-        child: const Icon(Icons.add_photo_alternate),
-      ),
-      child: Column(
+  // ── Selection header ─────────────────────────────────────────────────────────
+  Widget _buildSelectionHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF0A2E5A).withValues(alpha: 0.1),
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildPhotoGallery(),
-                ],
-              ),
+          Text(
+            '${_selection.count} selected',
+            style: GoogleFonts.poppins(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF0A2E5A),
             ),
           ),
-          _buildFooter(context),
-          if (_multiSelectMode)
-            BottomAppBar(
-              color: const Color(0xFF0A2E5A),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.share, color: Colors.white),
-                    onPressed: _handleMultiShare,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.white),
-                    onPressed: _handleMultiDelete,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.cancel, color: Colors.white),
-                    onPressed: () {
-                      widget.logger.i('🔄 Exiting multi-select mode');
-                      setState(() {
-                        _multiSelectMode = false;
-                        _selectedPhotoIds.clear();
-                      });
-                    },
-                  ),
-                ],
-              ),
+          TextButton.icon(
+            onPressed: () {
+              widget.logger.i('🔄 Exiting multi-select mode');
+              _selection.exitMultiSelect();
+            },
+            icon: const Icon(Icons.close, color: Color(0xFF0A2E5A)),
+            label: Text(
+              'Cancel',
+              style: GoogleFonts.poppins(color: const Color(0xFF0A2E5A)),
             ),
+          ),
         ],
       ),
     );
   }
 
+  // ── Multi-select action bar ──────────────────────────────────────────────────
+  Widget _buildMultiSelectActionBar() {
+    final bool hasSelection = _selection.count > 0;
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A2E5A),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.2),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              _buildActionButton(
+                icon: Icons.drive_file_move,
+                label: 'Move to Photos',
+                onPressed: hasSelection ? _moveToPhotosCollection : null,
+              ),
+              _buildActionButton(
+                icon: Icons.share,
+                label: 'Share',
+                onPressed: hasSelection ? _handleMultiShare : null,
+              ),
+              _buildActionButton(
+                icon: Icons.delete,
+                label: 'Delete',
+                onPressed: hasSelection ? _handleMultiDelete : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+  }) {
+    final bool isEnabled = onPressed != null;
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: ElevatedButton.icon(
+          onPressed: onPressed,
+          icon: Icon(icon, size: 20),
+          label: Text(label, style: GoogleFonts.poppins(fontSize: 12)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor:
+                isEnabled ? Colors.white : Colors.white.withValues(alpha: 0.3),
+            foregroundColor:
+                isEnabled ? const Color(0xFF0A2E5A) : Colors.grey,
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Footer ───────────────────────────────────────────────────────────────────
   Widget _buildFooter(BuildContext context) {
-    final isMobile = MediaQuery.of(context).size.width < 600;
-    widget.logger.d('🖌️ Building footer [Mobile: $isMobile]');
+    final bool isMobile = MediaQuery.of(context).size.width < 600;
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 12 : 16),
@@ -124,8 +261,8 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
     );
   }
 
-  Widget _buildPhotoGallery() {
-    widget.logger.d('📸 Building photo gallery stream for project: ${widget.project.id}');
+  // ── Main gallery sliver ──────────────────────────────────────────────────────
+  Widget _buildPhotoGallerySlivers() {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('PhotoGallery')
@@ -135,290 +272,586 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          widget.logger.e('Firestore error loading photos for project ${widget.project.id}: ${snapshot.error}', stackTrace: snapshot.stackTrace);
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  'Error loading photos: ${snapshot.error}',
-                  style: GoogleFonts.poppins(color: Colors.red[600]),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () {
-                    widget.logger.i('🔄 Retrying Firestore query for photos');
-                    setState(() {});
-                  },
-                  child: Text('Retry', style: GoogleFonts.poppins()),
-                ),
-              ],
-            ),
+          widget.logger.e(
+            'Firestore error: ${snapshot.error}',
+            stackTrace: snapshot.stackTrace,
           );
-        }
-        if (!snapshot.hasData) {
-          widget.logger.d('📸 PhotoGalleryScreen: No snapshot data yet, showing loader');
-          return const Center(child: CircularProgressIndicator());
-        }
-        final docs = snapshot.data!.docs;
-        final photos = docs.map((doc) => PhotoModel.fromMap(doc.id, doc.data() as Map<String, dynamic>)).toList();
-        widget.logger.i('📸 Loaded ${photos.length} photos for project: ${widget.project.name} [IDs: ${photos.map((p) => p.id).join(', ')}]');
-
-        if (photos.isEmpty) {
-          widget.logger.d('📸 No photos available for project: ${widget.project.id}');
-          return Padding(
-            padding: const EdgeInsets.only(top: 84.0),
+          return SliverFillRemaining(
             child: Center(
-              child: Text(
-                'No photos yet. Add some!',
-                style: GoogleFonts.poppins(color: Colors.grey[600]),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.cloud_off, size: 48, color: Colors.red[300]),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Error loading photos',
+                    style: GoogleFonts.poppins(
+                        color: Colors.red[600], fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${snapshot.error}',
+                    style:
+                        GoogleFonts.poppins(color: Colors.grey, fontSize: 12),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() {}),
+                    icon: const Icon(Icons.refresh),
+                    label: Text('Retry', style: GoogleFonts.poppins()),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF0A2E5A),
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ],
               ),
             ),
           );
         }
 
-        // Group by date
-        Map<String, List<PhotoModel>> dateGroups = {};
-        for (var photo in photos) {
-          final dateKey = DateFormat('yyyy-MM-dd').format(photo.uploadedAt);
-          dateGroups.update(dateKey, (list) => list..add(photo), ifAbsent: () => [photo]);
+        if (!snapshot.hasData) {
+          return const SliverFillRemaining(
+            child: Center(child: CircularProgressIndicator()),
+          );
         }
-        widget.logger.d('📅 Grouped photos into ${dateGroups.length} date groups: ${dateGroups.keys.join(', ')}');
 
-        // Sort dates descending
-        final sortedDates = dateGroups.keys.toList()..sort((a, b) => b.compareTo(a));
-        widget.logger.d('📅 Sorted dates: ${sortedDates.join(', ')}');
+        final List<DocumentSnapshot> docs = snapshot.data!.docs;
+        final List<PhotoModel> photos = docs
+            .map((doc) =>
+                PhotoModel.fromMap(doc.id, doc.data() as Map<String, dynamic>))
+            .toList();
 
-        return ListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: sortedDates.length,
-          itemBuilder: (context, index) {
-            final dateKey = sortedDates[index];
-            final groupPhotos = dateGroups[dateKey]!;
-            widget.logger.d('📅 Building gallery section for date: $dateKey, ${groupPhotos.length} photos');
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Text(
-                    _formatDate(DateTime.parse(dateKey)),
-                    style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
+        widget.logger.i(
+            '📸 Loaded ${photos.length} photos for project: ${widget.project.name}');
+
+        if (photos.isEmpty) {
+          return SliverFillRemaining(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.photo_library_outlined,
+                      size: 64, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No photos yet. Add some!',
+                    style: GoogleFonts.poppins(
+                        color: Colors.grey[600], fontSize: 16),
                   ),
-                ),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    int crossAxisCount = width < 600 ? 2 : width < 1200 ? 4 : 6;
-                    double spacing = width < 600 ? 8.0 : 16.0;
-                    widget.logger.d('🖼️ Building grid with crossAxisCount: $crossAxisCount, width: $width, spacing: $spacing');
-                    return Padding(
-                      padding: EdgeInsets.symmetric(horizontal: spacing),
-                      child: GridView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          childAspectRatio: 1,
-                          crossAxisSpacing: spacing,
-                          mainAxisSpacing: spacing,
-                        ),
-                        itemCount: groupPhotos.length,
-                        itemBuilder: (context, idx) {
-                          final photo = groupPhotos[idx];
-                          return GestureDetector(
-                            onTap: () {
-                              if (_multiSelectMode) {
-                                _toggleSelection(photo.id);
-                              } else {
-                                _viewPhotoFullScreen(photo);
-                              }
-                            },
-                            onLongPress: () => _startMultiSelect(photo.id),
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                CachedNetworkImage(
-                                  imageUrl: photo.url,
-                                  fit: BoxFit.cover,
-                                  placeholder: (context, url) => Center(
-                                    child: CircularProgressIndicator(
-                                      color: const Color(0xFF0A2E5A),
-                                    ),
-                                  ),
-                                  errorWidget: (context, url, error) {
-                                    widget.logger.e('🖼️ Image load error for ${photo.id}: $error');
-                                    return _buildErrorWidget(error, photo);
-                                  },
-                                  fadeInDuration: const Duration(milliseconds: 300),
-                                  fadeOutDuration: const Duration(milliseconds: 300),
-                                  // Add retry mechanism
-                                  maxHeightDiskCache: 1000,
-                                  maxWidthDiskCache: 1000,
-                                  // Force refresh on error
-                                  cacheKey: photo.url,
-                                  httpHeaders: {
-                                    'Cache-Control': 'no-cache',
-                                  },
-                                ),
-                                Positioned(
-                                  bottom: 0,
-                                  left: 0,
-                                  right: 0,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    color: Colors.black.withValues(alpha: 0.5),
-                                    child: Text(
-                                      '${photo.category} - ${photo.phase}',
-                                      style: GoogleFonts.poppins(color: Colors.white, fontSize: 12),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ),
-                                if (_multiSelectMode)
-                                  Positioned(
-                                    top: 8,
-                                    right: 8,
-                                    child: Checkbox(
-                                      value: _selectedPhotoIds.contains(photo.id),
-                                      onChanged: (value) => _toggleSelection(photo.id),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
-        );
+                ],
+              ),
+            ),
+          );
+        }
+
+        // Group photos by date
+        final Map<String, List<PhotoModel>> dateGroups = {};
+        for (final PhotoModel photo in photos) {
+          final String dateKey =
+              DateFormat('yyyy-MM-dd').format(photo.uploadedAt);
+          dateGroups.update(dateKey, (list) => list..add(photo),
+              ifAbsent: () => [photo]);
+        }
+        final List<String> sortedDates = dateGroups.keys.toList()
+          ..sort((a, b) => b.compareTo(a));
+
+        widget.logger.d(
+            '📅 ${sortedDates.length} date groups: ${sortedDates.join(', ')}');
+
+        final List<Widget> slivers = [];
+        for (final String dateKey in sortedDates) {
+          final List<PhotoModel> groupPhotos = dateGroups[dateKey]!;
+          slivers.add(SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+              child: Text(
+                _formatDate(DateTime.parse(dateKey)),
+                style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600, fontSize: 18),
+              ),
+            ),
+          ));
+          slivers.add(_buildDateGroupSliver(groupPhotos));
+        }
+
+        return _MultiSliverRaw(slivers: slivers);
       },
     );
   }
 
-  Widget _buildErrorWidget(dynamic error, PhotoModel photo) {
-    widget.logger.e('🖼️ Image load error: $error');
-    return Container(
-      color: Colors.grey[300],
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.broken_image, color: Colors.grey[600], size: 32),
-          const SizedBox(height: 8),
-          Text(
-            'Image unavailable',
-            style: GoogleFonts.poppins(color: Colors.grey[700], fontSize: 10),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          ElevatedButton(
-            onPressed: () {
-              widget.logger.i('🔄 Retrying image load for ${photo.id}');
-              // Force widget rebuild to retry image loading
-              setState(() {});
-            },
-            style: ElevatedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: const Size(50, 24),
+  // ── Sliver grid for one date group ───────────────────────────────────
+  Widget _buildDateGroupSliver(List<PhotoModel> photos) {
+    return SliverPadding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      sliver: SliverLayoutBuilder(
+        builder: (context, constraints) {
+          final double width = constraints.crossAxisExtent;
+          final int crossAxisCount =
+              width < 600 ? 2 : width < 1200 ? 4 : 6;
+          final double spacing = width < 600 ? 8.0 : 16.0;
+
+          return SliverGrid(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              childAspectRatio: 1,
+              crossAxisSpacing: spacing,
+              mainAxisSpacing: spacing,
             ),
-            child: Text('Retry', style: GoogleFonts.poppins(fontSize: 10)),
-          ),
-        ],
+            delegate: SliverChildBuilderDelegate(
+              (context, idx) => _buildPhotoTile(photos[idx]),
+              childCount: photos.length,
+              addRepaintBoundaries: true,
+            ),
+          );
+        },
       ),
     );
   }
 
-  void _startMultiSelect(String photoId) {
-    widget.logger.i('🖼️ Starting multi-select mode with photo $photoId');
-    setState(() {
-      _multiSelectMode = true;
-      _selectedPhotoIds.add(photoId);
-    });
-  }
-
-  void _toggleSelection(String photoId) {
-    widget.logger.d('🖼️ Toggling selection for photo $photoId');
-    setState(() {
-      if (_selectedPhotoIds.contains(photoId)) {
-        _selectedPhotoIds.remove(photoId);
-        if (_selectedPhotoIds.isEmpty) {
-          _multiSelectMode = false;
+  // ── Individual photo tile ──────────────────────────────────────────
+  Widget _buildPhotoTile(PhotoModel photo) {
+    return _PhotoTile(
+      key: ValueKey(photo.id),
+      photo: photo,
+      selection: _selection,
+      onContextMenu: (position) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showContextMenu(position, photo);
+        });
+      },
+      onTap: () {
+        if (_selection.multiSelectMode) {
+          _selection.toggle(photo.id);
+        } else {
+          _viewPhotoFullScreen(photo);
         }
-      } else {
-        _selectedPhotoIds.add(photoId);
-      }
-    });
+      },
+      onLongPress: () {
+        if (!_selection.multiSelectMode) {
+          _selection.startMultiSelect(photo.id);
+        }
+      },
+      onImageError: (error) {
+        widget.logger.e('⛔  Image load error for ${photo.id}: $error');
+      },
+    );
   }
 
+  // ── Right-click context menu ─────────────────────────────────────────────────
+  void _showContextMenu(Offset position, PhotoModel photo) {
+    widget.logger.i('🖱️ Context menu at $position for photo: ${photo.id}');
+
+    final RenderBox? overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+
+    showMenu<void>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(position.dx, position.dy, 1, 1),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        PopupMenuItem<void>(
+          onTap: () {
+            if (_selection.multiSelectMode) {
+              _selection.exitMultiSelect();
+            } else {
+              _selection.startMultiSelect(photo.id);
+            }
+          },
+          child: ListTile(
+            leading: Icon(
+              _selection.multiSelectMode
+                  ? Icons.check_box
+                  : Icons.check_box_outline_blank,
+              color: const Color(0xFF0A2E5A),
+            ),
+            title: Text(
+              _selection.multiSelectMode
+                  ? 'Deactivate Selection'
+                  : 'Activate Selection',
+              style: GoogleFonts.poppins(fontSize: 14),
+            ),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        if (!_selection.multiSelectMode) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem<void>(
+            onTap: () => WidgetsBinding.instance
+                .addPostFrameCallback((_) => _viewPhotoFullScreen(photo)),
+            child: ListTile(
+              leading:
+                  const Icon(Icons.visibility, color: Color(0xFF0A2E5A)),
+              title: Text('View', style: GoogleFonts.poppins(fontSize: 14)),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          PopupMenuItem<void>(
+            onTap: () => WidgetsBinding.instance
+                .addPostFrameCallback((_) => _editPhotoDetails(photo)),
+            child: ListTile(
+              leading: const Icon(Icons.edit, color: Color(0xFF0A2E5A)),
+              title: Text('Edit', style: GoogleFonts.poppins(fontSize: 14)),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          PopupMenuItem<void>(
+            onTap: () => WidgetsBinding.instance
+                .addPostFrameCallback((_) => _sharePhoto(photo)),
+            child: ListTile(
+              leading: const Icon(Icons.share, color: Color(0xFF0A2E5A)),
+              title: Text('Share', style: GoogleFonts.poppins(fontSize: 14)),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          PopupMenuItem<void>(
+            onTap: () => WidgetsBinding.instance
+                .addPostFrameCallback((_) => _deletePhoto(photo)),
+            child: ListTile(
+              leading: const Icon(Icons.delete, color: Colors.red),
+              title: Text('Delete',
+                  style:
+                      GoogleFonts.poppins(fontSize: 14, color: Colors.red)),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ── Move selected photos to Photos collection ────────────────────────────────
+  Future<void> _moveToPhotosCollection() async {
+    final List<String> idsToMove = _selection.snapshot();
+    widget.logger.i('📦 Moving ${idsToMove.length} photos to Photos');
+    if (idsToMove.isEmpty) return;
+
+    _selection.exitMultiSelect();
+    if (mounted) setState(() => _isLoading = true);
+
+    int successCount = 0;
+    int alreadyExistsCount = 0;
+    int failCount = 0;
+    double progress = 0;
+
+    final NavigatorState navigator = Navigator.of(context);
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    // Progress dialog
+    final ValueNotifier<double> progressNotifier = ValueNotifier(0);
+    navigator.push(
+      DialogRoute<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ValueListenableBuilder<double>(
+          valueListenable: progressNotifier,
+          builder: (ctx, value, _) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            title: Row(
+              children: [
+                const Icon(Icons.drive_file_move, color: Color(0xFF0A2E5A)),
+                const SizedBox(width: 8),
+                Text('Moving Photos', style: GoogleFonts.poppins()),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                LinearProgressIndicator(
+                  value: value,
+                  backgroundColor: Colors.grey[200],
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFF0A2E5A)),
+                  minHeight: 8,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '${(value * idsToMove.length).round()} of '
+                  '${idsToMove.length} photos processed…',
+                  style: GoogleFonts.poppins(fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    for (int i = 0; i < idsToMove.length; i++) {
+      final String photoId = idsToMove[i];
+      try {
+        final DocumentSnapshot photoDoc = await FirebaseFirestore.instance
+            .collection('PhotoGallery')
+            .doc(photoId)
+            .get();
+
+        if (!photoDoc.exists) {
+          widget.logger.w('⚠️ Photo $photoId not found');
+          failCount++;
+        } else {
+          final PhotoModel photo = PhotoModel.fromMap(
+              photoId, photoDoc.data() as Map<String, dynamic>);
+
+          final QuerySnapshot existing = await FirebaseFirestore.instance
+              .collection('Photos')
+              .where('url', isEqualTo: photo.url)
+              .where('projectId', isEqualTo: widget.project.id)
+              .limit(1)
+              .get();
+
+          if (existing.docs.isNotEmpty) {
+            widget.logger.w('⚠️ ${photo.name} already in Photos collection');
+            alreadyExistsCount++;
+          } else {
+            await FirebaseFirestore.instance.collection('Photos').add({
+              'name': photo.name,
+              'url': photo.url,
+              'category': photo.category,
+              'phase': photo.phase,
+              'uploadedAt': Timestamp.fromDate(photo.uploadedAt),
+              'movedAt': FieldValue.serverTimestamp(),
+              'isDeleted': false,
+              'projectId': widget.project.id,
+              'sourceCollection': 'PhotoGallery',
+              'sourceDocId': photoId,
+            });
+            successCount++;
+            widget.logger.i('✅ Moved $photoId → Photos');
+          }
+        }
+      } catch (e) {
+        widget.logger.e('❌ Error moving $photoId: $e');
+        failCount++;
+      }
+
+      progress = (i + 1) / idsToMove.length;
+      progressNotifier.value = progress;
+    }
+
+    progressNotifier.dispose();
+
+    // Close dialog via the captured navigator (no async gap after this point)
+    navigator.pop();
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    final StringBuffer msg = StringBuffer();
+    if (successCount > 0) {
+      msg.write(
+          '✅ $successCount photo${successCount > 1 ? 's' : ''} moved to Photos.');
+    }
+    if (alreadyExistsCount > 0) {
+      if (msg.isNotEmpty) msg.write('  ');
+      msg.write('⚠️ $alreadyExistsCount already existed.');
+    }
+    if (failCount > 0) {
+      if (msg.isNotEmpty) msg.write('  ');
+      msg.write('❌ $failCount failed.');
+    }
+    if (msg.isEmpty) msg.write('No photos were moved.');
+
+    final Color bgColor = failCount > 0
+        ? Colors.orange[800]!
+        : successCount > 0
+            ? Colors.green[700]!
+            : Colors.grey[700]!;
+
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content:
+            Text(msg.toString(), style: GoogleFonts.poppins(color: Colors.white)),
+        backgroundColor: bgColor,
+        duration: const Duration(seconds: 6),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        action: (failCount > 0 || alreadyExistsCount > 0)
+            ? SnackBarAction(
+                label: 'Details',
+                textColor: Colors.white,
+                onPressed: () {
+                  if (!mounted) return;
+                  showDialog<void>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: Text('Move Results', style: GoogleFonts.poppins()),
+                      content: Text(
+                        'Moved successfully: $successCount\n'
+                        'Already existed: $alreadyExistsCount\n'
+                        'Failed: $failCount\n\n'
+                        'Photos that "already existed" are already present in '
+                        'the Photos collection and were not duplicated.',
+                        style: GoogleFonts.poppins(),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: Text('OK', style: GoogleFonts.poppins()),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              )
+            : null,
+      ),
+    );
+  }
+
+  // ── Multi-share ──────────────────────────────────────────────────────────────
   Future<void> _handleMultiShare() async {
-    widget.logger.i('📤 Starting multi-share for ${_selectedPhotoIds.length} photos');
-    List<XFile> files = [];
-    for (var id in _selectedPhotoIds) {
-      final doc = await FirebaseFirestore.instance.collection('PhotoGallery').doc(id).get();
-      if (doc.exists) {
-        final photo = PhotoModel.fromMap(id, doc.data()!);
-        final tempDir = await getTemporaryDirectory();
-        final path = '${tempDir.path}/${photo.name}';
-        await FirebaseStorage.instance.refFromURL(photo.url).writeToFile(File(path));
-        files.add(XFile(path));
-        widget.logger.d('📤 Added photo $id to share list: $path');
+    final List<String> idsToShare = _selection.snapshot();
+    widget.logger.i('📤 Multi-share: ${idsToShare.length} photos');
+
+    _selection.exitMultiSelect();
+
+    if (kIsWeb) {
+      _showSnackBar(
+        '⚠️ File sharing is not supported in the browser. '
+        'Please use the mobile app.',
+        backgroundColor: Colors.orange[800]!,
+        duration: const Duration(seconds: 5),
+      );
+      return;
+    }
+
+    _showSnackBar(
+      'Preparing ${idsToShare.length} photos for sharing…',
+      backgroundColor: const Color(0xFF0A2E5A),
+      duration: const Duration(seconds: 30),
+    );
+
+    final List<XFile> files = [];
+    final Directory tempDir = await getTemporaryDirectory();
+
+    for (final String id in idsToShare) {
+      try {
+        final DocumentSnapshot doc = await FirebaseFirestore.instance
+            .collection('PhotoGallery')
+            .doc(id)
+            .get();
+        if (doc.exists) {
+          final PhotoModel photo =
+              PhotoModel.fromMap(id, doc.data() as Map<String, dynamic>);
+          final String path = '${tempDir.path}/${photo.name}';
+          await FirebaseStorage.instance
+              .refFromURL(photo.url)
+              .writeToFile(File(path));
+          files.add(XFile(path));
+        }
+      } catch (e) {
+        widget.logger.e('📤 Error preparing $id for share: $e');
       }
     }
-    if (files.isNotEmpty && mounted) {
-      widget.logger.d('📤 Initiating multi-share');
-      final params = ShareParams(files: files);
-      await SharePlus.instance.share(params);
-      widget.logger.i('✅ Multi-share completed');
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+
+    if (files.isEmpty) {
+      _showSnackBar(
+        '❌ Could not prepare any photos for sharing.',
+        backgroundColor: Colors.red[700]!,
+      );
+      return;
     }
-    setState(() {
-      _multiSelectMode = false;
-      _selectedPhotoIds.clear();
-    });
+
+    try {
+      await SharePlus.instance.share(ShareParams(files: files));
+      widget.logger.i('✅ Multi-share completed');
+    } catch (e) {
+      widget.logger.e('📤 Share failed: $e');
+      if (!mounted) return;
+      _showSnackBar('❌ Share failed: $e', backgroundColor: Colors.red[700]!);
+    }
   }
 
+  // ── Multi-delete ─────────────────────────────────────────────────────────────
   Future<void> _handleMultiDelete() async {
-    widget.logger.i('🗑️ Starting multi-delete for ${_selectedPhotoIds.length} photos');
-    final confirmed = await showDialog<bool>(
+    final List<String> idsToDelete = _selection.snapshot();
+    widget.logger.i('🗑️ Multi-delete: ${idsToDelete.length} photos');
+
+    final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete Photos', style: GoogleFonts.poppins()),
-        content: Text('Delete ${_selectedPhotoIds.length} selected photos?', style: GoogleFonts.poppins()),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete_forever, color: Colors.red),
+            const SizedBox(width: 8),
+            Text('Delete Photos', style: GoogleFonts.poppins()),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to delete ${idsToDelete.length} '
+          'selected photo${idsToDelete.length > 1 ? 's' : ''}?\n\n'
+          'This action cannot be undone.',
+          style: GoogleFonts.poppins(),
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Delete')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: Text('Delete',
+                style: GoogleFonts.poppins(color: Colors.white)),
+          ),
         ],
       ),
     );
-    if (confirmed == true) {
-      for (var id in _selectedPhotoIds) {
-        await FirebaseFirestore.instance.collection('PhotoGallery').doc(id).update({'isDeleted': true});
-        widget.logger.i('🗑️ Marked photo $id as deleted');
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photos deleted', style: GoogleFonts.poppins())),
-        );
+
+    if (confirmed != true) return;
+
+    _selection.exitMultiSelect();
+
+    int deleted = 0;
+    int failed = 0;
+    for (final String id in idsToDelete) {
+      try {
+        await FirebaseFirestore.instance
+            .collection('PhotoGallery')
+            .doc(id)
+            .update({'isDeleted': true});
+        deleted++;
+        widget.logger.i('🗑️ Deleted $id');
+      } catch (e) {
+        widget.logger.e('🗑️ Failed to delete $id: $e');
+        failed++;
       }
     }
-    setState(() {
-      _multiSelectMode = false;
-      _selectedPhotoIds.clear();
-    });
+
+    if (!mounted) return;
+    _showSnackBar(
+      failed == 0
+          ? '🗑️ $deleted photo${deleted > 1 ? 's' : ''} deleted.'
+          : '🗑️ $deleted deleted, $failed failed.',
+      backgroundColor: failed > 0 ? Colors.orange[800]! : Colors.grey[700]!,
+    );
   }
 
+  // ── Full-screen viewer ───────────────────────────────────────────────────────
   void _viewPhotoFullScreen(PhotoModel photo) {
-    widget.logger.i('🖼️ Viewing full screen: ${photo.id} - ${photo.url}');
+    widget.logger.i('🖼️ Full-screen: ${photo.id}');
     Navigator.push(
       context,
-      MaterialPageRoute(
+      MaterialPageRoute<void>(
         builder: (context) => Scaffold(
+          backgroundColor: Colors.black,
           appBar: AppBar(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
             title: Text(photo.name, style: GoogleFonts.poppins()),
             actions: [
               IconButton(
@@ -437,182 +870,278 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
           ),
           body: PhotoView(
             imageProvider: CachedNetworkImageProvider(photo.url),
+            loadingBuilder: (context, event) => const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
+            errorBuilder: (context, error, trace) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.broken_image,
+                      color: Colors.white54, size: 64),
+                  const SizedBox(height: 12),
+                  Text('Cannot display image',
+                      style: GoogleFonts.poppins(color: Colors.white54)),
+                ],
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
+  // ── Edit photo metadata ──────────────────────────────────────────────────────
   Future<void> _editPhotoDetails(PhotoModel photo) async {
-    final titleController = TextEditingController(text: photo.name);
-    final categoryController = TextEditingController(text: photo.category);
-    final phaseController = TextEditingController(text: photo.phase);
+    final TextEditingController titleController =
+        TextEditingController(text: photo.name);
+    final TextEditingController categoryController =
+        TextEditingController(text: photo.category);
+    final TextEditingController phaseController =
+        TextEditingController(text: photo.phase);
 
-    final updated = await showDialog<bool>(
+    final bool? updated = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text('Edit Photo Details', style: GoogleFonts.poppins()),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             TextField(
               controller: titleController,
-              decoration: InputDecoration(labelText: 'Title'),
+              decoration: const InputDecoration(
+                  labelText: 'Title', border: OutlineInputBorder()),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: categoryController,
-              decoration: InputDecoration(labelText: 'Category'),
+              decoration: const InputDecoration(
+                  labelText: 'Category', border: OutlineInputBorder()),
             ),
+            const SizedBox(height: 12),
             TextField(
               controller: phaseController,
-              decoration: InputDecoration(labelText: 'Phase'),
+              decoration: const InputDecoration(
+                  labelText: 'Phase', border: OutlineInputBorder()),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel'),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
           ),
-          TextButton(
-            onPressed: () {
-              final newTitle = titleController.text.trim();
-              final newCategory = categoryController.text.trim();
-              final newPhase = phaseController.text.trim();
-              if (newTitle.isNotEmpty || newCategory.isNotEmpty || newPhase.isNotEmpty) {
-                Navigator.pop(ctx, true);
-              } else {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  SnackBar(content: Text('At least one field must be filled')),
-                );
-              }
-            },
-            child: Text('Save'),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A2E5A)),
+            child: Text('Save',
+                style: GoogleFonts.poppins(color: Colors.white)),
           ),
         ],
       ),
     );
 
     if (updated == true && mounted) {
-      await FirebaseFirestore.instance.collection('PhotoGallery').doc(photo.id).update({
-        if (titleController.text.trim().isNotEmpty) 'name': titleController.text.trim(),
-        if (categoryController.text.trim().isNotEmpty) 'category': categoryController.text.trim(),
-        if (phaseController.text.trim().isNotEmpty) 'phase': phaseController.text.trim(),
-      });
-      widget.logger.i('Updated photo details for ${photo.id}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photo details updated')),
-        );
+      final Map<String, dynamic> updates = {};
+      final String newName = titleController.text.trim();
+      final String newCategory = categoryController.text.trim();
+      final String newPhase = phaseController.text.trim();
+
+      if (newName.isNotEmpty) updates['name'] = newName;
+      if (newCategory.isNotEmpty) updates['category'] = newCategory;
+      if (newPhase.isNotEmpty) updates['phase'] = newPhase;
+
+      if (updates.isEmpty) {
+        _showSnackBar('No changes made.', backgroundColor: Colors.grey[700]!);
+        return;
+      }
+
+      try {
+        await FirebaseFirestore.instance
+            .collection('PhotoGallery')
+            .doc(photo.id)
+            .update(updates);
+        widget.logger.i('✏️ Updated ${photo.id}');
+        if (!mounted) return;
+        _showSnackBar('✅ Photo details updated.',
+            backgroundColor: Colors.green[700]!);
+      } catch (e) {
+        widget.logger.e('✏️ Update failed: $e');
+        if (!mounted) return;
+        _showSnackBar('❌ Update failed: $e',
+            backgroundColor: Colors.red[700]!);
       }
     }
   }
 
+  // ── Share single photo ───────────────────────────────────────────────────────
   Future<void> _sharePhoto(PhotoModel photo) async {
-    widget.logger.i('📤 Starting single share for photo ${photo.id}');
-    try {
-      final tempDir = await getTemporaryDirectory();
-      final path = '${tempDir.path}/${photo.name}';
-      await FirebaseStorage.instance.refFromURL(photo.url).writeToFile(File(path));
-      widget.logger.i('📤 Downloaded photo ${photo.id} to $path');
-      if (!mounted) return;
+    widget.logger.i('📤 Share: ${photo.id}');
 
-      widget.logger.d('📤 Initiating share for photo ${photo.id}');
-      final params = ShareParams(files: [XFile(path)]);
-      await SharePlus.instance.share(params);
-      widget.logger.i('✅ Single photo share completed for ${photo.id}');
-    } catch (e, stackTrace) {
-      widget.logger.e('📤 Error sharing photo ${photo.id}: $e', stackTrace: stackTrace);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error sharing: $e', style: GoogleFonts.poppins())),
-        );
-      }
+    if (kIsWeb) {
+      _showSnackBar(
+        '⚠️ File sharing is not supported in the browser.',
+        backgroundColor: Colors.orange[800]!,
+      );
+      return;
+    }
+
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
+    try {
+      messenger.clearSnackBars();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Preparing photo for sharing…',
+              style: GoogleFonts.poppins(color: Colors.white)),
+          backgroundColor: const Color(0xFF0A2E5A),
+          duration: const Duration(seconds: 30),
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+      );
+
+      final Directory tempDir = await getTemporaryDirectory();
+      final String path = '${tempDir.path}/${photo.name}';
+      await FirebaseStorage.instance
+          .refFromURL(photo.url)
+          .writeToFile(File(path));
+
+      messenger.clearSnackBars();
+
+      if (!mounted) return;
+      await SharePlus.instance.share(ShareParams(files: [XFile(path)]));
+      widget.logger.i('✅ Share completed for ${photo.id}');
+    } catch (e, st) {
+      widget.logger.e('📤 Share error: $e', stackTrace: st);
+      messenger.clearSnackBars();
+      if (!mounted) return;
+      _showSnackBar('❌ Share failed: $e', backgroundColor: Colors.red[700]!);
     }
   }
 
+  // ── Delete single photo ──────────────────────────────────────────────────────
   Future<void> _deletePhoto(PhotoModel photo) async {
-    widget.logger.i('🗑️ Starting delete for photo ${photo.id}');
-    final confirmed = await showDialog<bool>(
+    widget.logger.i('🗑️ Delete: ${photo.id}');
+
+    final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Delete Photo', style: GoogleFonts.poppins()),
-        content: Text('Delete this photo?', style: GoogleFonts.poppins()),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Row(
+          children: [
+            const Icon(Icons.delete, color: Colors.red),
+            const SizedBox(width: 8),
+            Text('Delete Photo', style: GoogleFonts.poppins()),
+          ],
+        ),
+        content: Text('Delete this photo? This cannot be undone.',
+            style: GoogleFonts.poppins()),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text('Cancel')),
-          TextButton(onPressed: () => Navigator.pop(context, true), child: Text('Delete')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: Text('Delete',
+                style: GoogleFonts.poppins(color: Colors.white)),
+          ),
         ],
       ),
     );
+
     if (confirmed == true) {
-      await FirebaseFirestore.instance.collection('PhotoGallery').doc(photo.id).update({'isDeleted': true});
-      widget.logger.i('🗑️ Marked photo ${photo.id} as deleted');
-      if (mounted) {
-        Navigator.pop(context); // Close viewer
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photo deleted', style: GoogleFonts.poppins())),
-        );
+      try {
+        await FirebaseFirestore.instance
+            .collection('PhotoGallery')
+            .doc(photo.id)
+            .update({'isDeleted': true});
+        widget.logger.i('🗑️ Deleted ${photo.id}');
+
+        if (!mounted) return;
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        _showSnackBar('🗑️ Photo deleted.',
+            backgroundColor: Colors.grey[700]!);
+      } catch (e) {
+        widget.logger.e('🗑️ Delete failed: $e');
+        if (!mounted) return;
+        _showSnackBar('❌ Delete failed: $e',
+            backgroundColor: Colors.red[700]!);
       }
     }
   }
 
+  // ── Add photo upload flow ────────────────────────────────────────────────────
   Future<void> _startAddPhotoFlow() async {
-    widget.logger.i('📸 Starting add photo flow for project: ${widget.project.id}');
-    final uploadType = await showDialog<String>(
+    widget.logger.i('📸 Upload flow started');
+
+    final String? uploadType = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text('Upload Photos', style: GoogleFonts.poppins()),
         content: Text('Select upload type', style: GoogleFonts.poppins()),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, 'single'),
-            child: Text('Single Photo'),
+            child: Text('Single Photo', style: GoogleFonts.poppins()),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, 'multiple'),
-            child: Text('Multiple Photos'),
+            child: Text('Multiple Photos', style: GoogleFonts.poppins()),
           ),
         ],
       ),
     );
 
-    if (uploadType == null || !mounted) {
-      widget.logger.d('📸 Add photo flow cancelled');
-      return;
-    }
+    if (uploadType == null || !mounted) return;
 
     List<XFile> selectedFiles = [];
+
     if (uploadType == 'single') {
-      final source = await showModalBottomSheet<String>(
+      final String? source = await showModalBottomSheet<String>(
         context: context,
-        builder: (context) => Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.camera_alt),
-              title: Text('Camera', style: GoogleFonts.poppins()),
-              onTap: () => Navigator.pop(context, 'camera'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.photo_library),
-              title: Text('Gallery', style: GoogleFonts.poppins()),
-              onTap: () => Navigator.pop(context, 'gallery'),
-            ),
-          ],
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt),
+                title: Text('Camera', style: GoogleFonts.poppins()),
+                onTap: () => Navigator.pop(context, 'camera'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library),
+                title: Text('Gallery', style: GoogleFonts.poppins()),
+                onTap: () => Navigator.pop(context, 'gallery'),
+              ),
+            ],
+          ),
         ),
       );
 
       if (source == null) return;
 
-      final picker = ImagePicker();
+      final ImagePicker picker = ImagePicker();
       final XFile? file = await picker.pickImage(
-        source: source == 'camera' ? ImageSource.camera : ImageSource.gallery,
+        source:
+            source == 'camera' ? ImageSource.camera : ImageSource.gallery,
       );
-      if (file != null) {
-        selectedFiles.add(file);
-      }
-    } else { // multiple
-      final picker = ImagePicker();
+      if (file != null) selectedFiles.add(file);
+    } else {
+      final ImagePicker picker = ImagePicker();
       selectedFiles = await picker.pickMultiImage();
     }
 
@@ -621,224 +1150,494 @@ class _PhotoGalleryScreenState extends State<PhotoGalleryScreen> {
       return;
     }
 
-    // Confirm upload
-    final confirmUpload = await showDialog<bool>(
+    final bool? confirmUpload = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         title: Text('Confirm Upload', style: GoogleFonts.poppins()),
-        content: Text('Upload ${selectedFiles.length} photo${selectedFiles.length > 1 ? 's' : ''}?', style: GoogleFonts.poppins()),
+        content: Text(
+          'Upload ${selectedFiles.length} '
+          'photo${selectedFiles.length > 1 ? 's' : ''}?',
+          style: GoogleFonts.poppins(),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel'),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text('Confirm'),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A2E5A)),
+            child: Text('Confirm',
+                style: GoogleFonts.poppins(color: Colors.white)),
           ),
         ],
       ),
     );
 
-    if (confirmUpload != true || !mounted) {
-      widget.logger.d('📸 Upload cancelled');
-      return;
-    }
+    if (confirmUpload != true || !mounted) return;
 
-    // Edit titles and enter details
-    List<String> titles = selectedFiles.map((file) => file.name).toList();
+    List<String> titles =
+        selectedFiles.map((file) => file.name).toList();
     String category = '';
     String phase = '';
 
-    final detailsConfirmed = await showDialog<bool>(
+    final bool? detailsConfirmed = await showDialog<bool>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text('Photo Details', style: GoogleFonts.poppins()),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (selectedFiles.length > 1)
-                  ...List.generate(selectedFiles.length, (index) => Padding(
+      builder: (ctx) => AlertDialog(
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: Text('Photo Details', style: GoogleFonts.poppins()),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (selectedFiles.length > 1)
+                ...List.generate(
+                  selectedFiles.length,
+                  (index) => Padding(
                     padding: const EdgeInsets.only(bottom: 8.0),
                     child: TextField(
                       onChanged: (value) {
-                        titles[index] = value.trim().isEmpty ? selectedFiles[index].name : value.trim();
+                        titles[index] = value.trim().isEmpty
+                            ? selectedFiles[index].name
+                            : value.trim();
                       },
                       decoration: InputDecoration(
                         labelText: 'Title for Photo ${index + 1} (optional)',
                         hintText: selectedFiles[index].name,
+                        border: const OutlineInputBorder(),
                       ),
                     ),
-                  )),
-                if (selectedFiles.length == 1)
-                  TextField(
+                  ),
+                ),
+              if (selectedFiles.length == 1)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: TextField(
                     onChanged: (value) {
-                      titles[0] = value.trim().isEmpty ? selectedFiles[0].name : value.trim();
+                      titles[0] = value.trim().isEmpty
+                          ? selectedFiles[0].name
+                          : value.trim();
                     },
                     decoration: InputDecoration(
                       labelText: 'Title (optional)',
                       hintText: selectedFiles[0].name,
+                      border: const OutlineInputBorder(),
                     ),
                   ),
-                TextField(
-                  onChanged: (value) => category = value.trim(),
-                  decoration: InputDecoration(labelText: 'Category (optional)'),
                 ),
-                TextField(
-                  onChanged: (value) => phase = value.trim(),
-                  decoration: InputDecoration(labelText: 'Phase (optional)'),
+              TextField(
+                onChanged: (value) => category = value.trim(),
+                decoration: const InputDecoration(
+                    labelText: 'Category (optional)',
+                    border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                onChanged: (value) => phase = value.trim(),
+                decoration: const InputDecoration(
+                    labelText: 'Phase (optional)',
+                    border: OutlineInputBorder()),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text('Cancel', style: GoogleFonts.poppins()),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0A2E5A)),
+            child: Text('OK',
+                style: GoogleFonts.poppins(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (detailsConfirmed != true || !mounted) return;
+
+    setState(() => _isLoading = true);
+
+    // Upload progress via ValueNotifier – no markNeedsBuild hacks
+    final ValueNotifier<double> uploadProgressNotifier = ValueNotifier(0.0);
+    final NavigatorState uploadNavigator = Navigator.of(context);
+
+    uploadNavigator.push(
+      DialogRoute<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => ValueListenableBuilder<double>(
+          valueListenable: uploadProgressNotifier,
+          builder: (ctx, value, _) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
+            title: Row(
+              children: [
+                const Icon(Icons.cloud_upload, color: Color(0xFF0A2E5A)),
+                const SizedBox(width: 8),
+                Text('Uploading', style: GoogleFonts.poppins()),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                LinearProgressIndicator(
+                  value: value,
+                  backgroundColor: Colors.grey[200],
+                  valueColor: const AlwaysStoppedAnimation<Color>(
+                      Color(0xFF0A2E5A)),
+                  minHeight: 8,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '${(value * 100).toStringAsFixed(0)}%  '
+                  '(${(value * selectedFiles.length).floor()}'
+                  ' of ${selectedFiles.length} photos)',
+                  style: GoogleFonts.poppins(fontSize: 13),
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            TextButton(
-              onPressed: () {
-                // Check if at least one detail is provided
-                if (category.isNotEmpty || phase.isNotEmpty || titles.any((t) => t != selectedFiles[titles.indexOf(t)].name)) {
-                  Navigator.pop(ctx, true);
-                } else {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    SnackBar(content: Text('At least one detail must be provided')),
-                  );
-                }
-              },
-              child: Text('OK', style: GoogleFonts.poppins()),
-            ),
-          ],
         ),
       ),
     );
 
-    if (detailsConfirmed != true || !mounted) {
-      widget.logger.d('📸 Details input cancelled');
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _uploadProgress = 0.0;
-    });
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Text('Uploading', style: GoogleFonts.poppins()),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            LinearProgressIndicator(value: _uploadProgress),
-            const SizedBox(height: 16),
-            Text(
-              '${(_uploadProgress! * 100).toStringAsFixed(0)}%',
-              style: GoogleFonts.poppins(),
-            ),
-          ],
-        ),
-      ),
-    );
+    int uploadedCount = 0;
+    int uploadFailed = 0;
 
     try {
       for (int i = 0; i < selectedFiles.length; i++) {
-        final file = selectedFiles[i];
-        final title = titles[i];
-        Uint8List? bytes;
-        
-        if (!kIsWeb) {
-          bytes = await File(file.path).readAsBytes();
-        } else {
-          bytes = await file.readAsBytes();
-        }
+        final XFile file = selectedFiles[i];
+        final String title = titles[i];
+        late Uint8List bytes;
 
-        // Detect actual mime type from file extension
-        String mimeType = 'image/jpeg';
-        final extension = file.name.toLowerCase().split('.').last;
-        if (extension == 'png') {
-          mimeType = 'image/png';
-        } else if (extension == 'jpg' || extension == 'jpeg') {
-          mimeType = 'image/jpeg';
-        } else if (extension == 'webp') {
-          mimeType = 'image/webp';
-        }
-
-        final timestamp = DateTime.now().millisecondsSinceEpoch + i;
-        final fileName = title.contains('.') ? title : '${title}_$timestamp.$extension';
-        final storageRef = FirebaseStorage.instance
-            .ref()
-            .child(widget.project.id)
-            .child('PhotoGallery')
-            .child(fileName);
-
-        widget.logger.i('📤 Uploading image $i: $fileName with type $mimeType');
-
-        final uploadTask = storageRef.putData(
-          bytes,
-          SettableMetadata(
-            contentType: mimeType,
-            cacheControl: 'public, max-age=31536000',
-          ),
-        );
-
-        uploadTask.snapshotEvents.listen((snapshot) {
-          if (mounted) {
-            setState(() {
-              _uploadProgress = (i / selectedFiles.length) + 
-                  (snapshot.bytesTransferred / snapshot.totalBytes / selectedFiles.length);
-            });
+        try {
+          if (!kIsWeb) {
+            bytes = await File(file.path).readAsBytes();
+          } else {
+            bytes = await file.readAsBytes();
           }
-        });
 
-        await uploadTask;
-        final url = await storageRef.getDownloadURL();
-        
-        widget.logger.i('✅ Image uploaded successfully: $fileName, URL: $url');
+          String mimeType = 'image/jpeg';
+          final String extension =
+              file.name.toLowerCase().split('.').last;
+          if (extension == 'png') {
+            mimeType = 'image/png';
+          } else if (extension == 'webp') {
+            mimeType = 'image/webp';
+          } else if (extension == 'heic' || extension == 'heif') {
+            widget.logger.w(
+                '⚠️ HEIC/HEIF image detected: ${file.name}. '
+                'May not display in browser.');
+          }
 
-        await FirebaseFirestore.instance
-            .collection('PhotoGallery')
-            .add(PhotoModel(
-              id: '',
-              name: fileName,
-              url: url,
-              category: category,
-              phase: phase,
-              uploadedAt: DateTime.now(),
-              projectId: widget.project.id,
-            ).toMap());
-      }
+          final int timestamp = DateTime.now().millisecondsSinceEpoch + i;
+          final String fileName = title.contains('.')
+              ? title
+              : '${title}_$timestamp.$extension';
 
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photos uploaded successfully!', style: GoogleFonts.poppins())),
-        );
-      }
-    } catch (e, stackTrace) {
-      widget.logger.e('📤 Error uploading photos: $e', stackTrace: stackTrace);
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Upload error: $e', style: GoogleFonts.poppins()),
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: _startAddPhotoFlow,
+          final Reference storageRef = FirebaseStorage.instance
+              .ref()
+              .child(widget.project.id)
+              .child('PhotoGallery')
+              .child(fileName);
+
+          final UploadTask uploadTask = storageRef.putData(
+            bytes,
+            SettableMetadata(
+              contentType: mimeType,
+              cacheControl: 'public, max-age=31536000',
             ),
-          ),
-        );
+          );
+
+          uploadTask.snapshotEvents.listen((TaskSnapshot snap) {
+            final double fileProgress =
+                snap.bytesTransferred / snap.totalBytes;
+            final double overall =
+                (i + fileProgress) / selectedFiles.length;
+            if ((overall - uploadProgressNotifier.value).abs() >= 0.05 ||
+                fileProgress >= 1.0) {
+              uploadProgressNotifier.value = overall;
+            }
+          });
+
+          await uploadTask;
+          final String url = await storageRef.getDownloadURL();
+
+          await FirebaseFirestore.instance
+              .collection('PhotoGallery')
+              .add(PhotoModel(
+                id: '',
+                name: fileName,
+                url: url,
+                category: category,
+                phase: phase,
+                uploadedAt: DateTime.now(),
+                projectId: widget.project.id,
+              ).toMap());
+
+          uploadedCount++;
+          widget.logger.i('✅ Uploaded: $fileName');
+        } catch (e) {
+          widget.logger.e('❌ Failed to upload ${file.name}: $e');
+          uploadFailed++;
+        }
       }
+
+      uploadProgressNotifier.dispose();
+      uploadNavigator.pop();
+
+      if (!mounted) return;
+      _showSnackBar(
+        uploadFailed == 0
+            ? '✅ $uploadedCount photo${uploadedCount > 1 ? 's' : ''} '
+                'uploaded successfully!'
+            : '⚠️ $uploadedCount uploaded, $uploadFailed failed.',
+        backgroundColor:
+            uploadFailed > 0 ? Colors.orange[800]! : Colors.green[700]!,
+        duration: const Duration(seconds: 5),
+      );
+    } catch (e, stackTrace) {
+      widget.logger.e('📤 Upload error: $e', stackTrace: stackTrace);
+      uploadProgressNotifier.dispose();
+      uploadNavigator.pop();
+      if (!mounted) return;
+      _showSnackBar(
+        '❌ Upload error: $e',
+        backgroundColor: Colors.red[700]!,
+        action: SnackBarAction(
+          label: 'Retry',
+          textColor: Colors.white,
+          onPressed: _startAddPhotoFlow,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  String _formatDate(DateTime date) {
-    final formatted = DateFormat('MMMM dd, yyyy').format(date);
-    widget.logger.d('📅 Formatted date: $date -> $formatted');
-    return formatted;
+  // ── Utility ──────────────────────────────────────────────────────────────────
+  String _formatDate(DateTime date) =>
+      DateFormat('MMMM dd, yyyy').format(date);
+}
+
+class _PhotoTile extends StatefulWidget {
+  final PhotoModel photo;
+  final _SelectionState selection;
+  final void Function(Offset position) onContextMenu;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+  final void Function(dynamic error) onImageError;
+
+  const _PhotoTile({
+    super.key,
+    required this.photo,
+    required this.selection,
+    required this.onContextMenu,
+    required this.onTap,
+    required this.onLongPress,
+    required this.onImageError,
+  });
+
+  @override
+  State<_PhotoTile> createState() => _PhotoTileState();
+}
+
+class _PhotoTileState extends State<_PhotoTile> {
+  late bool _isSelected;
+  late bool _multiSelectMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _isSelected = widget.selection.isSelected(widget.photo.id);
+    _multiSelectMode = widget.selection.multiSelectMode;
+    widget.selection.addListener(_onSelectionChanged);
+  }
+
+  void _onSelectionChanged() {
+    final bool nowSelected = widget.selection.isSelected(widget.photo.id);
+    final bool nowMulti = widget.selection.multiSelectMode;
+    if (nowSelected != _isSelected || nowMulti != _multiSelectMode) {
+      setState(() {
+        _isSelected = nowSelected;
+        _multiSelectMode = nowMulti;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(_PhotoTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the selection object itself changes (shouldn't normally happen but
+    // guard against it), re-hook the listener.
+    if (oldWidget.selection != widget.selection) {
+      oldWidget.selection.removeListener(_onSelectionChanged);
+      widget.selection.addListener(_onSelectionChanged);
+      _isSelected = widget.selection.isSelected(widget.photo.id);
+      _multiSelectMode = widget.selection.multiSelectMode;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.selection.removeListener(_onSelectionChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (event) {
+        if (event.kind == PointerDeviceKind.mouse &&
+            event.buttons == kSecondaryMouseButton) {
+          widget.onContextMenu(event.position);
+        }
+      },
+      child: GestureDetector(
+        onTap: widget.onTap,
+        onLongPress: widget.onLongPress,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          decoration: BoxDecoration(
+            border: _isSelected
+                ? Border.all(color: const Color(0xFF0A2E5A), width: 3)
+                : null,
+          ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              CachedNetworkImage(
+                imageUrl: widget.photo.url,
+                fit: BoxFit.cover,
+                cacheKey: widget.photo.id,
+                memCacheWidth: 400,
+                memCacheHeight: 400,
+                maxHeightDiskCache: 600,
+                maxWidthDiskCache: 600,
+                placeholder: (context, url) => Container(
+                  color: Colors.grey[200],
+                  child: const Center(
+                    child: CircularProgressIndicator(
+                        color: Color(0xFF0A2E5A), strokeWidth: 2),
+                  ),
+                ),
+                errorWidget: (context, url, error) {
+                  widget.onImageError(error);
+                  return _buildErrorWidget();
+                },
+                fadeInDuration: const Duration(milliseconds: 200),
+              ),
+
+              // Category / phase label
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  color: Colors.black.withValues(alpha: 0.5),
+                  child: Text(
+                    '${widget.photo.category} - ${widget.photo.phase}',
+                    style:
+                        const TextStyle(color: Colors.white, fontSize: 11),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+              ),
+
+              // Checkbox (multi-select mode only)
+              if (_multiSelectMode)
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: AnimatedScale(
+                    scale: _multiSelectMode ? 1.0 : 0.0,
+                    duration: const Duration(milliseconds: 150),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: _isSelected
+                            ? const Color(0xFF0A2E5A)
+                            : Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: Checkbox(
+                          value: _isSelected,
+                          onChanged: (_) =>
+                              widget.selection.toggle(widget.photo.id),
+                          activeColor: Colors.transparent,
+                          checkColor: Colors.white,
+                          side: BorderSide.none,
+                          shape: const CircleBorder(),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+              // Selected tint overlay
+              if (_isSelected)
+                Positioned.fill(
+                  child: Container(
+                    color:
+                        const Color(0xFF0A2E5A).withValues(alpha: 0.18),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorWidget() {
+    return Container(
+      color: Colors.grey[200],
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.broken_image, color: Colors.grey[500], size: 28),
+          const SizedBox(height: 4),
+          Text(
+            'Unavailable',
+            style: TextStyle(color: Colors.grey[600], fontSize: 10),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MultiSliver – wraps a list of slivers into a SliverMainAxisGroup.
+// ─────────────────────────────────────────────────────────────────────────────
+class _MultiSliverRaw extends StatelessWidget {
+  final List<Widget> slivers;
+  const _MultiSliverRaw({required this.slivers});
+
+  @override
+  Widget build(BuildContext context) {
+    return SliverMainAxisGroup(slivers: slivers);
   }
 }

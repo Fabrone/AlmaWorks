@@ -50,7 +50,24 @@ class _BaseLayoutState extends State<BaseLayout> {
   @override
   void initState() {
     super.initState();
-    _fetchUserRoleAndAccess();
+    // FIX (window.dart:99): Defer the Firestore fetch to after the first frame.
+    //
+    // ROOT CAUSE: When the user taps a sidebar menu item, Flutter processes the
+    // tap inside its pointer-event pipeline. That tap calls
+    // Navigator.pushReplacement, which immediately mounts the new route's
+    // widget tree — including a new BaseLayout — synchronously within the same
+    // pointer frame. If _fetchUserRoleAndAccess() is called directly from
+    // initState(), Firestore may resolve the Future from its local cache during
+    // the *same* microtask queue flush that is still inside the pointer event.
+    // The resulting setState() then schedules a frame from within the pointer
+    // pipeline, which is exactly what window.dart:99 forbids.
+    //
+    // By deferring to addPostFrameCallback we guarantee that the first frame
+    // has been committed before any async work begins, so any subsequent
+    // setState() calls arrive outside the pointer pipeline entirely.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _fetchUserRoleAndAccess();
+    });
   }
 
   Future<void> _fetchUserRoleAndAccess() async {
@@ -58,13 +75,16 @@ class _BaseLayoutState extends State<BaseLayout> {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         widget.logger.e('❌ BaseLayout: No authenticated user found');
-        setState(() {
-          _isLoadingUserData = false;
-        });
+        // FIX: Guard every setState with mounted check — the widget may have
+        // been disposed between the frame callback scheduling and now.
+        if (mounted) {
+          setState(() {
+            _isLoadingUserData = false;
+          });
+        }
         return;
       }
 
-      // Fetch user role from Firestore
       final querySnapshot = await FirebaseFirestore.instance
           .collection('Users')
           .where('uid', isEqualTo: user.uid)
@@ -74,14 +94,16 @@ class _BaseLayoutState extends State<BaseLayout> {
       if (querySnapshot.docs.isNotEmpty) {
         final userData = querySnapshot.docs.first.data();
         final role = userData['role'] as String? ?? 'Client';
-        
-        // If client, fetch granted project IDs
+
         List<String> grantedIds = [];
         if (role == 'Client') {
-          grantedIds = await _requestService.getClientGrantedProjects(user.uid);
-          widget.logger.i('✅ BaseLayout: Client granted project IDs: $grantedIds');
+          grantedIds =
+              await _requestService.getClientGrantedProjects(user.uid);
+          widget.logger
+              .i('✅ BaseLayout: Client granted project IDs: $grantedIds');
         }
-        
+
+        // FIX: Every setState after an await must be guarded by mounted.
         if (mounted) {
           setState(() {
             _userRole = role;
@@ -89,8 +111,9 @@ class _BaseLayoutState extends State<BaseLayout> {
             _isLoadingUserData = false;
           });
         }
-        
-        widget.logger.i('✅ BaseLayout: User role fetched: $role, Granted Projects: ${grantedIds.length}');
+
+        widget.logger.i(
+            '✅ BaseLayout: User role fetched: $role, Granted Projects: ${grantedIds.length}');
       } else {
         widget.logger.w('⚠️ BaseLayout: User document not found');
         if (mounted) {
@@ -117,7 +140,6 @@ class _BaseLayoutState extends State<BaseLayout> {
     final isMobile = screenWidth < 600;
     final isTablet = screenWidth >= 600 && screenWidth < 1200;
 
-    // Show loading indicator while fetching user data
     if (_isLoadingUserData) {
       return Scaffold(
         appBar: _buildAppBar(context),
@@ -235,16 +257,17 @@ class _BaseLayoutState extends State<BaseLayout> {
                 selected: widget.selectedMenuItem == 'Switch Project',
                 selectedTileColor: Colors.blueGrey[50],
                 onTap: () {
-                  widget.logger.i('🧭 BaseLayout: Switch Project selected, isClient: $isClient');
+                  widget.logger.i(
+                      '🧭 BaseLayout: Switch Project selected, isClient: $isClient');
                   if (isMobile) Navigator.pop(context);
-                  
-                  // Navigate with proper client filtering
+
                   Navigator.pushReplacement(
                     context,
                     MaterialPageRoute(
                       builder: (context) => ProjectsMainScreen(
                         logger: widget.logger,
-                        clientProjectIds: isClient ? _clientProjectIds : null,
+                        clientProjectIds:
+                            isClient ? _clientProjectIds : null,
                       ),
                     ),
                   );
@@ -259,11 +282,11 @@ class _BaseLayoutState extends State<BaseLayout> {
                   widget.logger.i('🧭 BaseLayout: Overview selected');
                   if (isMobile) Navigator.pop(context);
                   if (widget.project != null) {
-                    // Check if client has access to this project
-                    if (isClient && 
-                        _clientProjectIds != null && 
+                    if (isClient &&
+                        _clientProjectIds != null &&
                         !_clientProjectIds!.contains(widget.project!.id)) {
-                      widget.logger.w('⚠️ BaseLayout: Client attempted to access unauthorized project');
+                      widget.logger.w(
+                          '⚠️ BaseLayout: Client attempted to access unauthorized project');
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
@@ -275,7 +298,7 @@ class _BaseLayoutState extends State<BaseLayout> {
                       );
                       return;
                     }
-                    
+
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(
@@ -297,7 +320,6 @@ class _BaseLayoutState extends State<BaseLayout> {
                   }
                 },
               ),
-              // All other menu items with access check
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.description,
@@ -346,7 +368,6 @@ class _BaseLayoutState extends State<BaseLayout> {
                   logger: widget.logger,
                 ),
               ),
-              // Only show Reports for Admin and MainAdmin users
               if (!isClient)
                 _buildProtectedMenuItem(
                   context: context,
@@ -408,13 +429,13 @@ class _BaseLayoutState extends State<BaseLayout> {
       onTap: () {
         widget.logger.i('🧭 BaseLayout: $title selected');
         if (isMobile) Navigator.pop(context);
-        
+
         if (widget.project != null) {
-          // Check if client has access to this project
-          if (isClient && 
-              _clientProjectIds != null && 
+          if (isClient &&
+              _clientProjectIds != null &&
               !_clientProjectIds!.contains(widget.project!.id)) {
-            widget.logger.w('⚠️ BaseLayout: Client attempted to access unauthorized project: $title');
+            widget.logger.w(
+                '⚠️ BaseLayout: Client attempted to access unauthorized project: $title');
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: Text(
@@ -426,7 +447,7 @@ class _BaseLayoutState extends State<BaseLayout> {
             );
             return;
           }
-          
+
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
