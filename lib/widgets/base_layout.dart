@@ -51,21 +51,6 @@ class _BaseLayoutState extends State<BaseLayout> {
   @override
   void initState() {
     super.initState();
-    // FIX (window.dart:99): Defer the Firestore fetch to after the first frame.
-    //
-    // ROOT CAUSE: When the user taps a sidebar menu item, Flutter processes the
-    // tap inside its pointer-event pipeline. That tap calls
-    // Navigator.pushReplacement, which immediately mounts the new route's
-    // widget tree — including a new BaseLayout — synchronously within the same
-    // pointer frame. If _fetchUserRoleAndAccess() is called directly from
-    // initState(), Firestore may resolve the Future from its local cache during
-    // the *same* microtask queue flush that is still inside the pointer event.
-    // The resulting setState() then schedules a frame from within the pointer
-    // pipeline, which is exactly what window.dart:99 forbids.
-    //
-    // By deferring to addPostFrameCallback we guarantee that the first frame
-    // has been committed before any async work begins, so any subsequent
-    // setState() calls arrive outside the pointer pipeline entirely.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _fetchUserRoleAndAccess();
     });
@@ -76,8 +61,6 @@ class _BaseLayoutState extends State<BaseLayout> {
       final user = FirebaseAuth.instance.currentUser;
       if (user == null) {
         widget.logger.e('❌ BaseLayout: No authenticated user found');
-        // FIX: Guard every setState with mounted check — the widget may have
-        // been disposed between the frame callback scheduling and now.
         if (mounted) {
           setState(() {
             _isLoadingUserData = false;
@@ -104,7 +87,6 @@ class _BaseLayoutState extends State<BaseLayout> {
               .i('✅ BaseLayout: Client granted project IDs: $grantedIds');
         }
 
-        // FIX: Every setState after an await must be guarded by mounted.
         if (mounted) {
           setState(() {
             _userRole = role;
