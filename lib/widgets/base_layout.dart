@@ -2,6 +2,7 @@ import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/rbacsystem/client_request_service.dart';
 import 'package:almaworks/screens/financial_screen.dart';
 import 'package:almaworks/screens/photo_gallery_screen.dart';
+import 'package:almaworks/screens/photos_screen.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/screens/projects/project_summary_screen.dart';
 import 'package:almaworks/screens/documents_screen.dart';
@@ -381,18 +382,35 @@ class _BaseLayoutState extends State<BaseLayout> {
                     logger: widget.logger,
                   ),
                 ),
-              _buildProtectedMenuItem(
-                context: context,
-                icon: Icons.photo_library,
-                title: 'Photo Gallery',
-                selectedItem: 'Photo Gallery',
-                isMobile: isMobile,
-                isClient: isClient,
-                onNavigate: () => PhotoGalleryScreen(
-                  project: widget.project!,
-                  logger: widget.logger,
+              // ── Photo Gallery: Admins / MainAdmins only ─────────────────
+              if (!isClient)
+                _buildProtectedMenuItem(
+                  context: context,
+                  icon: Icons.photo_library,
+                  title: 'Photo Gallery',
+                  selectedItem: 'Photo Gallery',
+                  isMobile: isMobile,
+                  isClient: isClient,
+                  onNavigate: () => PhotoGalleryScreen(
+                    project: widget.project!,
+                    logger: widget.logger,
+                  ),
                 ),
-              ),
+              // ── Photos: Clients only ──────────────────────────────────────
+              // Clients see the curated Photos collection, not the raw gallery.
+              if (isClient)
+                _buildProtectedMenuItem(
+                  context: context,
+                  icon: Icons.photo_album,
+                  title: 'Photos',
+                  selectedItem: 'Photos',
+                  isMobile: isMobile,
+                  isClient: isClient,
+                  onNavigate: () => PhotosScreen(
+                    project: widget.project!,
+                    logger: widget.logger,
+                  ),
+                ),
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.account_balance,
