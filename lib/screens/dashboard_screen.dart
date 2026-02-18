@@ -4,9 +4,9 @@ import 'package:almaworks/rbacsystem/client_access_requests_screen.dart';
 import 'package:almaworks/rbacsystem/client_request_model.dart';
 import 'package:almaworks/rbacsystem/client_request_service.dart';
 import 'package:almaworks/screens/account_screen.dart';
-import 'package:almaworks/screens/notifications_screen.dart';
+//import 'package:almaworks/screens/notifications_screen.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
-import 'package:almaworks/screens/search_screen.dart';
+import 'package:almaworks/screens/schedule/notification_center_screen.dart';
 import 'package:almaworks/services/project_service.dart';
 import 'package:almaworks/widgets/activity_feed.dart';
 import 'package:almaworks/widgets/dashboard_card.dart';
@@ -23,6 +23,8 @@ class DashboardScreen extends StatefulWidget {
   final Logger logger;
   
   const DashboardScreen({super.key, required this.logger});
+  
+  get projectId => null;
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -38,6 +40,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String _userRole = '';
   bool _isLoadingRole = true;
   List<String> _grantedProjectIds = [];
+  
+  get _notificationService => null;
 
   @override
   void initState() {
@@ -666,22 +670,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFF0A2E5A),
       actions: [
         IconButton(
-          icon: const Icon(Icons.search, color: Colors.white),
-          onPressed: () {
-            _logger.i('🔍 DashboardScreen: Search button pressed');
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const SearchScreen()),
-            );
-          },
-        ),
-        IconButton(
           icon: const Icon(Icons.notifications, color: Colors.white),
           onPressed: () {
             _logger.i('🔔 DashboardScreen: Notifications button pressed');
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const NotificationsScreen()),
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => NotificationCenterScreen(
+                projectId: widget.projectId,
+                notificationService: _notificationService,
+                ),
+              ),
             );
           },
         ),
