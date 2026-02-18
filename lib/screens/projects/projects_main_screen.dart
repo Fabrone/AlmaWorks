@@ -1,13 +1,13 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/providers/selected_project_provider.dart';
+import 'package:almaworks/screens/projects/add_project_screen.dart';
+import 'package:almaworks/screens/projects/edit_project_screen.dart';
+import 'package:almaworks/screens/projects/project_summary_screen.dart';
 import 'package:almaworks/services/project_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'add_project_screen.dart';
-import 'project_summary_screen.dart';
-import 'edit_project_screen.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 class ProjectsMainScreen extends StatefulWidget {
