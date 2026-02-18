@@ -4,9 +4,7 @@ import 'package:almaworks/rbacsystem/client_access_requests_screen.dart';
 import 'package:almaworks/rbacsystem/client_request_model.dart';
 import 'package:almaworks/rbacsystem/client_request_service.dart';
 import 'package:almaworks/screens/account_screen.dart';
-//import 'package:almaworks/screens/notifications_screen.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
-import 'package:almaworks/screens/schedule/notification_center_screen.dart';
 import 'package:almaworks/services/project_service.dart';
 import 'package:almaworks/widgets/activity_feed.dart';
 import 'package:almaworks/widgets/dashboard_card.dart';
@@ -41,7 +39,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isLoadingRole = true;
   List<String> _grantedProjectIds = [];
   
-  get _notificationService => null;
 
   @override
   void initState() {
@@ -669,20 +666,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
       backgroundColor: const Color(0xFF0A2E5A),
       actions: [
-        IconButton(
-          icon: const Icon(Icons.notifications, color: Colors.white),
-          onPressed: () {
-            _logger.i('🔔 DashboardScreen: Notifications button pressed');
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => NotificationCenterScreen(
-                projectId: widget.projectId,
-                notificationService: _notificationService,
-                ),
-              ),
-            );
-          },
-        ),
         GestureDetector(
           onTap: () {
             _logger.i('👤 DashboardScreen: Account button pressed');
