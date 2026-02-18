@@ -11,7 +11,8 @@ import 'package:almaworks/widgets/base_layout.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
 import 'package:google_fonts/google_fonts.dart';
-
+import 'package:almaworks/screens/schedule/notification_center_screen.dart';
+import 'package:almaworks/services/notification_service.dart';
 class ProjectSummaryScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
@@ -29,6 +30,7 @@ class ProjectSummaryScreen extends StatefulWidget {
 class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
+  final NotificationService _notificationService = NotificationService(logger: Logger());
 
   @override
   void dispose() {
@@ -49,6 +51,52 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       selectedMenuItem: 'Overview',
       onMenuItemSelected: _handleMenuNavigation,
       actions: [
+        // ✅ NEW: Notifications button with real project ID
+        StreamBuilder<int>(
+          stream: _notificationService.getUnreadCount(widget.project.id),
+          builder: (context, snapshot) {
+            final unreadCount = snapshot.data ?? 0;
+            return Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.notifications),
+                  onPressed: () {
+                    widget.logger.i('🔔 ProjectSummaryScreen: Notifications pressed for project: ${widget.project.id}');
+                    Navigator.push(
+                      context,
+                        MaterialPageRoute(
+                        builder: (context) => NotificationCenterScreen(
+                          projectId: widget.project.id,
+                          notificationService: _notificationService,
+                          logger: widget.logger, // ← NOW matches the constructor
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                if (unreadCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        color: Colors.red,
+                        shape: BoxShape.circle,
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                      child: Text(
+                        '$unreadCount',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+        // Existing edit button
         IconButton(
           icon: const Icon(Icons.edit),
           onPressed: () {

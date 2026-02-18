@@ -1042,10 +1042,11 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
                             icon: const Icon(Icons.notifications_outlined, size: 28),
                             onPressed: () {
                               Navigator.of(context).push(
-                                MaterialPageRoute(
+                                  MaterialPageRoute(
                                   builder: (context) => NotificationCenterScreen(
-                                    projectId: widget.projectId,
+                                    projectId: widget.project.id,
                                     notificationService: _notificationService,
+                                    logger: widget.logger, // ← NOW matches the constructor
                                   ),
                                 ),
                               );

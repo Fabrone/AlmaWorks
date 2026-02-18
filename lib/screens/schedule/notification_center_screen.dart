@@ -8,17 +8,18 @@ import 'package:logger/logger.dart';
 class NotificationCenterScreen extends StatelessWidget {
   final String projectId;
   final NotificationService notificationService;
-  final Logger _logger = Logger(); 
+  final Logger logger; // ← ADD as a named field
 
-  NotificationCenterScreen({
+  const NotificationCenterScreen({
     super.key,
     required this.projectId,
     required this.notificationService,
+    required this.logger, // ← ADD as required param
   });
 
   @override
   Widget build(BuildContext context) {
-    _logger.d('Building NotificationCenterScreen for projectId: $projectId');
+    logger.d('Building NotificationCenterScreen for projectId: $projectId');
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF0A2E5A),
@@ -35,13 +36,13 @@ class NotificationCenterScreen extends StatelessWidget {
             stream: notificationService.getUnreadCount(projectId),
             builder: (context, snapshot) {
               final unreadCount = snapshot.data ?? 0;
-              _logger.d('Unread count stream update: $unreadCount');
+              logger.d('Unread count stream update: $unreadCount');
               if (unreadCount == 0) return const SizedBox.shrink();
               
               return TextButton.icon(
                 onPressed: () async {
                   try {
-                    _logger.d('Marking all as read for projectId: $projectId');
+                    logger.d('Marking all as read for projectId: $projectId');
                     await notificationService.markAllAsRead(projectId);
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -56,7 +57,7 @@ class NotificationCenterScreen extends StatelessWidget {
                       );
                     }
                   } catch (e) {
-                    _logger.e('Error marking all as read', error: e);
+                    logger.e('Error marking all as read', error: e);
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -86,23 +87,23 @@ class NotificationCenterScreen extends StatelessWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          _logger.d('Manual refresh triggered');
+          logger.d('Manual refresh triggered');
           await notificationService.cleanupOldNotifications();
         },
         child: StreamBuilder<List<ScheduleNotification>>(
           stream: notificationService.getNotifications(projectId, limit: 100),
           builder: (context, snapshot) {
-            _logger.d('Notifications stream builder called. Connection state: ${snapshot.connectionState}');
+            logger.d('Notifications stream builder called. Connection state: ${snapshot.connectionState}');
             
             if (snapshot.connectionState == ConnectionState.waiting) {
-              _logger.d('Showing loading indicator');
+              logger.d('Showing loading indicator');
               return const Center(
                 child: CircularProgressIndicator(),
               );
             }
 
             if (snapshot.hasError) {
-              _logger.e('Error in notifications stream', error: snapshot.error, stackTrace: snapshot.stackTrace);
+              logger.e('Error in notifications stream', error: snapshot.error, stackTrace: snapshot.stackTrace);
               return Center(
                 child: Padding(
                   padding: const EdgeInsets.all(32),
@@ -149,10 +150,10 @@ class NotificationCenterScreen extends StatelessWidget {
             }
 
             final allNotifications = snapshot.data ?? [];
-            _logger.d('Received ${allNotifications.length} notifications from stream');
+            logger.d('Received ${allNotifications.length} notifications from stream');
 
             if (allNotifications.isEmpty) {
-              _logger.d('No notifications to display');
+              logger.d('No notifications to display');
               return Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -182,14 +183,14 @@ class NotificationCenterScreen extends StatelessWidget {
             // UPDATED: Sort notifications - Prioritize unread overdue, then unread starting soon, then by date
             final sortedNotifications = _sortNotificationsByPriority(allNotifications);
             
-            _logger.d('Building ListView with ${sortedNotifications.length} items (sorted by priority)');
+            logger.d('Building ListView with ${sortedNotifications.length} items (sorted by priority)');
             
             return ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: sortedNotifications.length,
               itemBuilder: (context, index) {
                 final notification = sortedNotifications[index];
-                _logger.d('Building item $index: Task ${notification.taskName}, Type: ${notification.type}, Read: ${notification.isRead}');
+                logger.d('Building item $index: Task ${notification.taskName}, Type: ${notification.type}, Read: ${notification.isRead}');
                 return _buildNotificationItem(context, notification);
               },
             );
@@ -200,7 +201,7 @@ class NotificationCenterScreen extends StatelessWidget {
   }
 
   List<ScheduleNotification> _sortNotificationsByPriority(List<ScheduleNotification> notifications) {
-  _logger.d('Sorting ${notifications.length} notifications by priority');
+  logger.d('Sorting ${notifications.length} notifications by priority');
 
   // Separate into categories
   final unreadOverdue = notifications.where((n) => !n.isRead && n.type == 'overdue').toList();
@@ -212,7 +213,7 @@ class NotificationCenterScreen extends StatelessWidget {
   unreadStartingSoon.sort((a, b) => b.createdAt.compareTo(a.createdAt));
   readNotifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-  _logger.d('Sorted: ${unreadOverdue.length} unread overdue, ${unreadStartingSoon.length} unread starting soon, ${readNotifications.length} read');
+  logger.d('Sorted: ${unreadOverdue.length} unread overdue, ${unreadStartingSoon.length} unread starting soon, ${readNotifications.length} read');
 
   // Combine in priority order
   return [...unreadOverdue, ...unreadStartingSoon, ...readNotifications];
@@ -258,7 +259,7 @@ class NotificationCenterScreen extends StatelessWidget {
       child: InkWell(
         onTap: () async {
           if (!notification.isRead) {
-            _logger.d('Marking notification as read: ID ${notification.id}'); // NEW: Log mark as read action
+            logger.d('Marking notification as read: ID ${notification.id}'); // NEW: Log mark as read action
             await notificationService.markAsRead(notification.id, readSource: 'app');
           }
           // Optionally show details dialog if needed; for now, just mark read
