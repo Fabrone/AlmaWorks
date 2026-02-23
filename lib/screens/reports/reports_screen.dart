@@ -35,16 +35,27 @@ class ReportsScreen extends StatefulWidget {
   State<ReportsScreen> createState() => _ReportsScreenState();
 }
 
-class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProviderStateMixin {
+class _ReportsScreenState extends State<ReportsScreen>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final DateFormat _dateFormat = DateFormat('yyyy-MM-dd HH:mm');
   bool _isLoading = false;
 
+  // Tab definitions: label, report type key
+  static const _tabs = [
+    {'label': 'Daily', 'type': 'Daily'},
+    {'label': 'Weekly', 'type': 'Weekly'},
+    {'label': 'Monthly', 'type': 'Monthly'},
+    {'label': 'Safety Meetings', 'type': 'Safety'},
+    {'label': 'Quality', 'type': 'Quality'},
+  ];
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
-    widget.logger.i('📊 ReportsScreen: Initialized for project: ${widget.project.name} (ID: ${widget.project.id})');
+    _tabController = TabController(length: _tabs.length, vsync: this);
+    widget.logger.i(
+        '📊 ReportsScreen: Initialized for project: ${widget.project.name} (ID: ${widget.project.id})');
   }
 
   @override
@@ -52,6 +63,8 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     _tabController.dispose();
     super.dispose();
   }
+
+  // ─────────────────────────── BUILD ───────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -62,9 +75,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
       selectedMenuItem: 'Reports',
       onMenuItemSelected: (_) {},
       floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : () {
-          _handleUploadAction();
-        },
+        onPressed: _isLoading ? null : _handleUploadAction,
         backgroundColor: const Color(0xFF0A2E5A),
         foregroundColor: Colors.white,
         child: _isLoading
@@ -80,6 +91,7 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
       ),
       child: Column(
         children: [
+          // ── Tab Bar: fills evenly on wide screens, scrollable on mobile ──
           Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -91,36 +103,51 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
                 ),
               ],
             ),
-            child: TabBar(
-              controller: _tabController,
-              labelColor: const Color(0xFF0A2E5A),
-              unselectedLabelColor: Colors.grey[600],
-              indicatorColor: const Color(0xFF0A2E5A),
-              labelStyle: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-              tabs: const [
-                Tab(text: 'Weekly'),
-                Tab(text: 'Monthly'),
-                Tab(text: 'Safety'),
-                Tab(text: 'Quality'),
-              ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Breakpoint: ≥600 px → desktop/tablet mode (fill evenly)
+                //             <600 px → mobile (scroll, show ~4 tabs at a time)
+                final isMobile = constraints.maxWidth < 600;
+                return TabBar(
+                  controller: _tabController,
+                  isScrollable: isMobile,
+                  tabAlignment: isMobile
+                      ? TabAlignment.start
+                      : TabAlignment.fill,
+                  labelColor: const Color(0xFF0A2E5A),
+                  unselectedLabelColor: Colors.grey[600],
+                  indicatorColor: const Color(0xFF0A2E5A),
+                  labelStyle: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w600, fontSize: 13),
+                  unselectedLabelStyle: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w400, fontSize: 13),
+                  tabs: _tabs.map((t) => Tab(text: t['label'])).toList(),
+                );
+              },
             ),
           ),
+
+          // ── Tab Views ──
           Expanded(
             child: TabBarView(
               controller: _tabController,
               children: [
-                _buildWeeklyTab(),
-                _buildMonthlyTab(),
-                _buildSafetyTab(),
-                _buildQualityTab(),
+                _buildDocumentTab('Daily'),      // tab 0
+                _buildDocumentTab('Weekly'),     // tab 1
+                _buildDocumentTab('Monthly'),    // tab 2
+                _buildSafetyTab(),               // tab 3 – Safety Meetings
+                _buildDocumentTab('Quality'),    // tab 4
               ],
             ),
           ),
+
           _buildFooter(context),
         ],
       ),
     );
   }
+
+  // ─────────────────────────── FOOTER ───────────────────────────
 
   Widget _buildFooter(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 600;
@@ -140,20 +167,11 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     );
   }
 
-  Widget _buildWeeklyTab() {
-    return _buildDocumentTab('Weekly');
-  }
-
-  Widget _buildMonthlyTab() {
-    return _buildDocumentTab('Monthly');
-  }
-
-  Widget _buildQualityTab() {
-    return _buildDocumentTab('Quality');
-  }
+  // ─────────────────────── DOCUMENT TAB (Daily / Weekly / Monthly / Quality) ───
 
   Widget _buildDocumentTab(String type) {
-    widget.logger.d('📊 ReportsScreen: Fetching Reports (type: $type, projectId: ${widget.project.id})');
+    widget.logger.d(
+        '📊 ReportsScreen: Fetching Reports (type: $type, projectId: ${widget.project.id})');
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('Reports')
@@ -163,7 +181,10 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          widget.logger.e('❌ ReportsScreen: Error loading Reports ($type)', error: snapshot.error, stackTrace: snapshot.stackTrace);
+          widget.logger.e(
+              '❌ ReportsScreen: Error loading Reports ($type)',
+              error: snapshot.error,
+              stackTrace: snapshot.stackTrace);
           return Center(
             child: Text(
               'Error loading documents: ${snapshot.error}',
@@ -172,44 +193,32 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           );
         }
         if (!snapshot.hasData) {
-          widget.logger.d('📊 ReportsScreen: Waiting for Reports data ($type)');
           return const Center(child: CircularProgressIndicator());
         }
+
         final documents = snapshot.data!.docs;
-        widget.logger.i('📊 ReportsScreen: Loaded ${documents.length} Reports ($type)');
+        widget.logger
+            .i('📊 ReportsScreen: Loaded ${documents.length} Reports ($type)');
+
         if (documents.isEmpty) {
-          return Center(
-            child: Text('No $type reports added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
-          );
+          return _buildEmptyState(type);
         }
+
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey[300]!, width: 1),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Flexible(
-                    child: Text(
-                      '$type Reports',
-                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildSectionHeader('$type Reports'),
             const SizedBox(height: 16),
             ...documents.map((doc) {
               try {
                 final data = doc.data() as Map<String, dynamic>;
                 final report = ReportModel.fromMap(doc.id, data);
                 return _buildReportItem(report);
-              } catch (e, stackTrace) {
-                widget.logger.e('❌ ReportsScreen: Error parsing Report ${doc.id} ($type)', error: e, stackTrace: stackTrace);
+              } catch (e, st) {
+                widget.logger.e(
+                    '❌ ReportsScreen: Error parsing Report ${doc.id} ($type)',
+                    error: e,
+                    stackTrace: st);
                 return const SizedBox.shrink();
               }
             }),
@@ -219,8 +228,11 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     );
   }
 
+  // ─────────────────────── SAFETY MEETINGS TAB ───────────────────
+
   Widget _buildSafetyTab() {
-    widget.logger.d('📊 ReportsScreen: Fetching Safety Reports (projectId: ${widget.project.id})');
+    widget.logger.d(
+        '📊 ReportsScreen: Fetching Safety Reports (projectId: ${widget.project.id})');
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance
           .collection('Reports')
@@ -230,7 +242,10 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          widget.logger.e('❌ ReportsScreen: Error loading Safety Reports', error: snapshot.error, stackTrace: snapshot.stackTrace);
+          widget.logger.e(
+              '❌ ReportsScreen: Error loading Safety Reports',
+              error: snapshot.error,
+              stackTrace: snapshot.stackTrace);
           return Center(
             child: Text(
               'Error loading safety reports: ${snapshot.error}',
@@ -239,44 +254,32 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
           );
         }
         if (!snapshot.hasData) {
-          widget.logger.d('📊 ReportsScreen: Waiting for Safety Reports data');
           return const Center(child: CircularProgressIndicator());
         }
+
         final reports = snapshot.data!.docs;
-        widget.logger.i('📊 ReportsScreen: Loaded ${reports.length} Safety Reports');
+        widget.logger
+            .i('📊 ReportsScreen: Loaded ${reports.length} Safety Reports');
+
         if (reports.isEmpty) {
-          return Center(
-            child: Text('No safety reports added yet', style: GoogleFonts.poppins(color: Colors.grey[600])),
-          );
+          return _buildEmptyState('Safety Meeting');
         }
+
         return ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey[300]!, width: 1),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Flexible(
-                    child: Text(
-                      'Safety Reports',
-                      style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            _buildSectionHeader('Safety Meeting Reports'),
             const SizedBox(height: 16),
             ...reports.map((doc) {
               try {
                 final data = doc.data() as Map<String, dynamic>;
                 final report = ReportModel.fromMap(doc.id, data);
                 return _buildReportItem(report);
-              } catch (e, stackTrace) {
-                widget.logger.e('❌ ReportsScreen: Error parsing Safety Report ${doc.id}', error: e, stackTrace: stackTrace);
+              } catch (e, st) {
+                widget.logger.e(
+                    '❌ ReportsScreen: Error parsing Safety Report ${doc.id}',
+                    error: e,
+                    stackTrace: st);
                 return const SizedBox.shrink();
               }
             }),
@@ -286,83 +289,157 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     );
   }
 
+  // ─────────────────────── SHARED UI HELPERS ───────────────────
+
+  Widget _buildEmptyState(String type) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.folder_open_outlined,
+              size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            'No $type reports added yet',
+            style: GoogleFonts.poppins(
+                color: Colors.grey[600], fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Tap the upload button to add one',
+            style: GoogleFonts.poppins(
+                color: Colors.grey[400], fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0A2E5A).withValues(alpha: 0.05),
+        border: Border.all(color: Colors.grey[300]!, width: 1),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        title,
+        style: GoogleFonts.poppins(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: const Color(0xFF0A2E5A)),
+      ),
+    );
+  }
+
   Widget _buildReportItem(ReportModel report) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
-        leading: Icon(
-          report.fileType != null ? _getDocumentIcon(report.fileType!) : Icons.security,
-          color: report.fileType != null ? _getFileIconColor(report.fileType!) : const Color(0xFF0A2E5A),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        leading: CircleAvatar(
+          backgroundColor:
+              (report.fileType != null
+                      ? _getFileIconColor(report.fileType!)
+                      : const Color(0xFF0A2E5A))
+                  .withValues(alpha: 0.12),
+          child: Icon(
+            report.fileType != null
+                ? _getDocumentIcon(report.fileType!)
+                : Icons.security,
+            color: report.fileType != null
+                ? _getFileIconColor(report.fileType!)
+                : const Color(0xFF0A2E5A),
+            size: 22,
+          ),
         ),
         title: Text(
           report.name,
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
+          style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w600, fontSize: 15),
         ),
-        subtitle: Text(
-          'Uploaded: ${_dateFormat.format(report.uploadedAt)}',
-          style: GoogleFonts.poppins(color: Colors.grey[600], fontSize: 14),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 2),
+            Text(
+              'Uploaded: ${_dateFormat.format(report.uploadedAt)}',
+              style: GoogleFonts.poppins(
+                  color: Colors.grey[600], fontSize: 13),
+            ),
+            ...[
+            const SizedBox(height: 2),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color:
+                    const Color(0xFF0A2E5A).withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                report.type,
+                style: GoogleFonts.poppins(
+                    fontSize: 11,
+                    color: const Color(0xFF0A2E5A),
+                    fontWeight: FontWeight.w500),
+              ),
+            ),
+          ],
+          ],
         ),
+        isThreeLine: true,
         trailing: PopupMenuButton<String>(
           onSelected: (value) => _handleReportAction(value, report),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           itemBuilder: (context) => [
             if (report.url != null)
-              PopupMenuItem(
-                value: 'view',
-                child: Row(
-                  children: [
-                    Icon(Icons.visibility, color: Colors.blue[600]),
-                    const SizedBox(width: 8),
-                    Text('View', style: GoogleFonts.poppins()),
-                  ],
-                ),
-              ),
+              _popupItem('view', Icons.visibility, Colors.blue[600]!, 'View'),
             if (report.safetyFormData != null)
-              PopupMenuItem(
-                value: 'view_form',
-                child: Row(
-                  children: [
-                    Icon(Icons.visibility, color: Colors.blue[600]),
-                    const SizedBox(width: 8),
-                    Text('View Form', style: GoogleFonts.poppins()),
-                  ],
-                ),
-              ),
-            PopupMenuItem(
-              value: 'download',
-              child: Row(
-                children: [
-                  Icon(Icons.download, color: Colors.green[600]),
-                  const SizedBox(width: 8),
-                  Text('Download', style: GoogleFonts.poppins()),
-                ],
-              ),
-            ),
-            PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, color: Colors.red[600]),
-                  const SizedBox(width: 8),
-                  Text('Delete', style: GoogleFonts.poppins()),
-                ],
-              ),
-            ),
+              _popupItem('view_form', Icons.visibility,
+                  Colors.blue[600]!, 'View Form'),
+            _popupItem(
+                'download', Icons.download, Colors.green[600]!, 'Download'),
+            _popupItem('delete', Icons.delete, Colors.red[600]!, 'Delete'),
           ],
         ),
       ),
     );
   }
 
+  PopupMenuItem<String> _popupItem(
+      String value, IconData icon, Color color, String label) {
+    return PopupMenuItem(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 10),
+          Text(label, style: GoogleFonts.poppins()),
+        ],
+      ),
+    );
+  }
+
+  // ─────────────────────── FAB LOGIC ───────────────────────────
+
   void _handleUploadAction() {
-    final type = _tabController.index == 0
-        ? 'Weekly'
-        : _tabController.index == 1
-            ? 'Monthly'
-            : _tabController.index == 3
-                ? 'Quality'
-                : 'Safety';
+    // Map tab index → report type
+    const typeMap = {
+      0: 'Daily',
+      1: 'Weekly',
+      2: 'Monthly',
+      3: 'Safety', // Safety Meetings tab
+      4: 'Quality',
+    };
+    final type = typeMap[_tabController.index] ?? 'Daily';
+
     if (type == 'Safety') {
       _showSafetyOptions();
     } else {
@@ -373,48 +450,90 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
   void _showSafetyOptions() {
     showModalBottomSheet(
       context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.edit),
-            title: Text('Fill Safety Form', style: GoogleFonts.poppins()),
-            onTap: () {
-              Navigator.pop(context);
-              if (mounted) {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => SafetyFormScreen(
-                      project: widget.project,
-                      logger: widget.logger,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                'Safety Meeting Report',
+                style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: const Color(0xFF0A2E5A)),
+              ),
+            ),
+            const Divider(),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFE8F0FB),
+                child:
+                    Icon(Icons.edit_note, color: Color(0xFF0A2E5A)),
+              ),
+              title:
+                  Text('Fill Safety Form', style: GoogleFonts.poppins()),
+              subtitle: Text('Complete the form within the app',
+                  style: GoogleFonts.poppins(
+                      fontSize: 12, color: Colors.grey[600])),
+              onTap: () {
+                Navigator.pop(context);
+                if (mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => SafetyFormScreen(
+                        project: widget.project,
+                        logger: widget.logger,
+                      ),
                     ),
-                  ),
-                );
-              }
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.upload_file),
-            title: Text('Upload Safety File', style: GoogleFonts.poppins()),
-            onTap: () {
-              Navigator.pop(context);
-              _uploadReport('Safety');
-            },
-          ),
-        ],
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFE8F5E9),
+                child: Icon(Icons.upload_file, color: Colors.green),
+              ),
+              title: Text('Upload Safety File',
+                  style: GoogleFonts.poppins()),
+              subtitle: Text('PDF, DOCX, PPTX, or TXT file',
+                  style: GoogleFonts.poppins(
+                      fontSize: 12, color: Colors.grey[600])),
+              onTap: () {
+                Navigator.pop(context);
+                _uploadReport('Safety');
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
       ),
     );
   }
 
+  // ─────────────────────── UPLOAD ──────────────────────────────
+
   Future<void> _uploadReport(String type) async {
     try {
-      // Step 1: Pick file first
+      // 1. Pick file
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'docx', 'doc', 'pptx', 'ppt', 'txt'],
       );
-
       if (result == null || result.files.isEmpty) {
         widget.logger.d('📤 ReportsScreen: File selection cancelled');
         return;
@@ -423,9 +542,10 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
       final pickedFile = result.files.first;
       final originalFileName = pickedFile.name;
       final extension = originalFileName.split('.').last.toLowerCase();
-      widget.logger.i('📤 ReportsScreen: File selected: $originalFileName');
+      widget.logger
+          .i('📤 ReportsScreen: File selected: $originalFileName');
 
-      // Step 2: Input report title (prefilled with file name without extension)
+      // 2. Ask for title (pre-filled)
       final title = await _showTextInputDialog(
         dialogTitle: 'Enter Report Title',
         contentText: 'Enter a title for this report:',
@@ -434,16 +554,14 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         fileName: originalFileName,
         showFileName: true,
       );
-
       if (title == null || title.trim().isEmpty) {
         widget.logger.d('📤 ReportsScreen: Title input cancelled');
         return;
       }
 
       final finalFileName = '$title.$extension';
-      widget.logger.i('📤 ReportsScreen: Final file name: $finalFileName');
 
-      // Step 3: Get file bytes
+      // 3. Read bytes
       Uint8List fileBytes;
       if (kIsWeb) {
         fileBytes = pickedFile.bytes!;
@@ -451,54 +569,49 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         fileBytes = await File(pickedFile.path!).readAsBytes();
       }
 
-      widget.logger.i('📤 ReportsScreen: File bytes loaded (size: ${fileBytes.length})');
+      setState(() => _isLoading = true);
 
-      setState(() {
-        _isLoading = true;
-      });
-
-      // Step 4: Show upload progress dialog
+      // 4. Progress dialog
       if (mounted) {
         showDialog(
           context: context,
           barrierDismissible: false,
           builder: (context) => AlertDialog(
-            title: Text(
-              'Uploading Report',
-              style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
-            ),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
+            title: Text('Uploading Report',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const CircularProgressIndicator(),
                 const SizedBox(height: 16),
-                Text(
-                  'Uploading $finalFileName...',
-                  style: GoogleFonts.poppins(),
-                ),
+                Text('Uploading $finalFileName...',
+                    style: GoogleFonts.poppins()),
               ],
             ),
           ),
         );
       }
 
-      // Step 5: Upload to Firebase Storage
+      // 5. Upload to Firebase Storage
       final storageRef = FirebaseStorage.instance
           .ref()
           .child(widget.project.id)
           .child('Reports')
+          .child(type) // organise by type in storage too
           .child(finalFileName);
+
       final uploadTask = storageRef.putData(
         fileBytes,
         SettableMetadata(contentType: _getContentType(extension)),
       );
-
       final snapshot = await uploadTask.whenComplete(() {});
       final downloadUrl = await snapshot.ref.getDownloadURL();
-      widget.logger.d('📤 ReportsScreen: Uploaded to storage: $downloadUrl');
 
-      // Step 6: Save metadata to Firestore
-      final docRef = await FirebaseFirestore.instance.collection('Reports').add({
+      // 6. Save to Firestore
+      final docRef =
+          await FirebaseFirestore.instance.collection('Reports').add({
         'name': title.trim(),
         'url': downloadUrl,
         'projectId': widget.project.id,
@@ -507,39 +620,34 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         'type': type,
         'fileType': extension,
       });
-      widget.logger.d('📊 ReportsScreen: Saved report with ID: ${docRef.id}');
+      widget.logger
+          .i('✅ ReportsScreen: Report saved (ID: ${docRef.id})');
 
-      widget.logger.i('✅ ReportsScreen: Report uploaded successfully: $title');
       if (mounted) {
-        Navigator.pop(context); // Close progress dialog
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Report uploaded successfully', style: GoogleFonts.poppins()),
-            backgroundColor: Colors.green,
-          ),
-        );
+        Navigator.pop(context); // close progress dialog
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Report uploaded successfully',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.green,
+        ));
       }
-    } catch (e, stackTrace) {
-      widget.logger.e('❌ ReportsScreen: Error uploading report', error: e, stackTrace: stackTrace);
+    } catch (e, st) {
+      widget.logger.e('❌ ReportsScreen: Error uploading report',
+          error: e, stackTrace: st);
       if (mounted) {
-        if (Navigator.canPop(context)) {
-          Navigator.pop(context); // Close progress dialog if open
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error uploading report: $e', style: GoogleFonts.poppins()),
-            backgroundColor: Colors.red,
-          ),
-        );
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error uploading report: $e',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ));
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
+
+  // ─────────────────────── DIALOGS ─────────────────────────────
 
   Future<String?> _showTextInputDialog({
     required String dialogTitle,
@@ -550,81 +658,405 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
     bool showFileName = true,
   }) async {
     final controller = TextEditingController(text: prefill ?? '');
-
     return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape:
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text(
           dialogTitle,
-          style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: const Color(0xFF0A2E5A)),
+          style: GoogleFonts.poppins(
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF0A2E5A)),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              contentText,
-              style: GoogleFonts.poppins(color: Colors.grey[700]),
-            ),
+            Text(contentText,
+                style: GoogleFonts.poppins(color: Colors.grey[700])),
             const SizedBox(height: 16),
             TextField(
               controller: controller,
+              autofocus: true,
+              style: GoogleFonts.poppins(),
               decoration: InputDecoration(
                 hintText: hintText,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                hintStyle: GoogleFonts.poppins(color: Colors.grey[500]),
+                hintStyle:
+                    GoogleFonts.poppins(color: Colors.grey[500]),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8)),
                 focusedBorder: OutlineInputBorder(
-                  borderSide: const BorderSide(color: Color(0xFF0A2E5A)),
+                  borderSide:
+                      const BorderSide(color: Color(0xFF0A2E5A)),
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              style: GoogleFonts.poppins(),
-              autofocus: true,
             ),
             if (showFileName && fileName != null) ...[
               const SizedBox(height: 8),
-              Text(
-                'File: $fileName',
-                style: GoogleFonts.poppins(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-              ),
+              Text('File: $fileName',
+                  style: GoogleFonts.poppins(
+                      fontSize: 12, color: Colors.grey[600])),
             ],
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: GoogleFonts.poppins(color: Color(0xFF800000)),
-            ),
+            child: Text('Cancel',
+                style:
+                    GoogleFonts.poppins(color: const Color(0xFF800000))),
           ),
           ElevatedButton(
             onPressed: () {
               if (controller.text.trim().isNotEmpty) {
                 Navigator.pop(context, controller.text.trim());
               } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Title cannot be empty', style: GoogleFonts.poppins())),
-                );
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('Title cannot be empty',
+                      style: GoogleFonts.poppins()),
+                ));
               }
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF0A2E5A),
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
             ),
-            child: Text(
-              'Confirm',
-              style: GoogleFonts.poppins(),
-            ),
+            child: Text('Confirm', style: GoogleFonts.poppins()),
           ),
         ],
       ),
     );
+  }
+
+  // ─────────────────────── ACTIONS ─────────────────────────────
+
+  Future<void> _handleReportAction(
+      String action, ReportModel report) async {
+    switch (action) {
+      case 'view':
+        await _viewDocument(
+            report.url!, report.fileType ?? 'pdf', report.name);
+        break;
+      case 'view_form':
+        await _viewSafetyForm(report);
+        break;
+      case 'download':
+        if (report.url != null) {
+          await _downloadDocument(report.url!, report.name);
+        } else {
+          await _downloadSafetyReport(report);
+        }
+        break;
+      case 'delete':
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
+            title: Text('Delete Report',
+                style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600)),
+            content: Text(
+                'Are you sure you want to delete "${report.name}"?',
+                style: GoogleFonts.poppins()),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Cancel', style: GoogleFonts.poppins()),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white),
+                child: Text('Delete', style: GoogleFonts.poppins()),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true) {
+          await _deleteDocument(report.id, report.url ?? '', 'Reports');
+        }
+        break;
+    }
+  }
+
+  // ─────────────────────── VIEW ────────────────────────────────
+
+  Future<void> _viewDocument(
+      String url, String type, String name) async {
+    widget.logger.i('👀 ReportsScreen: Viewing document: $name ($type)');
+    final connectivityResult =
+        await Connectivity().checkConnectivity();
+    final isOnline =
+        connectivityResult.any((r) => r != ConnectivityResult.none);
+
+    try {
+      final cacheManager = DefaultCacheManager();
+      FileInfo? cachedFile;
+      if (isOnline) {
+        cachedFile = await cacheManager.downloadFile(url);
+      } else {
+        cachedFile = await cacheManager.getFileFromCache(url);
+      }
+
+      if (cachedFile != null) {
+        final localPath = cachedFile.file.path;
+        if (type.toLowerCase() == 'txt') {
+          final content = await File(localPath).readAsString();
+          if (mounted) {
+            showDialog(
+              context: context,
+              builder: (context) => AlertDialog(
+                title: Text(name, style: GoogleFonts.poppins()),
+                content: SingleChildScrollView(
+                  child: SelectableText(content,
+                      style: GoogleFonts.poppins()),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child:
+                        Text('Close', style: GoogleFonts.poppins()),
+                  ),
+                ],
+              ),
+            );
+          }
+        } else if (kIsWeb) {
+          final viewerUrl = _getViewerUrl(url, type);
+          final uri = Uri.parse(viewerUrl);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri,
+                mode: LaunchMode.externalApplication);
+          } else if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('Could not open document viewer',
+                  style: GoogleFonts.poppins()),
+            ));
+          }
+        } else {
+          final result = await OpenFile.open(localPath);
+          if (result.type != ResultType.done && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('Could not open file: ${result.message}',
+                  style: GoogleFonts.poppins()),
+              action: SnackBarAction(
+                label: 'Download instead',
+                onPressed: () => _downloadDocument(url, name),
+              ),
+            ));
+          }
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('No internet and no cache available',
+              style: GoogleFonts.poppins()),
+        ));
+      }
+    } catch (e) {
+      widget.logger.e('Error viewing document: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content:
+              Text('Error viewing document: $e', style: GoogleFonts.poppins()),
+        ));
+      }
+    }
+  }
+
+  // ─────────────────────── DOWNLOAD ────────────────────────────
+
+  Future<void> _downloadDocument(String url, String name) async {
+    widget.logger.i('⬇️ ReportsScreen: Downloading: $name');
+    try {
+      final response = await Dio().get(
+        url,
+        options: Options(responseType: ResponseType.bytes),
+      );
+      final Uint8List bytes = response.data;
+      final result = await platformDownloadFile(bytes, name);
+
+      if (!mounted) return;
+      if (result != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            'Downloaded successfully!\nLocation: $result',
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Open',
+            textColor: Colors.white,
+            onPressed: () async => await OpenFile.open(result),
+          ),
+        ));
+      }
+    } catch (e) {
+      widget.logger.e('❌ Error downloading', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            e.toString().contains('permission')
+                ? 'Storage permission denied. Please enable it in Settings.'
+                : 'Error downloading: $e',
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 4),
+          action: e.toString().contains('permission')
+              ? SnackBarAction(
+                  label: 'Settings',
+                  textColor: Colors.white,
+                  onPressed: () => openAppSettings(),
+                )
+              : null,
+        ));
+      }
+    }
+  }
+
+  // ─────────────────────── DELETE ──────────────────────────────
+
+  Future<void> _deleteDocument(
+      String docId, String url, String collection) async {
+    widget.logger.i('🗑️ ReportsScreen: Deleting document: $docId');
+    try {
+      if (url.isNotEmpty) {
+        final ref = FirebaseStorage.instance.refFromURL(url);
+        await ref.delete();
+      }
+      await FirebaseFirestore.instance
+          .collection(collection)
+          .doc(docId)
+          .delete();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Document deleted successfully',
+              style: GoogleFonts.poppins()),
+        ));
+      }
+    } catch (e) {
+      widget.logger.e('❌ ReportsScreen: Error deleting document',
+          error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error deleting: $e',
+              style: GoogleFonts.poppins()),
+        ));
+      }
+    }
+  }
+
+  // ─────────────────────── SAFETY FORM HELPERS ─────────────────
+
+  Future<void> _viewSafetyForm(ReportModel report) async {
+    final content = _generateSafetyReportContent(report);
+    if (mounted) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(report.name, style: GoogleFonts.poppins()),
+          content: SingleChildScrollView(
+            child:
+                SelectableText(content, style: GoogleFonts.poppins()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Close', style: GoogleFonts.poppins()),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  String _generateSafetyReportContent(ReportModel report) {
+    final buffer = StringBuffer();
+    buffer.writeln(report.type == 'SafetyWeekly'
+        ? 'Weekly Safety Meeting Form'
+        : 'Monthly Safety Meeting Form');
+    buffer.writeln('Date: ${_dateFormat.format(report.uploadedAt)}');
+    buffer.writeln('\nItems:');
+    for (var item in (report.safetyFormData!['items']
+            as Map<String, dynamic>)
+        .entries) {
+      buffer.writeln('| ${item.key} | ${item.value ? 'X' : ' '} |');
+    }
+    buffer.writeln('\nObservations and Comments:');
+    buffer.writeln(report.safetyFormData!['observations'] ?? '');
+    buffer.writeln('\nActions Taken:');
+    buffer.writeln(report.safetyFormData!['actions'] ?? '');
+    buffer.writeln('\nJV Alma CIS Attendance:');
+    for (var attendee
+        in (report.safetyFormData!['jvAlmaAttendance'] ?? []) as List) {
+      buffer.writeln(
+          '- Name: ${attendee['name']}, Title: ${attendee['title']}, Signature: ${attendee['signature']}');
+    }
+    if (report.type == 'SafetyWeekly') {
+      buffer.writeln('\nSub-Contractor Attendance:');
+      for (var attendee in (report.safetyFormData![
+              'subContractorAttendance'] ??
+          []) as List) {
+        buffer.writeln(
+            '- Company: ${attendee['companyName']}, Name: ${attendee['name']}, Title: ${attendee['title']}, Signature: ${attendee['signature']}');
+      }
+    }
+    return buffer.toString();
+  }
+
+  Future<void> _downloadSafetyReport(ReportModel report) async {
+    if (report.safetyFormData == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('No form data available for download',
+              style: GoogleFonts.poppins()),
+        ));
+      }
+      return;
+    }
+    try {
+      final content = _generateSafetyReportContent(report);
+      final bytes = utf8.encode(content);
+      final result = await platformDownloadFile(
+          Uint8List.fromList(bytes), '${report.name}.txt');
+      if (mounted && result != null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Downloaded successfully!\nLocation: $result',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Open',
+            textColor: Colors.white,
+            onPressed: () async => await OpenFile.open(result),
+          ),
+        ));
+      }
+    } catch (e) {
+      widget.logger.e('❌ Error downloading safety report', error: e);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error downloading: $e',
+              style: GoogleFonts.poppins()),
+        ));
+      }
+    }
+  }
+
+  // ─────────────────────── UTILITIES ───────────────────────────
+
+  String _getViewerUrl(String url, String type) {
+    final encodedUrl = Uri.encodeComponent(url);
+    return type.toLowerCase() == 'pdf'
+        ? url
+        : 'https://view.officeapps.live.com/op/view.aspx?src=$encodedUrl';
   }
 
   String _getContentType(String extension) {
@@ -677,327 +1109,6 @@ class _ReportsScreenState extends State<ReportsScreen> with SingleTickerProvider
         return Colors.grey[600]!;
       default:
         return Colors.grey[600]!;
-    }
-  }
-
-  String _getViewerUrl(String url, String type) {
-    final encodedUrl = Uri.encodeComponent(url);
-    if (type.toLowerCase() == 'pdf') {
-      return url;
-    } else {
-      return 'https://view.officeapps.live.com/op/view.aspx?src=$encodedUrl';
-    }
-  }
-
-  Future<void> _viewDocument(String url, String type, String name) async {
-    widget.logger.i('👀 ReportsScreen: Viewing document: $name ($type)');
-    final connectivityResult = await Connectivity().checkConnectivity();
-    final isOnline = connectivityResult.any((r) => r != ConnectivityResult.none);
-
-    try {
-      final cacheManager = DefaultCacheManager();
-      FileInfo? cachedFile;
-      if (isOnline) {
-        cachedFile = await cacheManager.downloadFile(url);
-      } else {
-        cachedFile = await cacheManager.getFileFromCache(url);
-      }
-
-      if (cachedFile != null) {
-        final localPath = cachedFile.file.path;
-        if (type.toLowerCase() == 'txt') {
-          // For TXT, read and show in dialog (works offline)
-          final content = await File(localPath).readAsString();
-          if (mounted) {
-            showDialog(
-              context: context,
-              builder: (context) => AlertDialog(
-                title: Text(name, style: GoogleFonts.poppins()),
-                content: SingleChildScrollView(
-                  child: SelectableText(content, style: GoogleFonts.poppins()),
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: Text('Close', style: GoogleFonts.poppins()),
-                  ),
-                ],
-              ),
-            );
-          }
-        } else if (kIsWeb) {
-          // On web, always use launchUrl (can't open local files directly)
-          final viewerUrl = _getViewerUrl(url, type);
-          final uri = Uri.parse(viewerUrl);
-          if (await canLaunchUrl(uri)) {
-            await launchUrl(uri, mode: LaunchMode.externalApplication);
-          } else {
-            if (mounted) {
-              widget.logger.e('Could not launch $viewerUrl');
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Could not open document viewer', style: GoogleFonts.poppins()),
-                ),
-              );
-            }
-          }
-        } else {
-          // On native, open local file with system viewer (prompts if multiple apps)
-          final result = await OpenFile.open(localPath);
-          if (result.type != ResultType.done && mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Could not open file: ${result.message}', style: GoogleFonts.poppins()),
-                action: SnackBarAction(
-                  label: 'Download instead',
-                  onPressed: () => _downloadDocument(url, name),
-                ),
-              ),
-            );
-          }
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('No internet and no cache available', style: GoogleFonts.poppins()),
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      widget.logger.e('Error viewing document: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error viewing document: $e', style: GoogleFonts.poppins()),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _downloadDocument(String url, String name) async {
-    widget.logger.i('⬇️ ReportsScreen: Downloading: $name');
-    try {
-      // Fetch file bytes from URL
-      final response = await Dio().get(
-        url,
-        options: Options(responseType: ResponseType.bytes),
-      );
-      final Uint8List bytes = response.data;
-
-      // Use platform-specific download helper
-      final result = await platformDownloadFile(bytes, name);
-
-      if (!mounted) return;
-
-      if (result != null) {
-        // Success: result is either a path (mobile) or message (web)
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Downloaded successfully!\nLocation: $result',  // Mobile: Full path
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: 'Open',
-              textColor: Colors.white,
-              onPressed: () async {
-                await OpenFile.open(result);
-              },
-            ),
-          ),
-        );
-      } else {
-        // User cancelled (shouldn't happen with new implementation)
-        widget.logger.d('Download cancelled by user');
-      }
-    } catch (e) {
-      widget.logger.e('❌ Error downloading', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              e.toString().contains('permission')
-                  ? 'Storage permission denied. Please enable it in Settings.'
-                  : 'Error downloading: $e',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.red,
-            duration: const Duration(seconds: 4),
-            action: e.toString().contains('permission')
-                ? SnackBarAction(
-                    label: 'Settings',
-                    textColor: Colors.white,
-                    onPressed: () => openAppSettings(),
-                  )
-                : null,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _deleteDocument(String docId, String url, String collection) async {
-    widget.logger.i('🗑️ ReportsScreen: Deleting document: $docId');
-    try {
-      if (url.isNotEmpty) {
-        widget.logger.d('🗑️ ReportsScreen: Deleting from storage');
-        final ref = FirebaseStorage.instance.refFromURL(url);
-        await ref.delete();
-      }
-      widget.logger.d('🗑️ ReportsScreen: Deleting from Firestore');
-      await FirebaseFirestore.instance.collection(collection).doc(docId).delete();
-      if (mounted) {
-        widget.logger.i('✅ ReportsScreen: Document deleted successfully');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Document deleted successfully', style: GoogleFonts.poppins()),
-          ),
-        );
-      }
-    } catch (e) {
-      widget.logger.e('❌ ReportsScreen: Error deleting document', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error deleting: $e', style: GoogleFonts.poppins()),
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _handleReportAction(String action, ReportModel report) async {
-    if (action == 'view') {
-      await _viewDocument(report.url!, report.fileType ?? 'pdf', report.name);
-    } else if (action == 'view_form') {
-      await _viewSafetyForm(report);
-    } else if (action == 'download') {
-      if (report.url != null) {
-        await _downloadDocument(report.url!, report.name);
-      } else {
-        await _downloadSafetyReport(report);
-      }
-    } else if (action == 'delete') {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Delete Report', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
-          content: Text('Are you sure you want to delete "${report.name}"?', style: GoogleFonts.poppins()),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text('Cancel', style: GoogleFonts.poppins()),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-              child: Text('Delete', style: GoogleFonts.poppins()),
-            ),
-          ],
-        ),
-      );
-
-      if (confirmed == true) {
-        await _deleteDocument(report.id, report.url ?? '', 'Reports');
-      }
-    }
-  }
-
-  Future<void> _viewSafetyForm(ReportModel report) async {
-    final content = _generateSafetyReportContent(report);
-    if (mounted) {
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(report.name, style: GoogleFonts.poppins()),
-          content: SingleChildScrollView(
-            child: SelectableText(content, style: GoogleFonts.poppins()),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Close', style: GoogleFonts.poppins()),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  String _generateSafetyReportContent(ReportModel report) {
-    final buffer = StringBuffer();
-    buffer.writeln(report.type == 'SafetyWeekly' ? 'Weekly Safety Meeting Form' : 'Monthly Safety Meeting Form');
-    buffer.writeln('Date: ${_dateFormat.format(report.uploadedAt)}');
-    buffer.writeln('\nItems:');
-    for (var item in (report.safetyFormData!['items'] as Map<String, dynamic>).entries) {
-      buffer.writeln('| ${item.key} | ${item.value ? 'X' : ' '} |');
-    }
-    buffer.writeln('\nObservations and Comments:');
-    buffer.writeln(report.safetyFormData!['observations'] ?? '');
-    buffer.writeln('\nActions Taken:');
-    buffer.writeln(report.safetyFormData!['actions'] ?? '');
-    buffer.writeln('\nJV Alma CIS Attendance:');
-    for (var attendee in (report.safetyFormData!['jvAlmaAttendance'] ?? []) as List) {
-      buffer.writeln('- Name: ${attendee['name']}, Title: ${attendee['title']}, Signature: ${attendee['signature']}');
-    }
-    if (report.type == 'SafetyWeekly') {
-      buffer.writeln('\nSub-Contractor Attendance:');
-      for (var attendee in (report.safetyFormData!['subContractorAttendance'] ?? []) as List) {
-        buffer.writeln('- Company: ${attendee['companyName']}, Name: ${attendee['name']}, Title: ${attendee['title']}, Signature: ${attendee['signature']}');
-      }
-    }
-    return buffer.toString();
-  }
-
-  Future<void> _downloadSafetyReport(ReportModel report) async {
-    if (report.safetyFormData == null) {
-      widget.logger.w('📊 ReportsScreen: No safety form data for report: ${report.name}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No form data available for download', style: GoogleFonts.poppins())),
-        );
-      }
-      return;
-    }
-
-    try {
-      final content = _generateSafetyReportContent(report);
-      final bytes = utf8.encode(content);
-      final result = await platformDownloadFile(Uint8List.fromList(bytes), '${report.name}.txt');
-
-      if (mounted && result != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Downloaded successfully!\nLocation: $result',
-              style: GoogleFonts.poppins(),
-            ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: 'Open',
-              textColor: Colors.white,
-              onPressed: () async {
-                await OpenFile.open(result);
-              },
-            ),
-          ),
-        );
-      }
-    } catch (e) {
-      widget.logger.e('❌ Error downloading safety report', error: e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error downloading: $e', style: GoogleFonts.poppins()),
-          ),
-        );
-      }
     }
   }
 }
