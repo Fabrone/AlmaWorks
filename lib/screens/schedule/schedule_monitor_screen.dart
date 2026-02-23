@@ -1479,26 +1479,50 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     );
   }
 
+  // ─── FIXED: Dynamic sizing prevents RenderFlex overflow on small screens ───
   Widget _buildNoTasksWidget(String title) {
     final bool isSearch = _searchQuery.isNotEmpty;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(isSearch ? Icons.search_off : Icons.timeline, size: 64, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            Text(
-              isSearch ? 'No tasks match your search' : 'No $title tasks',
-              style: GoogleFonts.poppins(
-                fontSize: 16,
-                color: Colors.grey.shade600,
-              ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double availableHeight = constraints.maxHeight;
+        final double availableWidth = constraints.maxWidth;
+
+        // Clamp icon and font sizes to a safe range based on available space
+        final double iconSize = (availableHeight * 0.12).clamp(28.0, 72.0);
+        final double fontSize = (availableWidth * 0.04).clamp(11.0, 18.0);
+        final double verticalSpacing = (availableHeight * 0.025).clamp(6.0, 20.0);
+        final double horizontalPadding = (availableWidth * 0.08).clamp(12.0, 40.0);
+
+        return Center(
+          child: SingleChildScrollView(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.symmetric(
+              horizontal: horizontalPadding,
+              vertical: verticalSpacing,
             ),
-          ],
-        ),
-      ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isSearch ? Icons.search_off : Icons.timeline,
+                  size: iconSize,
+                  color: Colors.grey.shade400,
+                ),
+                SizedBox(height: verticalSpacing),
+                Text(
+                  isSearch ? 'No tasks match your search' : 'No $title tasks',
+                  style: GoogleFonts.poppins(
+                    fontSize: fontSize,
+                    color: Colors.grey.shade600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
