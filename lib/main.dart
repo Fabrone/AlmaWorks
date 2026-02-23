@@ -9,12 +9,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'; // ← ADDED
+import 'package:flutter_quill/flutter_quill.dart' show FlutterQuillLocalizations; // ← ADDED
 import 'package:logger/logger.dart';
 import 'firebase_options.dart';
 
 // ─── Global LocaleProvider ────────────────────────────────────────────────────
-// Declared at top-level so any screen can import it with:
-//   import 'package:almaworks/main.dart' show localeProvider;
 final LocaleProvider localeProvider = LocaleProvider();
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -204,6 +204,21 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
         theme: AppTheme.lightTheme,
         debugShowCheckedModeBanner: false,
         locale: localeProvider.locale,
+
+        // ── Localization delegates ────────────────────────────────────────
+        // GlobalMaterialLocalizations  → Material widget strings (date pickers, etc.)
+        // GlobalCupertinoLocalizations → Cupertino widget strings (iOS-style widgets)
+        // GlobalWidgetsLocalizations   → Text direction (LTR / RTL)
+        // FlutterQuillLocalizations    → Quill toolbar tooltips & editor strings
+        //                               Without this, every QuillSimpleToolbar button
+        //                               throws MissingFlutterQuillLocalizationException.
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,   // ← ADDED
+          GlobalCupertinoLocalizations.delegate,  // ← ADDED
+          GlobalWidgetsLocalizations.delegate,    // ← ADDED
+          FlutterQuillLocalizations.delegate,     // ← ADDED (fixes Quill crash)
+        ],
+
         supportedLocales: LocaleProvider.supportedLocales,
         home: AuthenticationWrapper(logger: widget.logger),
       ),
@@ -313,14 +328,12 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
     }
 
     if (_isLoggedIn) {
-      // User is logged in - show welcome screen first, then they can navigate to dashboard
       widget.logger.i('🎯 Routing to WelcomeScreen for $_username');
       return WelcomeScreen(
         username: _username,
         initialRole: _role,
       );
     } else {
-      // User not logged in - show login screen
       widget.logger.i('🎯 Routing to LoginScreen');
       return const LoginScreen();
     }

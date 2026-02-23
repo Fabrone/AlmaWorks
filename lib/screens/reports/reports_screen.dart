@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/models/report_model.dart';
 import 'package:almaworks/screens/reports/safety_form_screen.dart';
+import 'package:almaworks/screens/reports/daily_report_form_screen.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -440,11 +441,91 @@ class _ReportsScreenState extends State<ReportsScreen>
     };
     final type = typeMap[_tabController.index] ?? 'Daily';
 
-    if (type == 'Safety') {
+    if (type == 'Daily') {
+      _showDailyOptions();
+    } else if (type == 'Safety') {
       _showSafetyOptions();
     } else {
       _uploadReport(type);
     }
+  }
+
+  void _showDailyOptions() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // drag handle
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Text(
+                'Daily Report',
+                style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                    color: const Color(0xFF0A2E5A)),
+              ),
+            ),
+            const Divider(),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFE8F0FB),
+                child: Icon(Icons.edit_note_rounded, color: Color(0xFF0A2E5A)),
+              ),
+              title: Text('Fill Daily Report Form', style: GoogleFonts.poppins()),
+              subtitle: Text(
+                'Complete the structured form within the app',
+                style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                if (mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => DailyReportFormScreen(
+                        project: widget.project,
+                        logger: widget.logger,
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
+            ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Color(0xFFE8F5E9),
+                child: Icon(Icons.upload_file_rounded, color: Colors.green),
+              ),
+              title: Text('Upload Daily Report File', style: GoogleFonts.poppins()),
+              subtitle: Text(
+                'PDF, DOCX, PPTX, or TXT file from your device',
+                style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey[600]),
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _uploadReport('Daily');
+              },
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showSafetyOptions() {
