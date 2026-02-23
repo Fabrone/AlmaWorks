@@ -27,7 +27,7 @@ class _DynamicScheduleScreenState extends State<DynamicScheduleScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     widget.logger.i(
       '📅 DynamicScheduleScreen: Initialized for project: ${widget.project.name} (ID: ${widget.project.id})',
     );
@@ -77,7 +77,6 @@ class _DynamicScheduleScreenState extends State<DynamicScheduleScreen>
                 Tab(text: 'Gantt Chart'),
                 Tab(text: 'Schedule Monitor'),
                 Tab(text: 'Purchasing Plan/Resources'),
-                Tab(text: 'Updates'),
               ],
             ),
           ),
@@ -100,70 +99,6 @@ class _DynamicScheduleScreenState extends State<DynamicScheduleScreen>
                   logger: widget.logger,
                   projectId: widget.project.id,
                   projectName: widget.project.name,
-                ),
-                _buildUpdatesTab(),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildUpdatesTab() {
-    widget.logger.d('📅 DynamicScheduleScreen: Rendering Updates tab');
-    return Container(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.update, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          Text(
-            'Project Updates',
-            style: GoogleFonts.poppins(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Schedule updates and notifications will appear here',
-            style: GoogleFonts.poppins(
-              fontSize: 16,
-              color: Colors.grey.shade500,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 24),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.shade200),
-            ),
-            child: Column(
-              children: [
-                Icon(Icons.info_outline, color: Colors.blue.shade600, size: 32),
-                const SizedBox(height: 12),
-                Text(
-                  'Coming Soon',
-                  style: GoogleFonts.poppins(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Real-time project updates, notifications, and activity tracking will be available in future releases.',
-                  style: GoogleFonts.poppins(
-                    fontSize: 14,
-                    color: Colors.blue.shade700,
-                  ),
-                  textAlign: TextAlign.center,
                 ),
               ],
             ),

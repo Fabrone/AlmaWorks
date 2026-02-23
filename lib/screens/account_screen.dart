@@ -1,67 +1,203 @@
-import 'package:almaworks/services/attendance_service.dart';
+import 'package:almaworks/providers/locale_provider.dart';
+import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/widgets/responsive_layout.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
 
 class AccountScreen extends StatefulWidget {
   final Logger? logger;
-  
-  const AccountScreen({super.key, this.logger});
+  final LocaleProvider localeProvider;
+
+  const AccountScreen({
+    super.key,
+    this.logger,
+    required this.localeProvider,
+  });
 
   @override
   State<AccountScreen> createState() => _AccountScreenState();
 }
 
 class _AccountScreenState extends State<AccountScreen> {
-  final AttendanceService _attendanceService = AttendanceService();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   late final Logger _logger;
-  
-  bool _isSignedIn = false;
-  String _signInTime = '';
+
+  // ── Profile state ──────────────────────────────────────────────────────────
+  bool _isLoadingProfile = true;
+  String? _loadError;
+  String _userName = '';
+  String _userEmail = '';
+  String _userRole = '';
+  String _userUid = '';
+
+  // ── Settings ───────────────────────────────────────────────────────────────
   bool _notificationsEnabled = true;
   bool _darkModeEnabled = false;
-  String _selectedLanguage = 'English';
-  
-  // User profile data
-  String _userName = 'Fabron Lubanga';
-  final String _userRole = 'Project Manager';
-  String _userEmail = 'fabron.lubanga@almaworks.com';
-  String _userPhone = '+254 712 345 678';
-  final String _employeeId = 'EMP001';
+
+  // ── Edit mode ──────────────────────────────────────────────────────────────
   bool _isEditingProfile = false;
-  
+  bool _isSavingProfile = false;
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _logger = widget.logger ?? Logger();
-    _logger.i('👤 AccountScreen: Initialized');
-    _checkSignInStatus();
-    _initializeControllers();
+    _logger.i('👤 AccountScreen: initState called');
+    _logger.d('👤 AccountScreen: localeProvider instance = ${widget.localeProvider.hashCode}, '
+        'current language = ${widget.localeProvider.language}, '
+        'locale = ${widget.localeProvider.locale}');
+    _loadUserProfile();
   }
 
-  void _initializeControllers() {
-    _nameController.text = _userName;
-    _emailController.text = _userEmail;
-    _phoneController.text = _userPhone;
-  }
+  // ── Data Loading ───────────────────────────────────────────────────────────
 
-  void _checkSignInStatus() {
-    final status = _attendanceService.getTodayAttendance();
+  Future<void> _loadUserProfile() async {
+    _logger.i('👤 AccountScreen: _loadUserProfile() started');
     setState(() {
-      _isSignedIn = status['isSignedIn'] ?? false;
-      _signInTime = status['signInTime'] ?? '';
+      _isLoadingProfile = true;
+      _loadError = null;
     });
+
+    try {
+      final currentUser = _auth.currentUser;
+      if (currentUser == null) {
+        _logger.e('👤 AccountScreen: FirebaseAuth.currentUser is null — user not signed in');
+        throw Exception('No authenticated user found. Please log in again.');
+      }
+
+      _userUid = currentUser.uid;
+      _logger.i('👤 AccountScreen: currentUser.uid = $_userUid');
+      _logger.d('👤 AccountScreen: currentUser.email = ${currentUser.email}');
+
+      _logger.d('👤 AccountScreen: Querying Firestore — Users where uid == $_userUid');
+      final querySnapshot = await _firestore
+          .collection('Users')
+          .where('uid', isEqualTo: _userUid)
+          .limit(1)
+          .get();
+
+      _logger.d('👤 AccountScreen: Firestore query returned ${querySnapshot.docs.length} doc(s)');
+
+      if (querySnapshot.docs.isEmpty) {
+        _logger.e('👤 AccountScreen: No user document found for uid=$_userUid');
+        throw Exception('User profile not found. Please contact your administrator.');
+      }
+
+      final doc = querySnapshot.docs.first;
+      final data = doc.data();
+      _logger.i('👤 AccountScreen: Profile document id = ${doc.id}');
+      _logger.d('👤 AccountScreen: Raw Firestore fields = ${data.keys.toList()}');
+
+      final resolvedName = data['Username'] as String? ??
+          data['username'] as String? ??
+          data['name'] as String? ??
+          'Unknown User';
+      final resolvedEmail = data['Email'] as String? ??
+          data['email'] as String? ??
+          currentUser.email ??
+          'No email on record';
+      final resolvedRole = data['role'] as String? ??
+          data['Role'] as String? ??
+          'Member';
+
+      _logger.d('👤 AccountScreen: Resolved — name="$resolvedName" email="$resolvedEmail" role="$resolvedRole"');
+
+      setState(() {
+        _userName = resolvedName;
+        _userEmail = resolvedEmail;
+        _userRole = resolvedRole;
+        _isLoadingProfile = false;
+      });
+
+      _nameController.text = _userName;
+      _emailController.text = _userEmail;
+      _logger.i('👤 AccountScreen: Profile loaded successfully');
+    } catch (e, stack) {
+      _logger.e('❌ AccountScreen: _loadUserProfile() failed — $e');
+      _logger.d('❌ AccountScreen: Stack trace:\n$stack');
+      setState(() {
+        _isLoadingProfile = false;
+        _loadError = e.toString().replaceFirst('Exception: ', '');
+      });
+    }
   }
+
+  // ── Save Profile ───────────────────────────────────────────────────────────
+
+  Future<void> _saveProfile() async {
+    _logger.i('💾 AccountScreen: _saveProfile() called');
+
+    if (_nameController.text.trim().isEmpty) {
+      _logger.w('💾 AccountScreen: Save aborted — name field is empty');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Name cannot be empty.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    setState(() => _isSavingProfile = true);
+    _logger.d('💾 AccountScreen: Querying Firestore to find document for uid=$_userUid');
+
+    try {
+      final querySnapshot = await _firestore
+          .collection('Users')
+          .where('uid', isEqualTo: _userUid)
+          .limit(1)
+          .get();
+
+      _logger.d('💾 AccountScreen: Found ${querySnapshot.docs.length} doc(s) to update');
+
+      if (querySnapshot.docs.isNotEmpty) {
+        final docId = querySnapshot.docs.first.id;
+        _logger.d('💾 AccountScreen: Updating document "$docId" with new name/email');
+        await querySnapshot.docs.first.reference.update({
+          'Username': _nameController.text.trim(),
+          'Email': _emailController.text.trim(),
+        });
+        _logger.i('💾 AccountScreen: Firestore update succeeded');
+      } else {
+        _logger.w('💾 AccountScreen: No document found to update — uid=$_userUid');
+      }
+
+      setState(() {
+        _userName = _nameController.text.trim();
+        _userEmail = _emailController.text.trim();
+        _isEditingProfile = false;
+        _isSavingProfile = false;
+      });
+
+      _logger.i('💾 AccountScreen: Profile save complete — name="$_userName" email="$_userEmail"');
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile updated successfully!'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e, stack) {
+      _logger.e('❌ AccountScreen: _saveProfile() failed — $e');
+      _logger.d('❌ AccountScreen: Stack trace:\n$stack');
+      setState(() => _isSavingProfile = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
     final isTablet = screenWidth >= 600 && screenWidth < 1200;
-    
+
     return ResponsiveLayout(
       mobile: _buildMobileLayout(),
       tablet: _buildTabletLayout(isTablet),
@@ -69,303 +205,385 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  Widget _buildMobileLayout() {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: Column(
-        children: [
+  Widget _buildMobileLayout() => Scaffold(
+        appBar: _buildAppBar(),
+        drawer: _buildDrawer(),
+        body: Column(children: [
           Expanded(child: _buildAccountContent(true)),
-          _buildFooter(context, true),
-        ],
-      ),
-    );
-  }
+          _buildFooter(true),
+        ]),
+      );
 
-  Widget _buildTabletLayout(bool isTablet) {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: Row(
-        children: [
-          _buildSidebar(context, isTablet),
+  Widget _buildTabletLayout(bool isTablet) => Scaffold(
+        appBar: _buildAppBar(),
+        body: Row(children: [
+          _buildSidebar(isTablet),
           Expanded(
-            child: Column(
-              children: [
-                Expanded(child: _buildAccountContent(false)),
-                _buildFooter(context, false),
-              ],
-            ),
+            child: Column(children: [
+              Expanded(child: _buildAccountContent(false)),
+              _buildFooter(false),
+            ]),
           ),
-        ],
-      ),
-    );
-  }
+        ]),
+      );
 
-  Widget _buildDesktopLayout() {
-    return Scaffold(
-      appBar: _buildAppBar(),
-      body: Row(
-        children: [
-          _buildSidebar(context, false),
+  Widget _buildDesktopLayout() => Scaffold(
+        appBar: _buildAppBar(),
+        body: Row(children: [
+          _buildSidebar(false),
           Expanded(
-            child: Column(
-              children: [
-                Expanded(child: _buildAccountContent(false)),
-                _buildFooter(context, false),
-              ],
-            ),
+            child: Column(children: [
+              Expanded(child: _buildAccountContent(false)),
+              _buildFooter(false),
+            ]),
           ),
-        ],
-      ),
-    );
-  }
+        ]),
+      );
+
+  // ── AppBar ─────────────────────────────────────────────────────────────────
 
   PreferredSizeWidget _buildAppBar() {
     return AppBar(
-      title: const Text(
-        'Account',
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-        ),
-      ),
+      title: Text('My Account',
+          style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: Colors.white)),
       centerTitle: true,
       backgroundColor: const Color(0xFF0A2E5A),
       foregroundColor: Colors.white,
       actions: [
+        if (!_isLoadingProfile && _loadError == null) ...[
+          if (_isSavingProfile)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+            )
+          else
+            IconButton(
+              icon: Icon(_isEditingProfile ? Icons.check_rounded : Icons.edit),
+              tooltip: _isEditingProfile ? 'Save changes' : 'Edit profile',
+              onPressed: () {
+                if (_isEditingProfile) {
+                  _saveProfile();
+                } else {
+                  _logger.d('👤 AccountScreen: Edit mode enabled');
+                  setState(() => _isEditingProfile = true);
+                }
+              },
+            ),
+          if (_isEditingProfile)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: 'Cancel',
+              onPressed: () {
+                _logger.d('👤 AccountScreen: Edit mode cancelled');
+                setState(() {
+                  _isEditingProfile = false;
+                  _nameController.text = _userName;
+                  _emailController.text = _userEmail;
+                });
+              },
+            ),
+        ],
         IconButton(
-          icon: Icon(_isEditingProfile ? Icons.save : Icons.edit),
+          icon: const Icon(Icons.refresh),
+          tooltip: 'Refresh profile',
           onPressed: () {
-            if (_isEditingProfile) {
-              _saveProfile();
-            } else {
-              setState(() {
-                _isEditingProfile = true;
-              });
-            }
+            _logger.i('👤 AccountScreen: Manual refresh triggered');
+            _loadUserProfile();
           },
         ),
       ],
     );
   }
 
-  Widget _buildSidebar(BuildContext context, bool isTablet) {
+  // ── Sidebar (mirrors BaseLayout sidebar structure) ─────────────────────────
+
+  /// Mobile drawer wraps the same sidebar content used on tablet/desktop.
+  Widget _buildDrawer() => Drawer(child: _buildSidebarContent());
+
+  Widget _buildSidebar(bool isTablet) {
     return Container(
       width: isTablet ? 280 : 300,
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(2, 0),
-          ),
+              color: Colors.grey.withValues(alpha: 0.1),
+              blurRadius: 4,
+              offset: const Offset(2, 0)),
         ],
       ),
-      child: Column(
-        children: [
-          Container(
-            height: 120,
-            width: double.infinity,
-            decoration: const BoxDecoration(
-              color: Color(0xFF0A2E5A),
-            ),
-            child: const Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    'AlmaWorks',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16.0),
-                  child: Text(
-                    'Site Management',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 16,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              padding: EdgeInsets.zero,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.dashboard),
-                  title: const Text('Dashboard'),
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.folder),
-                  title: const Text('Projects'),
-                  onTap: () {
-                    Navigator.pop(context);
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.person),
-                  title: const Text('Account'),
-                  selected: true,
-                  onTap: () {},
-                ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text(
-                    'System Sections',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.description),
-                  title: const Text('Documents'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.architecture),
-                  title: const Text('Drawings'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.schedule),
-                  title: const Text('Schedule'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.security),
-                  title: const Text('Quality & Safety'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.analytics),
-                  title: const Text('Reports'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.photo_library),
-                  title: const Text('Photo Gallery'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-                ListTile(
-                  leading: const Icon(Icons.attach_money),
-                  title: const Text('Financials'),
-                  enabled: false,
-                  onTap: () {},
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+      child: _buildSidebarContent(),
     );
   }
 
+  /// Sidebar content that matches BaseLayout exactly:
+  /// header → Switch Project → Overview → per-project sections (greyed out
+  /// since no project is selected from this screen) → Account (selected).
+  Widget _buildSidebarContent() {
+    final bool isClient = _userRole == 'Client';
+    final bool isMobile = MediaQuery.of(context).size.width < 600;
+
+    return Column(
+      children: [
+        // ── Header ─────────────────────────────────────────────────────────
+        Container(
+          height: 120,
+          width: double.infinity,
+          decoration: const BoxDecoration(color: Color(0xFF0A2E5A)),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Text(
+                  'AlmaWorks',
+                  style: GoogleFonts.poppins(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Text(
+                  isClient ? 'My Project Dashboard' : 'Project Dashboard',
+                  style: GoogleFonts.poppins(color: Colors.white70, fontSize: 14),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // ── Nav items ──────────────────────────────────────────────────────
+        Expanded(
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              // Switch Project / My Projects
+              ListTile(
+                leading: const Icon(Icons.swap_horiz),
+                title: Text(
+                  isClient ? 'My Projects' : 'Switch Project',
+                  style: GoogleFonts.poppins(),
+                ),
+                onTap: () {
+                  _logger.i('🧭 AccountScreen sidebar: Switch Project tapped');
+                  if (isMobile) Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ProjectsMainScreen(
+                        logger: _logger,
+                        clientProjectIds: isClient ? [] : null,
+                      ),
+                    ),
+                  );
+                },
+              ),
+
+              // Overview — no project selected from this screen, shown greyed
+              ListTile(
+                leading: const Icon(Icons.dashboard),
+                title: Text('Overview', style: GoogleFonts.poppins()),
+                enabled: false,
+                onTap: null,
+              ),
+
+              // Project sections — all disabled (no active project context here)
+              for (final item in [
+                (Icons.description, 'Documents'),
+                (Icons.architecture, 'Drawings'),
+                (Icons.schedule, 'Schedule'),
+                (Icons.shield_sharp, 'Quality & Safety'),
+                if (!isClient) (Icons.insert_chart, 'Reports'),
+                if (!isClient) (Icons.photo_library, 'Photo Gallery'),
+                if (isClient) (Icons.photo_album, 'Photos'),
+                (Icons.account_balance, 'Financials'),
+              ])
+                ListTile(
+                  leading: Icon(item.$1),
+                  title: Text(item.$2, style: GoogleFonts.poppins()),
+                  enabled: false,
+                ),
+
+              const Divider(),
+
+              // Account — currently selected
+              ListTile(
+                leading: const Icon(Icons.person),
+                title: Text('Account', style: GoogleFonts.poppins()),
+                selected: true,
+                selectedTileColor: Colors.blueGrey[50],
+                onTap: () {},
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── Main Content ───────────────────────────────────────────────────────────
+
   Widget _buildAccountContent(bool isMobile) {
+    if (_isLoadingProfile) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: Color(0xFF0A2E5A)),
+            SizedBox(height: 16),
+            Text('Loading your profile…', style: TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    }
+
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 56),
+              const SizedBox(height: 16),
+              Text(_loadError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red, fontSize: 15)),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try Again'),
+                onPressed: () {
+                  _logger.i('👤 AccountScreen: Retry profile load tapped');
+                  _loadUserProfile();
+                },
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0A2E5A),
+                    foregroundColor: Colors.white),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return SingleChildScrollView(
       padding: EdgeInsets.all(isMobile ? 12 : 16),
       child: Column(
         children: [
           _buildProfileSection(isMobile),
-          const SizedBox(height: 24),
-          _buildAttendanceSection(isMobile),
-          const SizedBox(height: 24),
-          _buildOrganizationSection(isMobile),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           _buildSettingsSection(isMobile),
         ],
       ),
     );
   }
 
+  // ── Profile Section ────────────────────────────────────────────────────────
+
   Widget _buildProfileSection(bool isMobile) {
+    final initials = _userName.isNotEmpty
+        ? _userName
+            .trim()
+            .split(RegExp(r'\s+'))
+            .where((w) => w.isNotEmpty)
+            .map((w) => w[0].toUpperCase())
+            .take(2)
+            .join()
+        : '?';
+
     return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        padding: EdgeInsets.all(isMobile ? 16 : 24),
         child: Column(
           children: [
-            CircleAvatar(
-              radius: isMobile ? 40 : 50,
-              backgroundColor: const Color(0xFF0A2E5A),
-              child: Text(
-                _userName.split(' ').map((name) => name[0]).join(''),
-                style: TextStyle(
-                  fontSize: isMobile ? 24 : 30,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+            Stack(
+              alignment: Alignment.bottomRight,
+              children: [
+                CircleAvatar(
+                  radius: isMobile ? 44 : 56,
+                  backgroundColor: const Color(0xFF0A2E5A),
+                  child: Text(
+                    initials,
+                    style: TextStyle(
+                        fontSize: isMobile ? 26 : 32,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
+                  ),
                 ),
-              ),
+                if (_userRole.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1565C0),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                    child: Text(
+                      _userRole,
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+              ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             if (_isEditingProfile) ...[
               TextFormField(
                 controller: _nameController,
                 decoration: const InputDecoration(
-                  labelText: 'Full Name',
-                  border: OutlineInputBorder(),
-                ),
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
+                    labelText: 'Full Name',
+                    prefixIcon: Icon(Icons.person_outline),
+                    border: OutlineInputBorder()),
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _emailController,
                 decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                ),
+                    labelText: 'Email Address',
+                    prefixIcon: Icon(Icons.email_outlined),
+                    border: OutlineInputBorder()),
+                keyboardType: TextInputType.emailAddress,
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _phoneController,
-                decoration: const InputDecoration(
-                  labelText: 'Phone',
-                  border: OutlineInputBorder(),
-                ),
+              const SizedBox(height: 4),
+              Text(
+                'Note: Changing your email here updates your profile record only.',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
               ),
             ] else ...[
               Text(
                 _userName,
                 style: TextStyle(
-                  fontSize: isMobile ? 20 : 24,
-                  fontWeight: FontWeight.bold,
+                    fontSize: isMobile ? 20 : 24, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A2E5A).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  _userRole,
+                  style: const TextStyle(
+                      color: Color(0xFF0A2E5A),
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                _userRole,
-                style: TextStyle(
-                  fontSize: isMobile ? 14 : 16,
-                  color: Colors.grey,
-                ),
-              ),
-              const SizedBox(height: 16),
-              _buildInfoRow('Email', _userEmail),
-              _buildInfoRow('Phone', _userPhone),
-              _buildInfoRow('Employee ID', _employeeId),
+              const SizedBox(height: 20),
+              const Divider(),
+              const SizedBox(height: 12),
+              _buildInfoRow(Icons.email_outlined, 'Email', _userEmail),
             ],
           ],
         ),
@@ -373,237 +591,87 @@ class _AccountScreenState extends State<AccountScreen> {
     );
   }
 
-  Widget _buildAttendanceSection(bool isMobile) {
-    return Card(
-      child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.access_time, color: const Color(0xFF0A2E5A)),
-                const SizedBox(width: 8),
-                Text(
-                  'Today\'s Attendance',
-                  style: TextStyle(
-                    fontSize: isMobile ? 16 : 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            if (_isSignedIn) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  children: [
-                    const Icon(Icons.check_circle, color: Colors.green, size: 32),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Signed In',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
-                    ),
-                    Text(
-                      'Sign-in time: $_signInTime',
-                      style: TextStyle(color: Colors.grey[600]),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _signOut,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text('Sign Out'),
-                ),
-              ),
-            ] else ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Column(
-                  children: [
-                    Icon(Icons.schedule, color: Colors.orange, size: 32),
-                    SizedBox(height: 8),
-                    Text(
-                      'Not Signed In',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange,
-                      ),
-                    ),
-                    Text('Tap below to mark your attendance'),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _signIn,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A2E5A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text('Sign In'),
-                ),
-              ),
-            ],
-          ],
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: Colors.grey[600]),
+        const SizedBox(width: 10),
+        Text('$label:',
+            style: TextStyle(
+                fontWeight: FontWeight.w500, color: Colors.grey[600], fontSize: 13)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(value,
+              style: const TextStyle(fontSize: 14), overflow: TextOverflow.ellipsis),
         ),
-      ),
+      ],
     );
   }
 
-  Widget _buildOrganizationSection(bool isMobile) {
-    return Card(
-      child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.business, color: const Color(0xFF0A2E5A)),
-                const SizedBox(width: 8),
-                Text(
-                  'Organization Details',
-                  style: TextStyle(
-                    fontSize: isMobile ? 16 : 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildInfoRow('Organization', 'AlmaWorks Construction Ltd'),
-            _buildInfoRow('Department', 'Project Management'),
-            _buildInfoRow('Location', 'Nairobi, Kenya'),
-            _buildInfoRow('Joined Date', '14 Feb 2025'),
-          ],
-        ),
-      ),
-    );
-  }
+  // ── Settings Section ───────────────────────────────────────────────────────
 
   Widget _buildSettingsSection(bool isMobile) {
     return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
+        padding: EdgeInsets.all(isMobile ? 16 : 20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.settings, color: const Color(0xFF0A2E5A)),
+                const Icon(Icons.settings, color: Color(0xFF0A2E5A)),
                 const SizedBox(width: 8),
-                Text(
-                  'Settings',
-                  style: TextStyle(
-                    fontSize: isMobile ? 16 : 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Text('Settings',
+                    style: TextStyle(
+                        fontSize: isMobile ? 16 : 18, fontWeight: FontWeight.bold)),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
             _buildSettingsTile(
-              Icons.notifications,
+              Icons.notifications_outlined,
               'Notifications',
               Switch(
                 value: _notificationsEnabled,
-                onChanged: (value) {
-                  setState(() {
-                    _notificationsEnabled = value;
-                  });
-                  _logger.i('🔔 AccountScreen: Notifications ${value ? 'enabled' : 'disabled'}');
+                onChanged: (v) {
+                  _logger.d('🔔 AccountScreen: Notifications toggled → $v');
+                  setState(() => _notificationsEnabled = v);
                 },
                 activeThumbColor: const Color(0xFF0A2E5A),
-
               ),
             ),
             _buildSettingsTile(
-              Icons.dark_mode,
+              Icons.dark_mode_outlined,
               'Dark Mode',
               Switch(
                 value: _darkModeEnabled,
-                onChanged: (value) {
-                  setState(() {
-                    _darkModeEnabled = value;
-                  });
-                  _logger.i('🌙 AccountScreen: Dark mode ${value ? 'enabled' : 'disabled'}');
+                onChanged: (v) {
+                  _logger.d('🌙 AccountScreen: Dark mode toggled → $v');
+                  setState(() => _darkModeEnabled = v);
                 },
                 activeThumbColor: const Color(0xFF0A2E5A),
-
               ),
             ),
+            _buildLanguageTile(),
+            const Divider(height: 24),
             _buildSettingsTile(
-              Icons.language,
-              'Language',
-              DropdownButton<String>(
-                value: _selectedLanguage,
-                underline: Container(),
-                items: ['English', 'Swahili', 'Italian'].map((String value) {
-                  return DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(value),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  if (newValue != null) {
-                    setState(() {
-                      _selectedLanguage = newValue;
-                    });
-                    _logger.i('🌐 AccountScreen: Language changed to $newValue');
-                  }
-                },
-              ),
-            ),
-            _buildSettingsTile(
-              Icons.security,
+              Icons.security_outlined,
               'Privacy & Security',
               const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Privacy & Security settings coming soon')),
-                );
-              },
+              onTap: () => _showComingSoon('Privacy & Security'),
             ),
             _buildSettingsTile(
-              Icons.help,
+              Icons.help_outline,
               'Help & Support',
               const Icon(Icons.arrow_forward_ios, size: 16),
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Help & Support coming soon')),
-                );
-              },
+              onTap: () => _showComingSoon('Help & Support'),
             ),
+            const Divider(height: 24),
             _buildSettingsTile(
               Icons.logout,
               'Logout',
-              const Icon(Icons.arrow_forward_ios, size: 16),
+              const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.red),
               onTap: _showLogoutDialog,
               textColor: Colors.red,
               iconColor: Colors.red,
@@ -612,6 +680,166 @@ class _AccountScreenState extends State<AccountScreen> {
         ),
       ),
     );
+  }
+
+  // ── Language Tile & Picker ─────────────────────────────────────────────────
+
+  Widget _buildLanguageTile() {
+    final provider = widget.localeProvider;
+    _logger.d('🌐 AccountScreen: _buildLanguageTile() — '
+        'provider.language=${provider.language} locale=${provider.locale}');
+
+    return ListenableBuilder(
+      listenable: provider,
+      builder: (context, _) {
+        final currentLang = provider.language;
+        final flag = kLanguageFlags[currentLang]!;
+        final label = kLanguageLabels[currentLang]!;
+
+        _logger.d('🌐 AccountScreen: ListenableBuilder rebuilt — '
+            'language=$currentLang flag=$flag label=$label');
+
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.language_outlined, color: Colors.grey[700]),
+          title: Text('Language', style: GoogleFonts.poppins()),
+          trailing: GestureDetector(
+            onTap: () {
+              _logger.i('🌐 AccountScreen: Language tile tapped — opening picker');
+              _showLanguagePicker(provider);
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: const Color(0xFF0A2E5A).withValues(alpha: 0.3)),
+                borderRadius: BorderRadius.circular(8),
+                color: const Color(0xFF0A2E5A).withValues(alpha: 0.05),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(flag, style: const TextStyle(fontSize: 18)),
+                  const SizedBox(width: 6),
+                  Text(label,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w600, color: Color(0xFF0A2E5A))),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.expand_more, size: 16, color: Color(0xFF0A2E5A)),
+                ],
+              ),
+            ),
+          ),
+          onTap: () {
+            _logger.i('🌐 AccountScreen: Language row tapped — opening picker');
+            _showLanguagePicker(provider);
+          },
+        );
+      },
+    );
+  }
+
+  void _showLanguagePicker(LocaleProvider provider) {
+    _logger.i('🌐 AccountScreen: _showLanguagePicker() called');
+    _logger.d('🌐 AccountScreen: provider.language before open = ${provider.language}');
+    _logger.d('🌐 AccountScreen: provider.locale before open = ${provider.locale}');
+    _logger.d('🌐 AccountScreen: Available languages = ${AppLanguage.values}');
+
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (sheetContext) {
+        _logger.d('🌐 AccountScreen: Bottom sheet builder called');
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text('Select Language',
+                      style: GoogleFonts.poppins(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+                const Divider(height: 1),
+                ...AppLanguage.values.map((lang) {
+                  _logger.d('🌐 AccountScreen: Building language option — $lang '
+                      '(${kLanguageLabels[lang]})');
+                  return ListenableBuilder(
+                    listenable: provider,
+                    builder: (context, _) {
+                      final isSelected = provider.language == lang;
+                      _logger.d('🌐 AccountScreen: ListenableBuilder for $lang — '
+                          'isSelected=$isSelected, provider.language=${provider.language}');
+                      return ListTile(
+                        leading: Text(kLanguageFlags[lang]!,
+                            style: const TextStyle(fontSize: 28)),
+                        title: Text(
+                          kLanguageLabels[lang]!,
+                          style: GoogleFonts.poppins(
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: isSelected ? const Color(0xFF0A2E5A) : null),
+                        ),
+                        trailing: isSelected
+                            ? const Icon(Icons.check_circle,
+                                color: Color(0xFF0A2E5A))
+                            : null,
+                        onTap: () {
+                          _logger.i('🌐 AccountScreen: Language selected — $lang '
+                              '(${kLanguageLabels[lang]})');
+                          _logger.d('🌐 AccountScreen: Previous language = '
+                              '${provider.language}, locale = ${provider.locale}');
+
+                          try {
+                            provider.setLanguage(lang);
+                            _logger.i('🌐 AccountScreen: provider.setLanguage($lang) called successfully');
+                            _logger.d('🌐 AccountScreen: provider.language after set = '
+                                '${provider.language}, locale = ${provider.locale}');
+                          } catch (e, stack) {
+                            _logger.e('❌ AccountScreen: provider.setLanguage($lang) threw — $e');
+                            _logger.d('❌ AccountScreen: Stack trace:\n$stack');
+                          }
+
+                          _logger.d('🌐 AccountScreen: Closing bottom sheet');
+                          Navigator.pop(sheetContext);
+
+                          _logger.d('🌐 AccountScreen: Showing snackbar confirmation');
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                  'Language changed to ${kLanguageLabels[lang]}'),
+                              duration: const Duration(seconds: 2),
+                            ),
+                          );
+
+                          _logger.i('🌐 AccountScreen: Language switch flow complete — '
+                              'new language=${provider.language}, locale=${provider.locale}');
+                        },
+                      );
+                    },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    ).then((_) {
+      _logger.d('🌐 AccountScreen: Bottom sheet dismissed — '
+          'final language=${provider.language}, locale=${provider.locale}');
+    });
   }
 
   Widget _buildSettingsTile(
@@ -623,40 +851,17 @@ class _AccountScreenState extends State<AccountScreen> {
     Color? iconColor,
   }) {
     return ListTile(
-      leading: Icon(icon, color: iconColor),
-      title: Text(
-        title,
-        style: TextStyle(color: textColor),
-      ),
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(icon, color: iconColor ?? Colors.grey[700]),
+      title: Text(title, style: GoogleFonts.poppins(color: textColor)),
       trailing: trailing,
       onTap: onTap,
-      contentPadding: EdgeInsets.zero,
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w500,
-                color: Colors.grey[600],
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  // ── Footer ─────────────────────────────────────────────────────────────────
 
-  Widget _buildFooter(BuildContext context, bool isMobile) {
+  Widget _buildFooter(bool isMobile) {
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(isMobile ? 12 : 16),
@@ -664,106 +869,77 @@ class _AccountScreenState extends State<AccountScreen> {
       child: Text(
         '© 2025 JV Alma C.I.S Site Management System',
         style: TextStyle(
-          color: Colors.white,
-          fontSize: isMobile ? 12 : 14,
-          fontWeight: FontWeight.w400,
-        ),
+            color: Colors.white,
+            fontSize: isMobile ? 12 : 14,
+            fontWeight: FontWeight.w400),
         textAlign: TextAlign.center,
       ),
     );
   }
 
-  void _saveProfile() {
-    setState(() {
-      _userName = _nameController.text;
-      _userEmail = _emailController.text;
-      _userPhone = _phoneController.text;
-      _isEditingProfile = false;
-    });
-    
-    _logger.i('💾 AccountScreen: Profile updated - Name: $_userName');
-    
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  void _showComingSoon(String feature) {
+    _logger.d('👤 AccountScreen: "$feature" tapped — coming soon');
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Profile updated successfully!'),
-        backgroundColor: Colors.green,
+      SnackBar(content: Text('$feature coming soon')),
+    );
+  }
+
+  void _showLogoutDialog() {
+    _logger.i('🚪 AccountScreen: Logout dialog opened');
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Row(
+          children: [
+            Icon(Icons.logout, color: Colors.red),
+            SizedBox(width: 8),
+            Text('Logout'),
+          ],
+        ),
+        content: const Text('Are you sure you want to logout?'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _logger.d('🚪 AccountScreen: Logout cancelled');
+              Navigator.pop(context);
+            },
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _logger.i('🚪 AccountScreen: Logging out — calling _auth.signOut()');
+              try {
+                _auth.signOut();
+                _logger.i('🚪 AccountScreen: signOut() succeeded');
+              } catch (e) {
+                _logger.e('❌ AccountScreen: signOut() failed — $e');
+              }
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                    content: Text('Logged out successfully'),
+                    backgroundColor: Colors.blue),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Logout'),
+          ),
+        ],
       ),
     );
   }
 
-  void _signIn() async {
-    final success = await _attendanceService.signIn();
-    if (success) {
-      _checkSignInStatus();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Successfully signed in!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-      _logger.i('✅ AccountScreen: User signed in successfully');
-    }
-  }
-
-  void _signOut() async {
-    final success = await _attendanceService.signOut();
-    if (success) {
-      _checkSignInStatus();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Successfully signed out!'),
-            backgroundColor: Colors.blue,
-          ),
-        );
-      }
-      _logger.i('✅ AccountScreen: User signed out successfully');
-    }
-  }
-
-  void _showLogoutDialog() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Logout'),
-          content: const Text('Are you sure you want to logout?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                _logger.i('🚪 AccountScreen: User logged out');
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Logged out successfully'),
-                    backgroundColor: Colors.blue,
-                  ),
-                );
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Logout'),
-            ),
-          ],
-        );
-      },
-    );
-  }
+  // ── Dispose ────────────────────────────────────────────────────────────────
 
   @override
   void dispose() {
-    _logger.i('🧹 AccountScreen: Disposing resources');
+    _logger.i('🧹 AccountScreen: dispose() called');
     _nameController.dispose();
     _emailController.dispose();
-    _phoneController.dispose();
     super.dispose();
   }
 }

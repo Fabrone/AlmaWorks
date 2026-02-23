@@ -16,6 +16,7 @@ import 'package:provider/provider.dart';
 import 'package:logger/logger.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:almaworks/main.dart' show localeProvider;
 
 class DashboardScreen extends StatefulWidget {
   final Logger logger;
@@ -208,7 +209,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 onTap: () {
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const AccountScreen()),
+                    MaterialPageRoute(
+                      builder: (context) => AccountScreen(localeProvider: localeProvider),
+                    ),
                   );
                 },
                 child: const Padding(
@@ -671,7 +674,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _logger.i('👤 DashboardScreen: Account button pressed');
             Navigator.push(
               context,
-              MaterialPageRoute(builder: (context) => const AccountScreen()),
+              MaterialPageRoute(
+                builder: (context) => AccountScreen(localeProvider: localeProvider),
+              ),
             );
           },
           child: const Padding(

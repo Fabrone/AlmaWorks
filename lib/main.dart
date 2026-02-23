@@ -1,8 +1,7 @@
 import 'package:almaworks/authentication/login_screen.dart';
 import 'package:almaworks/authentication/welcome_screen.dart';
-//import 'package:almaworks/authentication/registration_screen.dart';
+import 'package:almaworks/providers/locale_provider.dart';
 import 'package:almaworks/rbacsystem/auth_service.dart';
-//import 'package:almaworks/screens/dashboard_screen.dart';
 import 'package:almaworks/screens/utils/app_theme.dart';
 import 'package:almaworks/services/notification_service.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
@@ -13,9 +12,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logger/logger.dart';
 import 'firebase_options.dart';
 
+// ─── Global LocaleProvider ────────────────────────────────────────────────────
+// Declared at top-level so any screen can import it with:
+//   import 'package:almaworks/main.dart' show localeProvider;
+final LocaleProvider localeProvider = LocaleProvider();
+// ─────────────────────────────────────────────────────────────────────────────
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   final Logger logger = Logger(
     printer: PrettyPrinter(
       methodCount: 2,
@@ -29,13 +34,13 @@ void main() async {
 
   try {
     logger.i('🚀 Starting AlmaWorks application initialization');
-    
+
     // Initialize Firebase with proper options
     await Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
     logger.i('✅ Firebase initialized successfully');
-    
+
     // Enable Firestore offline persistence
     FirebaseFirestore.instance.settings = const Settings(
       persistenceEnabled: true,
@@ -80,7 +85,6 @@ void main() async {
           playSound: true,
           enableVibration: true,
         ),
-        // NEW: Added channel for client access requests
         NotificationChannel(
           channelKey: 'client_requests',
           channelName: 'Client Access Requests',
@@ -97,7 +101,7 @@ void main() async {
     );
     logger.i('✅ Awesome Notifications initialized successfully');
 
-    // NEW: Initialize Flutter Local Notifications Service for client requests
+    // Initialize Flutter Local Notifications Service for client requests
     try {
       await NotificationService(logger: logger).initialize();
       logger.i('✅ Notification Service initialized successfully');
@@ -108,16 +112,16 @@ void main() async {
 
     runApp(AlmaWorksApp(logger: logger));
     logger.i('✅ AlmaWorks app started successfully');
-    
   } catch (e, stackTrace) {
-    logger.e('❌ Failed to initialize AlmaWorks app', error: e, stackTrace: stackTrace);
+    logger.e('❌ Failed to initialize AlmaWorks app',
+        error: e, stackTrace: stackTrace);
     runApp(ErrorApp(error: e.toString()));
   }
 }
 
 class AlmaWorksApp extends StatefulWidget {
   final Logger logger;
-  
+
   const AlmaWorksApp({super.key, required this.logger});
 
   @override
@@ -130,26 +134,26 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
   @override
   void initState() {
     super.initState();
-    
+
     widget.logger.i('🔔 Setting up notification action listeners');
-    
+
     // Listen to notification actions when user taps from system tray
     AwesomeNotifications().setListeners(
       onActionReceivedMethod: (ReceivedAction receivedAction) async {
         widget.logger.i('👆 User tapped notification: ${receivedAction.id}');
-        
-        // Handle different notification types
+
         if (receivedAction.payload != null) {
           final notificationType = receivedAction.payload!['type'];
-          
+
           // Handle schedule/task notifications
           if (notificationType == 'schedule' || notificationType == null) {
             final projectId = receivedAction.payload!['projectId'];
             final taskId = receivedAction.payload!['taskId'];
             final notificationId = receivedAction.payload!['notificationId'];
-            
-            widget.logger.d('Schedule notification: projectId=$projectId, taskId=$taskId, notifId=$notificationId');
-            
+
+            widget.logger.d(
+                'Schedule notification: projectId=$projectId, taskId=$taskId, notifId=$notificationId');
+
             // Mark as read and opened when user taps
             if (notificationId != null) {
               try {
@@ -157,19 +161,19 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
                     .collection('ScheduleNotifications')
                     .doc(notificationId)
                     .update({
-                      'isRead': true,
-                      'openedFromTray': true,
-                      'openedAt': FieldValue.serverTimestamp(),
-                      'readSource': 'system_tray',
-                    });
+                  'isRead': true,
+                  'openedFromTray': true,
+                  'openedAt': FieldValue.serverTimestamp(),
+                  'readSource': 'system_tray',
+                });
                 widget.logger.i('✅ Marked notification as read from system tray');
               } catch (e) {
                 widget.logger.e('Error marking notification as read', error: e);
               }
             }
           }
-          
-          // NEW: Handle client request notifications
+
+          // Handle client request notifications
           else if (notificationType == 'client_request') {
             widget.logger.d('Client request notification tapped');
             // Navigation will be handled by the NotificationService
@@ -182,7 +186,7 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
   @override
   Widget build(BuildContext context) {
     widget.logger.i('🏗️ Building AlmaWorks main app widget');
-    
+
     SystemChrome.setSystemUIOverlayStyle(
       const SystemUiOverlayStyle(
         statusBarColor: Colors.transparent,
@@ -190,21 +194,27 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
       ),
     );
 
-    return MaterialApp(
-      navigatorKey: navigatorKey,
-      title: 'AlmaWorks',
-      theme: AppTheme.lightTheme,
-      debugShowCheckedModeBanner: false,
-      // NEW: Use AuthenticationWrapper instead of direct screen
-      home: AuthenticationWrapper(logger: widget.logger),
+    // ListenableBuilder rebuilds MaterialApp whenever localeProvider changes,
+    // which causes the entire widget tree to adopt the new locale immediately.
+    return ListenableBuilder(
+      listenable: localeProvider,
+      builder: (context, _) => MaterialApp(
+        navigatorKey: navigatorKey,
+        title: 'AlmaWorks',
+        theme: AppTheme.lightTheme,
+        debugShowCheckedModeBanner: false,
+        locale: localeProvider.locale,
+        supportedLocales: LocaleProvider.supportedLocales,
+        home: AuthenticationWrapper(logger: widget.logger),
+      ),
     );
   }
 }
 
-// NEW: Authentication wrapper to handle persistent login
+// Authentication wrapper to handle persistent login
 class AuthenticationWrapper extends StatefulWidget {
   final Logger logger;
-  
+
   const AuthenticationWrapper({super.key, required this.logger});
 
   @override
@@ -227,14 +237,14 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
   Future<void> _checkAuthenticationStatus() async {
     try {
       widget.logger.i('🔍 Checking authentication status...');
-      
+
       final isLoggedIn = await _authService.isUserLoggedIn();
-      
+
       if (isLoggedIn) {
         widget.logger.i('✅ User is logged in, fetching user data...');
-        
+
         final userData = await _authService.getUserData();
-        
+
         if (userData != null) {
           setState(() {
             _isLoggedIn = true;
@@ -242,7 +252,7 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
             _role = userData['role'] ?? 'Client';
             _isLoading = false;
           });
-          
+
           widget.logger.i('✅ User data loaded: $_username ($_role)');
         } else {
           widget.logger.w('⚠️ User data not found, redirecting to login');
@@ -319,7 +329,7 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
 
 class ErrorApp extends StatelessWidget {
   final String error;
-  
+
   const ErrorApp({super.key, required this.error});
 
   @override
