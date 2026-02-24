@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io' show Directory, File, Platform;
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:almaworks/models/project_model.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -12,6 +14,8 @@ import 'package:logger/logger.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_file/open_file.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
@@ -530,239 +534,618 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     }
   }
 
-  // ── PDF generation ────────────────────────────────────────────
-  String _quillToPlainText(quill.QuillController ctrl) {
-    return ctrl.document.toPlainText().trim();
+  // ══════════════════════════════════════════════════════════════
+  //  PDF GENERATION
+  // ══════════════════════════════════════════════════════════════
+
+  // ── Resolve Quill font attr → pw.Font ────────────────────────
+  // font attr value coming from flutter_quill is the CSS font-family
+  // string set by the toolbar (e.g. "Arial", "Times New Roman").
+  // We purposely do NOT default to Times — plain text with no font
+  // attr stays Helvetica (the clean PDF default).
+  pw.Font _resolveFont(String? family,
+      {bool bold = false, bool italic = false}) {
+    final f = (family ?? '').toLowerCase().trim();
+    if (f.isEmpty) {
+      // No font attr → Helvetica family
+      if (bold && italic) return pw.Font.helveticaBoldOblique();
+      if (bold)           return pw.Font.helveticaBold();
+      if (italic)         return pw.Font.helveticaOblique();
+      return pw.Font.helvetica();
+    }
+    if (f.contains('times') || f.contains('serif')) {
+      if (bold && italic) return pw.Font.timesBoldItalic();
+      if (bold)           return pw.Font.timesBold();
+      if (italic)         return pw.Font.timesItalic();
+      return pw.Font.times();
+    }
+    if (f.contains('courier') || f.contains('mono')) {
+      if (bold && italic) return pw.Font.courierBoldOblique();
+      if (bold)           return pw.Font.courierBold();
+      if (italic)         return pw.Font.courierOblique();
+      return pw.Font.courier();
+    }
+    // Arial / Helvetica / Sans-serif / anything else
+    if (bold && italic) return pw.Font.helveticaBoldOblique();
+    if (bold)           return pw.Font.helveticaBold();
+    if (italic)         return pw.Font.helveticaOblique();
+    return pw.Font.helvetica();
+  }
+
+  // ── Convert Quill Delta → list of pdf paragraph widgets ───────
+  // Maps bold, italic, underline, colour, bullet, numbered list,
+  // text-align and font-family to their pdf equivalents.
+  // Each paragraph is a separate widget so MultiPage reflowing works.
+  List<pw.Widget> _quillDeltaToPdfWidgets(
+    quill.QuillController ctrl,
+    pw.TextStyle baseStyle,
+  ) {
+    final List<pw.Widget> widgets = [];
+    final ops = ctrl.document.toDelta().toJson() as List<dynamic>;
+
+    final List<pw.InlineSpan> currentSpans = [];
+    pw.TextAlign blockAlign = pw.TextAlign.left;
+    bool isBullet  = false;
+    bool isOrdered = false;
+    int  orderedIndex = 1;
+    // Last seen inline attrs — Quill puts block attrs on '\n' ops
+    // which carry no text, so we keep inline attrs from the previous
+    // text op to detect bold-bullet combos.
+    Map<String, dynamic> lastInlineAttrs = {};
+
+    void flushBlock() {
+      if (currentSpans.isEmpty) return;
+      final richText = pw.RichText(
+        textAlign: blockAlign,
+        text: pw.TextSpan(children: List.of(currentSpans)),
+      );
+      pw.Widget line;
+      if (isBullet) {
+        line = pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text('•  ',
+                style: baseStyle.copyWith(
+                    font: _resolveFont(null, bold: true))),
+            pw.Expanded(child: richText),
+          ],
+        );
+      } else if (isOrdered) {
+        line = pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Text('$orderedIndex.  ', style: baseStyle),
+            pw.Expanded(child: richText),
+          ],
+        );
+        orderedIndex++;
+      } else {
+        line = richText;
+      }
+      widgets.add(pw.Padding(
+        padding: const pw.EdgeInsets.only(bottom: 3),
+        child: line,
+      ));
+      currentSpans.clear();
+      blockAlign = pw.TextAlign.left;
+      isBullet   = false;
+      isOrdered  = false;
+    }
+
+    for (final op in ops) {
+      if (op is! Map) continue;
+      final insert = op['insert'];
+      final attrs  = (op['attributes'] as Map<String, dynamic>?) ?? {};
+      if (insert is! String) continue;
+
+      final parts = insert.split('\n');
+      for (int pi = 0; pi < parts.length; pi++) {
+        final part = parts[pi];
+
+        if (part.isNotEmpty) {
+          lastInlineAttrs = Map.of(attrs);
+          final bold      = attrs['bold']      == true;
+          final italic    = attrs['italic']    == true;
+          final underline = attrs['underline'] == true;
+          // font attr stores the CSS font-family string
+          final family    = attrs['font'] as String?;
+          final colorHex  = attrs['color'] as String?;
+
+          PdfColor spanColor = PdfColors.black;
+          if (colorHex != null && colorHex.startsWith('#')) {
+            try { spanColor = PdfColor.fromHex(colorHex); } catch (_) {}
+          }
+
+          final spanStyle = baseStyle.copyWith(
+            font: _resolveFont(family, bold: bold, italic: italic),
+            fontFallback: [],
+            decoration: underline
+                ? pw.TextDecoration.underline
+                : pw.TextDecoration.none,
+            color: spanColor,
+          );
+          currentSpans.add(pw.TextSpan(text: part, style: spanStyle));
+        }
+
+        if (pi < parts.length - 1) {
+          // Block-level attrs sit on the '\n' op; merge with last
+          // inline attrs so bold-bullet, italic-centre, etc. work.
+          final blockAttrs =
+              attrs.isNotEmpty ? attrs : lastInlineAttrs;
+          final align = blockAttrs['align'] as String?;
+          blockAlign = align == 'center'
+              ? pw.TextAlign.center
+              : align == 'right'
+                  ? pw.TextAlign.right
+                  : align == 'justify'
+                      ? pw.TextAlign.justify
+                      : pw.TextAlign.left;
+          isBullet  = blockAttrs['list'] == 'bullet';
+          isOrdered = blockAttrs['list'] == 'ordered';
+          flushBlock();
+          lastInlineAttrs = {};
+        }
+      }
+    }
+    flushBlock();
+    return widgets;
+  }
+
+  // ── Ruled writing lines for blank printed form ────────────────
+  // Renders [count] horizontal grey lines giving enough space for
+  // a user to write in each section by hand after printing.
+  // No placeholder text or icons — just clean lines.
+  List<pw.Widget> _writingLines(int count, {double lineSpacing = 22}) =>
+      List.generate(
+        count,
+        (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.SizedBox(height: lineSpacing - 0.5),
+            pw.Container(height: 0.5, color: PdfColors.grey400),
+          ],
+        ),
+      );
+
+  // ── Cross-platform PDF save to device Downloads ───────────────
+  // Web     → browser download via Printing.sharePdf
+  // Android → system public Downloads folder
+  //           (/storage/emulated/0/Download  — the folder every
+  //            Android file manager and the Downloads app shows)
+  // iOS     → app Documents directory (accessible in Files app
+  //           under On My iPhone → AlmaWorks)
+  // Windows → %USERPROFILE%\Downloads
+  // macOS   → $HOME/Downloads
+  // Linux   → $HOME/Downloads
+  Future<void> _savePdfBytes(Uint8List bytes, String fileName) async {
+    widget.logger.i(
+        '📋 DailyForm: _savePdfBytes platform=${kIsWeb ? "web" : defaultTargetPlatform.name}');
+
+    // ── Web ──────────────────────────────────────────────────────
+    if (kIsWeb) {
+      await Printing.sharePdf(bytes: bytes, filename: fileName);
+      return;
+    }
+
+    try {
+      String dirPath;
+
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        // Android public Downloads directory.
+        // /storage/emulated/0/Download is the canonical path that
+        // maps to Environment.getExternalStoragePublicDirectory(
+        //   Environment.DIRECTORY_DOWNLOADS) on all Android versions.
+        // We verify it exists before using it; if somehow it doesn't
+        // (e.g. unusual OEM setup) we fall back to the path_provider
+        // external storage root trimmed above the /Android/ segment.
+        const androidDownloads = '/storage/emulated/0/Download';
+        if (await Directory(androidDownloads).exists()) {
+          dirPath = androidDownloads;
+        } else {
+          // Fallback: walk up from app-specific external path
+          final ext = await getExternalStorageDirectory();
+          if (ext != null) {
+            final parts = ext.path.split('/');
+            final idx   = parts.indexOf('Android');
+            dirPath     = idx > 0
+                ? parts.sublist(0, idx).join('/')
+                : ext.path;
+            // Append the standard Downloads sub-folder name
+            dirPath = '$dirPath/Download';
+          } else {
+            dirPath = (await getApplicationDocumentsDirectory()).path;
+          }
+        }
+
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        // iOS sandbox: Documents is visible to the user in Files app.
+        dirPath = (await getApplicationDocumentsDirectory()).path;
+
+      } else {
+        // Windows → %USERPROFILE%\Downloads
+        // macOS   → $HOME/Downloads
+        // Linux   → $HOME/Downloads
+        final homeDir = Platform.environment['USERPROFILE']  // Windows
+            ?? Platform.environment['HOME'];                 // macOS / Linux
+        if (homeDir != null && homeDir.isNotEmpty) {
+          dirPath =
+              '$homeDir${Platform.pathSeparator}Downloads';
+        } else {
+          // Rare fallback if HOME is not set
+          dirPath = (await getApplicationDocumentsDirectory()).path;
+        }
+      }
+
+      // Ensure directory exists (needed on desktop when ~/Downloads
+      // has never been created, or on first run).
+      final dir = Directory(dirPath);
+      if (!await dir.exists()) await dir.create(recursive: true);
+
+      final filePath = '$dirPath${Platform.pathSeparator}$fileName';
+      final file = File(filePath);
+      await file.writeAsBytes(bytes);
+      widget.logger.i('✅ DailyForm: PDF saved → $filePath');
+
+      // Open the saved file so the user can view / share it.
+      await OpenFile.open(filePath);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+            'PDF saved to Downloads: $fileName',
+            style: GoogleFonts.poppins(),
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ));
+      }
+    } catch (e, st) {
+      widget.logger.e(
+          '❌ DailyForm: _savePdfBytes failed, falling back to share',
+          error: e,
+          stackTrace: st);
+      // Last resort: system share sheet (always works)
+      await Printing.sharePdf(bytes: bytes, filename: fileName);
+    }
   }
 
   Future<void> _downloadAsPdf() async {
     widget.logger.i('📋 DailyForm: _downloadAsPdf: START');
     setState(() => _isGeneratingPdf = true);
     try {
-      final report = await _buildReportData();
-      widget.logger.d('📋 DailyForm: _downloadAsPdf: report data built, generating PDF');
-      final pdf = pw.Document();
+      final report  = await _buildReportData();
       final dateStr = DateFormat('MMMM d, yyyy').format(report.date);
+      final fileName =
+          'Daily_Report_${report.projectName.replaceAll(' ', '_')}_'
+          '${DateFormat('yyyyMMdd').format(_date)}.pdf';
 
-      // ── local helper: format TimeOfDay for PDF display ──
+      widget.logger.d('📋 DailyForm: building PDF');
+
       String fmtTime(TimeOfDay? t) {
-        if (t == null) return '—';
-        final h = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
-        final m = t.minute.toString().padLeft(2, '0');
+        if (t == null) return '';
+        final h      = t.hourOfPeriod == 0 ? 12 : t.hourOfPeriod;
+        final m      = t.minute.toString().padLeft(2, '0');
         final period = t.period == DayPeriod.am ? 'AM' : 'PM';
         return '$h:$m $period';
       }
 
-      // Load images for PDF
       final List<pw.MemoryImage> pdfImages = [];
       for (final bytes in _localImages) {
         pdfImages.add(pw.MemoryImage(bytes));
       }
-      widget.logger.d('📋 DailyForm: _downloadAsPdf: ${pdfImages.length} image(s) added to PDF');
 
-      // ── PDF styles ──
-      final headerStyle = pw.TextStyle(
-        fontSize: 11,
-        fontWeight: pw.FontWeight.bold,
+      // ── Colour palette ────────────────────────────────────────
+      final navyColor = PdfColor.fromHex('#0A2E5A');
+      final lightBlue = PdfColor.fromHex('#E8EEF6');
+
+      // ── Shared text styles ────────────────────────────────────
+      final sectionHeaderStyle = pw.TextStyle(
+        font: pw.Font.helveticaBold(),
+        fontSize: 9.5,
         color: PdfColors.white,
+        letterSpacing: 0.5,
       );
-      final labelStyle = pw.TextStyle(
+      final fieldLabelStyle = pw.TextStyle(
+        font: pw.Font.helveticaBold(),
+        fontSize: 8,
+        color: navyColor,
+        letterSpacing: 0.3,
+      );
+      final fieldValueStyle = pw.TextStyle(
+        font: pw.Font.helvetica(),
         fontSize: 9,
-        fontWeight: pw.FontWeight.bold,
-        color: PdfColor.fromHex('#0A2E5A'),
+        color: PdfColors.black,
       );
-      final valueStyle = pw.TextStyle(fontSize: 9, color: PdfColors.black);
 
-      // ── PDF helper functions (no leading underscores) ──
-      pw.Widget labeledBox(String label, String value, {double height = 40}) {
-        return pw.Container(
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(color: PdfColors.blueGrey300, width: 0.5),
-          ),
-          child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Container(
-                width: double.infinity,
-                color: PdfColor.fromHex('#E8EEF6'),
-                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                child: pw.Text(label, style: labelStyle),
+      // ── Navy section title bar ────────────────────────────────
+      pw.Widget sectionBar(String label) => pw.Container(
+            width: double.infinity,
+            color: navyColor,
+            padding: const pw.EdgeInsets.symmetric(
+                horizontal: 8, vertical: 5),
+            child: pw.Text(label, style: sectionHeaderStyle),
+          );
+
+      // ── 4-column meta cell ────────────────────────────────────
+      pw.Widget metaCell(String label, String value) => pw.Expanded(
+            child: pw.Container(
+              decoration: pw.BoxDecoration(
+                  border: pw.Border.all(
+                      color: PdfColors.blueGrey300, width: 0.5)),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Container(
+                    width: double.infinity,
+                    color: lightBlue,
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 3),
+                    child: pw.Text(label, style: fieldLabelStyle),
+                  ),
+                  pw.SizedBox(height: 20),  // writing space
+                ],
               ),
-              pw.Container(
-                height: height,
-                width: double.infinity,
-                padding: const pw.EdgeInsets.all(6),
-                child: pw.Text(value, style: valueStyle),
+            ),
+          );
+
+      // When the form has data, show the actual value; when blank,
+      // show only writing space so the printed form looks clean.
+      pw.Widget metaCellFilled(String label, String value) =>
+          pw.Expanded(
+            child: pw.Container(
+              decoration: pw.BoxDecoration(
+                  border: pw.Border.all(
+                      color: PdfColors.blueGrey300, width: 0.5)),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Container(
+                    width: double.infinity,
+                    color: lightBlue,
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 3),
+                    child: pw.Text(label, style: fieldLabelStyle),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 5),
+                    child: pw.Text(
+                      value.isEmpty ? '' : value,
+                      style: fieldValueStyle,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
+          );
+
+      // ── Rich-text section builder ─────────────────────────────
+      // Has content → render rich paragraphs from Delta.
+      // Empty       → render ruled writing lines only (no icons,
+      //               no placeholder text — just blank lines).
+      List<pw.Widget> richSectionWidgets(
+          String label, quill.QuillController ctrl,
+          {int blankLines = 10}) {
+        final raw = ctrl.document.toPlainText().trim();
+        final List<pw.Widget> body;
+        if (raw.isEmpty) {
+          body = _writingLines(blankLines);
+        } else {
+          body = _quillDeltaToPdfWidgets(ctrl, fieldValueStyle);
+          if (body.isEmpty) body.addAll(_writingLines(blankLines));
+        }
+        return [
+          sectionBar(label),
+          pw.Container(
+            width: double.infinity,
+            decoration: pw.BoxDecoration(
+                border: pw.Border.all(
+                    color: PdfColors.blueGrey300, width: 0.5)),
+            padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 8),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: body,
+            ),
           ),
-        );
+          pw.SizedBox(height: 6),
+        ];
       }
 
-      pw.Widget richBox(String label, String plainText, {double height = 70}) {
-        return pw.Container(
-          margin: const pw.EdgeInsets.only(bottom: 8),
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(color: PdfColors.blueGrey300, width: 0.5),
+      // ── Plain-text section (sub-contractor) ──────────────────
+      List<pw.Widget> plainSectionWidgets(String label, String value,
+          {int blankLines = 4}) {
+        final List<pw.Widget> body = value.isEmpty
+            ? _writingLines(blankLines)
+            : [pw.Text(value, style: fieldValueStyle)];
+        return [
+          sectionBar(label),
+          pw.Container(
+            width: double.infinity,
+            decoration: pw.BoxDecoration(
+                border: pw.Border.all(
+                    color: PdfColors.blueGrey300, width: 0.5)),
+            padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 8),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: body,
+            ),
           ),
-          child: pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              pw.Container(
-                width: double.infinity,
-                color: PdfColor.fromHex('#0A2E5A'),
-                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: pw.Text(label, style: headerStyle),
-              ),
-              pw.Container(
-                width: double.infinity,
-                constraints: pw.BoxConstraints(minHeight: height),
-                padding: const pw.EdgeInsets.all(8),
-                child: pw.Text(
-                  plainText.isEmpty ? ' ' : plainText,
-                  style: valueStyle,
-                ),
-              ),
-            ],
-          ),
-        );
+          pw.SizedBox(height: 6),
+        ];
       }
+
+      // ── Determine if the form has any data (filled vs blank) ──
+      final isFilled = report.building.isNotEmpty ||
+          _visitorsCtrl.document.toPlainText().trim().isNotEmpty ||
+          _personnelCtrl.document.toPlainText().trim().isNotEmpty ||
+          _activitiesCtrl.document.toPlainText().trim().isNotEmpty ||
+          _remarksCtrl.document.toPlainText().trim().isNotEmpty;
+
+      final pdf = pw.Document();
 
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.all(28),
-          header: (ctx) => pw.Container(
-            decoration: pw.BoxDecoration(
-              color: PdfColor.fromHex('#0A2E5A'),
-              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+          margin: const pw.EdgeInsets.fromLTRB(28, 28, 28, 48),
+
+          // ── FOOTER — every page ───────────────────────────────
+          footer: (ctx) => pw.Container(
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(
+                top: pw.BorderSide(
+                    color: PdfColors.grey400, width: 0.5),
+              ),
             ),
-            padding: const pw.EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const pw.EdgeInsets.only(top: 4),
             child: pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Expanded(
-                  child: pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Text(
-                        report.projectName,
-                        style: pw.TextStyle(
-                          color: PdfColors.white,
-                          fontSize: 12,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                      pw.SizedBox(height: 2),
-                      pw.Text(
-                        'Contract No: ${report.contractNumber.isEmpty ? '—' : report.contractNumber}',
-                        style: pw.TextStyle(
-                          color: PdfColor.fromHex('#FFFFFFB3'),
-                          fontSize: 9,
-                        ),
-                      ),
-                    ],
-                  ),
+                pw.Text(
+                  '© JV Almacis Site Management System — Daily Report',
+                  style: pw.TextStyle(
+                      font: pw.Font.helvetica(),
+                      fontSize: 7,
+                      color: PdfColors.grey600),
                 ),
-                pw.Container(
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColors.white,
-                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
-                  ),
-                  child: pw.Text(
-                    'DAILY REPORT',
-                    style: pw.TextStyle(
-                      color: PdfColor.fromHex('#0A2E5A'),
-                      fontSize: 13,
-                      fontWeight: pw.FontWeight.bold,
-                      letterSpacing: 1.5,
-                    ),
-                  ),
+                pw.Text(
+                  'Page ${ctx.pageNumber} of ${ctx.pagesCount}',
+                  style: pw.TextStyle(
+                      font: pw.Font.helvetica(),
+                      fontSize: 7,
+                      color: PdfColors.grey600),
                 ),
               ],
             ),
           ),
-          footer: (ctx) => pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-            children: [
-              pw.Text(
-                '© JV Alma C.I.S Site Management System',
-                style: pw.TextStyle(fontSize: 7, color: PdfColors.grey),
-              ),
-              pw.Text(
-                'Page ${ctx.pageNumber} of ${ctx.pagesCount}',
-                style: pw.TextStyle(fontSize: 7, color: PdfColors.grey),
-              ),
-            ],
-          ),
-          build: (ctx) => [
-            pw.SizedBox(height: 12),
 
-            // ── Date / Time / Weather row ──
+          build: (ctx) => [
+            // ══ TITLE BLOCK ══════════════════════════════════════
+            // Three separate Containers sharing navyColor so they
+            // appear as one seamless navy band but each text widget
+            // gets its own padding — this prevents "DAILY REPORT"
+            // from being swallowed into the project name Container.
+            pw.Container(
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.fromLTRB(16, 14, 16, 2),
+              child: pw.Text(
+                report.projectName,
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(
+                  font: pw.Font.helveticaBold(),
+                  fontSize: 14,
+                  color: PdfColors.white,
+                ),
+              ),
+            ),
+            pw.Container(
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 4),
+              child: pw.Text(
+                'DAILY REPORT',
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(
+                  font: pw.Font.helveticaBold(),
+                  fontSize: 10,
+                  color: PdfColors.white,
+                  letterSpacing: 2.5,
+                ),
+              ),
+            ),
+            pw.Container(
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.fromLTRB(16, 2, 16, 12),
+              child: pw.Text(
+                'Contract No: ${report.contractNumber.isEmpty ? '' : report.contractNumber}',
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(
+                  font: pw.Font.helvetica(),
+                  fontSize: 8.5,
+                  color: PdfColor.fromHex('#FFFFFFB3'),
+                ),
+              ),
+            ),
+            pw.SizedBox(height: 10),
+
+            // ══ 4-COLUMN META ROW ════════════════════════════════
             pw.Row(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Expanded(flex: 3, child: labeledBox('DATE', dateStr, height: 40)),
-                pw.SizedBox(width: 6),
-                pw.Expanded(
-                  flex: 2,
-                  child: pw.Column(children: [
-                    labeledBox('START TIME', fmtTime(_startTime), height: 16),
-                    labeledBox('STOP TIME', fmtTime(_stopTime), height: 16),
-                  ]),
-                ),
-                pw.SizedBox(width: 6),
-                pw.Expanded(flex: 3, child: labeledBox('WEATHER', report.weather, height: 40)),
+                isFilled
+                    ? metaCellFilled('DATE', dateStr)
+                    : metaCell('DATE', ''),
+                pw.SizedBox(width: 4),
+                isFilled
+                    ? metaCellFilled('START TIME', fmtTime(_startTime))
+                    : metaCell('START TIME', ''),
+                pw.SizedBox(width: 4),
+                isFilled
+                    ? metaCellFilled('STOP TIME', fmtTime(_stopTime))
+                    : metaCell('STOP TIME', ''),
+                pw.SizedBox(width: 4),
+                isFilled
+                    ? metaCellFilled('WEATHER', report.weather)
+                    : metaCell('WEATHER', ''),
               ],
             ),
-            pw.SizedBox(height: 8),
+            pw.SizedBox(height: 6),
 
-            // ── Building ──
+            // ══ BUILDING ═════════════════════════════════════════
             pw.Container(
               decoration: pw.BoxDecoration(
-                border: pw.Border.all(color: PdfColors.blueGrey300, width: 0.5),
-              ),
-              child: pw.Row(children: [
-                pw.Container(
-                  color: PdfColor.fromHex('#E8EEF6'),
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                  child: pw.Text('BUILDING', style: labelStyle),
-                ),
-                pw.Expanded(
-                  child: pw.Padding(
-                    padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                    child: pw.Text(
-                      report.building.isEmpty ? '—' : report.building,
-                      style: valueStyle,
+                  border: pw.Border.all(
+                      color: PdfColors.blueGrey300, width: 0.5)),
+              child: pw.Row(
+                children: [
+                  pw.Container(
+                    width: 65,
+                    color: lightBlue,
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 10),
+                    child: pw.Text('BUILDING', style: fieldLabelStyle),
+                  ),
+                  pw.Expanded(
+                    child: pw.Padding(
+                      padding: const pw.EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 10),
+                      child: pw.Text(
+                        report.building,
+                        style: fieldValueStyle,
+                      ),
                     ),
                   ),
-                ),
-              ]),
+                ],
+              ),
             ),
             pw.SizedBox(height: 8),
 
-            // ── Rich sections ──
-            richBox('VISITORS', _quillToPlainText(_visitorsCtrl)),
-            richBox('SUB-CONTRACTOR', report.subContractor.isEmpty ? '—' : report.subContractor),
-            richBox('PERSONNEL AND VEHICLES', _quillToPlainText(_personnelCtrl)),
-            richBox('ACTIVITIES', _quillToPlainText(_activitiesCtrl)),
-            richBox('REMARKS', _quillToPlainText(_remarksCtrl)),
+            // ══ CONTENT SECTIONS ═════════════════════════════════
+            ...richSectionWidgets('VISITORS', _visitorsCtrl,
+                blankLines: 10),
+            ...plainSectionWidgets(
+                'SUB-CONTRACTOR', report.subContractor,
+                blankLines: 4),
+            ...richSectionWidgets(
+                'PERSONNEL AND VEHICLES', _personnelCtrl,
+                blankLines: 10),
+            ...richSectionWidgets('ACTIVITIES', _activitiesCtrl,
+                blankLines: 12),
+            ...richSectionWidgets('REMARKS', _remarksCtrl,
+                blankLines: 8),
 
-            // ── Images ──
+            // ══ ATTACHED IMAGES ══════════════════════════════════
             if (pdfImages.isNotEmpty) ...[
-              pw.Container(
-                width: double.infinity,
-                color: PdfColor.fromHex('#0A2E5A'),
-                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: pw.Text('ATTACHED IMAGES', style: headerStyle),
-              ),
+              sectionBar('ATTACHED IMAGES'),
               pw.SizedBox(height: 6),
               pw.Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: pdfImages
-                    .map((img) => pw.Image(img, width: 160, height: 120, fit: pw.BoxFit.cover))
+                    .map((img) => pw.Image(img,
+                        width: 155, height: 116, fit: pw.BoxFit.cover))
                     .toList(),
               ),
             ],
@@ -770,15 +1153,12 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
         ),
       );
 
-      widget.logger.d('📋 DailyForm: _downloadAsPdf: PDF pages built, calling Printing.layoutPdf');
-      await Printing.layoutPdf(
-        onLayout: (_) async => pdf.save(),
-        name:
-            'Daily_Report_${widget.project.name}_${DateFormat('yyyyMMdd').format(_date)}.pdf',
-      );
-      widget.logger.i('✅ DailyForm: _downloadAsPdf: PDF export complete');
+      final bytes = await pdf.save();
+      await _savePdfBytes(Uint8List.fromList(bytes), fileName);
+      widget.logger.i('✅ DailyForm: PDF complete: $fileName');
     } catch (e, st) {
-      widget.logger.e('❌ DailyForm: _downloadAsPdf: FAILED', error: e, stackTrace: st);
+      widget.logger.e('❌ DailyForm: _downloadAsPdf FAILED',
+          error: e, stackTrace: st);
       if (mounted) _showError('Error generating PDF: $e');
     } finally {
       if (mounted) setState(() => _isGeneratingPdf = false);
@@ -862,85 +1242,100 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       body: LayoutBuilder(
         builder: (context, constraints) {
           final aw = constraints.maxWidth;
-          final hPad = aw * 0.045;
-          final gap  = aw * 0.032;
-          widget.logger.d('📋 DailyForm: LayoutBuilder: availableWidth=$aw  hPad=$hPad  gap=$gap');
+          // Cap the usable content width so fields don't stretch absurdly on
+          // ultra-wide desktop screens.  Everything beyond 860 px gets centred.
+          final contentW = aw.clamp(0.0, 860.0);
+          final hPad = contentW * 0.04;
+          final gap  = 14.0; // fixed vertical gap — no more percentage scaling
+          widget.logger.d('📋 DailyForm: LayoutBuilder: availableWidth=$aw  contentW=$contentW  hPad=$hPad');
 
           return Form(
             key: _formKey,
             child: SingleChildScrollView(
               controller: _scrollController,
-              padding: EdgeInsets.symmetric(horizontal: hPad, vertical: aw * 0.04),
+              // No horizontal padding here — header needs full width.
+              // Inner sections add their own horizontal padding.
+              padding: const EdgeInsets.only(bottom: 32),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // ── FORM HEADER ──────────────────────────────
-                  _buildFormHeader(aw),
-                  SizedBox(height: gap),
+                  // ── FORM HEADER (full width — no side padding) ──
+                  _buildFormHeader(contentW),
 
-                  // ── REPORT TYPE SUBTITLE ─────────────────────
-                  _buildReportTypeTitle(aw),
-                  SizedBox(height: gap),
+                  // ── padded content starts here ──────────────────
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: hPad),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(height: gap),
 
-                  // ── DATE / TIME / WEATHER ────────────────────
-                  _buildDateTimeWeatherRow(aw),
-                  SizedBox(height: gap),
+                        // ── REPORT TYPE SUBTITLE ─────────────────
+                        _buildReportTypeTitle(),
+                        SizedBox(height: gap),
 
-                  // ── BUILDING ─────────────────────────────────
-                  _buildBuildingField(aw),
-                  SizedBox(height: gap),
+                        // ── DATE / TIME / WEATHER (4 columns) ────
+                        _buildDateTimeWeatherRow(contentW),
+                        SizedBox(height: gap),
 
-                  // ── VISITORS ─────────────────────────────────
-                  _buildRichSection(
-                    title: 'VISITORS',
-                    fieldKey: 'visitors',
-                    hint: 'Enter visitor names (press Enter for auto-numbering)…',
-                    controller: _visitorsCtrl,
-                    aw: aw,
+                        // ── BUILDING ─────────────────────────────
+                        _buildBuildingField(contentW),
+                        SizedBox(height: gap),
+
+                        // ── VISITORS ─────────────────────────────
+                        _buildRichSection(
+                          title: 'VISITORS',
+                          fieldKey: 'visitors',
+                          hint: 'Enter visitor names…',
+                          controller: _visitorsCtrl,
+                          aw: contentW,
+                        ),
+                        SizedBox(height: gap),
+
+                        // ── SUB-CONTRACTOR ───────────────────────
+                        _buildSubContractorSection(contentW),
+                        SizedBox(height: gap),
+
+                        // ── PERSONNEL AND VEHICLES ───────────────
+                        _buildRichSection(
+                          title: 'PERSONNEL AND VEHICLES',
+                          fieldKey: 'personnel',
+                          hint: 'Enter personnel and vehicle details…',
+                          controller: _personnelCtrl,
+                          aw: contentW,
+                        ),
+                        SizedBox(height: gap),
+
+                        // ── ACTIVITIES ───────────────────────────
+                        _buildRichSection(
+                          title: 'ACTIVITIES',
+                          fieldKey: 'activities',
+                          hint: 'Describe site activities for the day…',
+                          controller: _activitiesCtrl,
+                          aw: contentW,
+                        ),
+                        SizedBox(height: gap),
+
+                        // ── REMARKS ──────────────────────────────
+                        _buildRichSection(
+                          title: 'REMARKS',
+                          fieldKey: 'remarks',
+                          hint: 'Add any remarks or observations…',
+                          controller: _remarksCtrl,
+                          aw: contentW,
+                        ),
+                        SizedBox(height: gap),
+
+                        // ── IMAGE ATTACHMENTS ─────────────────────
+                        _buildImageSection(contentW),
+                        const SizedBox(height: 20),
+
+                        // ── ACTION BUTTONS ────────────────────────
+                        _buildActionButtons(contentW),
+                        const SizedBox(height: 16),
+                      ],
+                    ),
                   ),
-                  SizedBox(height: gap),
-
-                  // ── SUB-CONTRACTOR ───────────────────────────
-                  _buildSubContractorSection(aw),
-                  SizedBox(height: gap),
-
-                  // ── PERSONNEL AND VEHICLES ───────────────────
-                  _buildRichSection(
-                    title: 'PERSONNEL AND VEHICLES',
-                    fieldKey: 'personnel',
-                    hint: 'Enter personnel and vehicle details…',
-                    controller: _personnelCtrl,
-                    aw: aw,
-                  ),
-                  SizedBox(height: gap),
-
-                  // ── ACTIVITIES ───────────────────────────────
-                  _buildRichSection(
-                    title: 'ACTIVITIES',
-                    fieldKey: 'activities',
-                    hint: 'Describe site activities for the day…',
-                    controller: _activitiesCtrl,
-                    aw: aw,
-                  ),
-                  SizedBox(height: gap),
-
-                  // ── REMARKS ──────────────────────────────────
-                  _buildRichSection(
-                    title: 'REMARKS',
-                    fieldKey: 'remarks',
-                    hint: 'Add any remarks or observations…',
-                    controller: _remarksCtrl,
-                    aw: aw,
-                  ),
-                  SizedBox(height: gap),
-
-                  // ── IMAGE ATTACHMENTS ─────────────────────────
-                  _buildImageSection(aw),
-                  SizedBox(height: gap * 1.4),
-
-                  // ── ACTION BUTTONS ────────────────────────────
-                  _buildActionButtons(aw),
-                  SizedBox(height: gap * 2),
                 ],
               ),
             ),
@@ -954,101 +1349,110 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
   //  WIDGET BUILDERS
   // ══════════════════════════════════════════════════════════════
 
-  // ── Form header ───────────────────────────────────────────────
+  // ── Form header — full-width navy band, no rounded corners ──────
   Widget _buildFormHeader(double aw) {
     widget.logger.d('📋 DailyForm: _buildFormHeader → aw=$aw');
-    final double titleFs = (aw * 0.048).clamp(15.0, 22.0);
-    final double labelFs = (aw * 0.034).clamp(11.0, 15.0);
-    final double padH    = aw * 0.050;
-    final double padV    = aw * 0.038;
-    final double radius  = aw * 0.025;
     return Container(
-      decoration: BoxDecoration(
-        color: _navy,
-        borderRadius: BorderRadius.circular(radius),
-      ),
-      padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
+      // Square corners — fills flush edge-to-edge under the AppBar
+      color: _navy,
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Text(widget.project.name,
-              style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: titleFs,
-                  fontWeight: FontWeight.bold)),
-          SizedBox(height: aw * 0.018),
-          Row(children: [
-            Text('Contract No: ',
-                style: GoogleFonts.poppins(
-                    color: Colors.white70, fontSize: labelFs)),
-            Expanded(
-              child: TextFormField(
-                controller: _contractController,
-                style: GoogleFonts.poppins(
-                    color: Colors.white, fontSize: labelFs),
-                decoration: InputDecoration(
-                  hintText: 'Enter contract number',
-                  hintStyle: GoogleFonts.poppins(
-                      color: Colors.white38, fontSize: labelFs),
-                  isDense: true,
-                  border: const UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: Colors.white54, width: 1)),
-                  enabledBorder: const UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: Colors.white54, width: 1)),
-                  focusedBorder: const UnderlineInputBorder(
-                      borderSide:
-                          BorderSide(color: Colors.white, width: 1.5)),
-                  contentPadding:
-                      const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
-                ),
-                onChanged: (v) {
-                  widget.logger.d('📋 DailyForm: contractNumber changed → "$v"');
-                  _saveDraftToCache();
-                },
-              ),
+          // ── Project name: full width, wraps freely, never ellipsis ──
+          Text(
+            widget.project.name,
+            textAlign: TextAlign.center,
+            softWrap: true,
+            overflow: TextOverflow.visible,
+            style: GoogleFonts.poppins(
+              color: Colors.white,
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+              height: 1.3,
             ),
-          ]),
+          ),
+          const SizedBox(height: 6),
+          // ── Contract No as subtitle row ──────────────────────────
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Contract No: ',
+                style: GoogleFonts.poppins(
+                  color: Colors.white70,
+                  fontSize: 13,
+                ),
+              ),
+              SizedBox(
+                width: 180,
+                child: TextFormField(
+                  controller: _contractController,
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.poppins(
+                      color: Colors.white, fontSize: 13),
+                  decoration: InputDecoration(
+                    hintText: 'e.g. CN-2024-001',
+                    hintStyle: GoogleFonts.poppins(
+                        color: Colors.white38, fontSize: 12),
+                    isDense: true,
+                    border: const UnderlineInputBorder(
+                        borderSide:
+                            BorderSide(color: Colors.white54, width: 1)),
+                    enabledBorder: const UnderlineInputBorder(
+                        borderSide:
+                            BorderSide(color: Colors.white54, width: 1)),
+                    focusedBorder: const UnderlineInputBorder(
+                        borderSide:
+                            BorderSide(color: Colors.white, width: 1.5)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        vertical: 4, horizontal: 2),
+                  ),
+                  onChanged: (v) {
+                    widget.logger.d(
+                        '📋 DailyForm: contractNumber changed → "$v"');
+                    _saveDraftToCache();
+                  },
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  // ── Report type title ─────────────────────────────────────────
-  Widget _buildReportTypeTitle(double aw) {
-    widget.logger.d('📋 DailyForm: _buildReportTypeTitle → aw=$aw');
+  // ── Report type title — plain centred text, no border/box ───────
+  Widget _buildReportTypeTitle() {
+    widget.logger.d('📋 DailyForm: _buildReportTypeTitle');
     return Center(
-      child: Container(
-        padding: EdgeInsets.symmetric(
-            horizontal: aw * 0.08, vertical: aw * 0.025),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(
-              color: _navy.withValues(alpha: 0.3), width: 1.5),
-          borderRadius: BorderRadius.circular(aw * 0.020),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Text(
+          'DAILY REPORT',
+          style: GoogleFonts.poppins(
+            color: _navy,
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 3,
+          ),
         ),
-        child: Text('DAILY REPORT',
-            style: GoogleFonts.poppins(
-              color: _navy,
-              fontSize: (aw * 0.048).clamp(14.0, 22.0),
-              fontWeight: FontWeight.w800,
-              letterSpacing: 3,
-            )),
       ),
     );
   }
 
-  // ── Date / Time / Weather row ─────────────────────────────────
+  // ── Date / Time / Weather — 4 compact equal columns in one row ──
   Widget _buildDateTimeWeatherRow(double aw) {
     widget.logger.d('📋 DailyForm: _buildDateTimeWeatherRow → aw=$aw');
 
-    final double labelFs = (aw * 0.024).clamp(8.0, 11.0);
-    final double valueFs = (aw * 0.032).clamp(10.0, 14.0);
-    final double iconSz  = (aw * 0.044).clamp(14.0, 22.0);
-    final double cellRad = aw * 0.022;
-    final double cellPH  = aw * 0.028;
-    final double cellPV  = aw * 0.026;
+    const double labelFs = 10.0;
+    const double valueFs = 12.5;
+    const double iconSz  = 15.0;
+    const double cellPH  = 10.0;
+    const double cellPV  = 8.0;
+    const double cellRad = 6.0;
 
     final String dateStr = DateFormat('EEE, MMM d, yyyy').format(_date);
     String fmtTime(TimeOfDay? t) => t == null
@@ -1057,11 +1461,10 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             '${t.minute.toString().padLeft(2, '0')} '
             '${t.period == DayPeriod.am ? 'AM' : 'PM'}';
 
-    widget.logger.d('📋 DailyForm: _buildDateTimeWeatherRow: '
-        'date=$dateStr  start=${fmtTime(_startTime)}  '
-        'stop=${fmtTime(_stopTime)}  weather="$_weather"');
+    widget.logger.d('📋 DailyForm: date=$dateStr  '
+        'start=${fmtTime(_startTime)}  stop=${fmtTime(_stopTime)}  weather="$_weather"');
 
-    // ── reusable inline cell builder ──
+    // Compact tappable cell
     Widget cell({
       required String label,
       required String value,
@@ -1071,94 +1474,87 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       return GestureDetector(
         onTap: onTap,
         child: Container(
+          height: 58,
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(cellRad),
             border: Border.all(color: _fieldBorder, width: 1),
             boxShadow: [
               BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.04),
-                  blurRadius: 4,
-                  offset: const Offset(0, 2))
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 3,
+                offset: const Offset(0, 1),
+              )
             ],
           ),
-          padding:
-              EdgeInsets.symmetric(horizontal: cellPH, vertical: cellPV),
-          child: Row(children: [
-            Icon(icon, color: _navy, size: iconSz),
-            SizedBox(width: aw * 0.018),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(label,
-                      style: GoogleFonts.poppins(
-                          fontSize: labelFs,
-                          fontWeight: FontWeight.w600,
-                          color: _navy.withValues(alpha: 0.7),
-                          letterSpacing: 0.5)),
-                  Text(value,
-                      style: GoogleFonts.poppins(
-                          fontSize: valueFs,
-                          fontWeight: FontWeight.w500,
-                          color: value == 'Tap to set'
-                              ? Colors.grey[400]
-                              : Colors.black87)),
-                ],
+          padding: const EdgeInsets.symmetric(
+              horizontal: cellPH, vertical: cellPV),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(children: [
+                Icon(icon, color: _navy, size: iconSz),
+                const SizedBox(width: 4),
+                Text(label,
+                    style: GoogleFonts.poppins(
+                      fontSize: labelFs,
+                      fontWeight: FontWeight.w600,
+                      color: _navy.withValues(alpha: 0.7),
+                      letterSpacing: 0.3,
+                    )),
+              ]),
+              const SizedBox(height: 3),
+              Text(
+                value,
+                style: GoogleFonts.poppins(
+                  fontSize: valueFs,
+                  fontWeight: FontWeight.w500,
+                  color: value == 'Tap to set'
+                      ? Colors.grey[400]
+                      : Colors.black87,
+                ),
+                overflow: TextOverflow.ellipsis,
               ),
-            ),
-            Icon(Icons.chevron_right_rounded,
-                color: Colors.grey[400], size: iconSz * 0.75),
-          ]),
+            ],
+          ),
         ),
       );
     }
 
-    final dateCell = cell(
-        label: 'DATE',
-        value: dateStr,
-        icon: Icons.calendar_today_rounded,
-        onTap: _pickDate);
-
-    final timesCell = Column(children: [
-      cell(
-          label: 'START TIME',
-          value: fmtTime(_startTime),
-          icon: Icons.access_time_rounded,
-          onTap: () => _pickTime(isStart: true)),
-      SizedBox(height: aw * 0.015),
-      cell(
-          label: 'STOP TIME',
-          value: fmtTime(_stopTime),
-          icon: Icons.timer_off_rounded,
-          onTap: () => _pickTime(isStart: false)),
-    ]);
-
+    // Weather dropdown cell — same fixed height
     final weatherCell = Container(
+      height: 58,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(cellRad),
         border: Border.all(color: _fieldBorder, width: 1),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 4,
-              offset: const Offset(0, 2))
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          )
         ],
       ),
-      padding: EdgeInsets.symmetric(horizontal: cellPH, vertical: cellPV),
+      padding: const EdgeInsets.symmetric(
+          horizontal: cellPH, vertical: cellPV),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text('WEATHER',
-              style: GoogleFonts.poppins(
+          Row(children: [
+            const Icon(Icons.wb_sunny_rounded, color: _navy, size: iconSz),
+            const SizedBox(width: 4),
+            Text('WEATHER',
+                style: GoogleFonts.poppins(
                   fontSize: labelFs,
                   fontWeight: FontWeight.w600,
                   color: _navy.withValues(alpha: 0.7),
-                  letterSpacing: 0.5)),
-          SizedBox(height: aw * 0.010),
+                  letterSpacing: 0.3,
+                )),
+          ]),
+          const SizedBox(height: 1),
           DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _weather.isEmpty ? null : _weather,
@@ -1166,15 +1562,17 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                   style: GoogleFonts.poppins(
                       color: Colors.grey[400], fontSize: valueFs)),
               isExpanded: true,
-              icon: Icon(Icons.wb_sunny_rounded,
-                  color: _navy, size: iconSz),
+              isDense: true,
+              icon: const Icon(Icons.expand_more_rounded,
+                  color: _navy, size: 16),
               style: GoogleFonts.poppins(
                   fontSize: valueFs, color: Colors.black87),
               items: _weatherOptions
                   .map((w) => DropdownMenuItem(
                       value: w,
                       child: Text(w,
-                          style: GoogleFonts.poppins(fontSize: valueFs))))
+                          style:
+                              GoogleFonts.poppins(fontSize: valueFs))))
                   .toList(),
               onChanged: (v) {
                 widget.logger.i('📋 DailyForm: weather selected → "$v"');
@@ -1187,74 +1585,98 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       ),
     );
 
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(flex: 3, child: dateCell),
-          SizedBox(width: aw * 0.020),
-          Expanded(flex: 2, child: timesCell),
-          SizedBox(width: aw * 0.020),
-          Expanded(flex: 3, child: weatherCell),
-        ],
-      ),
+    return Row(
+      children: [
+        Expanded(
+            child: cell(
+                label: 'DATE',
+                value: dateStr,
+                icon: Icons.calendar_today_rounded,
+                onTap: _pickDate)),
+        const SizedBox(width: 8),
+        Expanded(
+            child: cell(
+                label: 'START TIME',
+                value: fmtTime(_startTime),
+                icon: Icons.access_time_rounded,
+                onTap: () => _pickTime(isStart: true))),
+        const SizedBox(width: 8),
+        Expanded(
+            child: cell(
+                label: 'STOP TIME',
+                value: fmtTime(_stopTime),
+                icon: Icons.timer_off_rounded,
+                onTap: () => _pickTime(isStart: false))),
+        const SizedBox(width: 8),
+        Expanded(child: weatherCell),
+      ],
     );
   }
 
-  // ── Building field ────────────────────────────────────────────
+  // ── Building field — compact single-line, fixed height ──────────
   Widget _buildBuildingField(double aw) {
     widget.logger.d('📋 DailyForm: _buildBuildingField → aw=$aw');
-    final double labelFs = (aw * 0.028).clamp(10.0, 13.0);
-    final double valueFs = (aw * 0.034).clamp(11.0, 15.0);
-    final double radius  = aw * 0.022;
-    final double padH    = aw * 0.035;
-    final double padV    = aw * 0.038;
     return Container(
+      height: 48,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(radius),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: _fieldBorder, width: 1),
       ),
-      child: Row(children: [
-        Container(
-          padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
-          decoration: BoxDecoration(
-            color: _navy.withValues(alpha: 0.07),
-            borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(radius),
-              bottomLeft: Radius.circular(radius),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Fixed-width label tab
+          Container(
+            width: 100,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: Color(0xFFE8EEF6),
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(6),
+                bottomLeft: Radius.circular(6),
+              ),
             ),
-          ),
-          child: Text('BUILDING',
+            child: Text(
+              'BUILDING',
               style: GoogleFonts.poppins(
-                  fontSize: labelFs,
-                  fontWeight: FontWeight.w700,
-                  color: _navy,
-                  letterSpacing: 0.5)),
-        ),
-        Expanded(
-          child: TextFormField(
-            controller: _buildingController,
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(
-                  RegExp(r'[a-zA-Z0-9\s\-_/]'))
-            ],
-            style: GoogleFonts.poppins(fontSize: valueFs),
-            decoration: InputDecoration(
-              hintText: 'Enter building number, ID, or name…',
-              hintStyle: GoogleFonts.poppins(
-                  color: Colors.grey[400], fontSize: valueFs * 0.93),
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(
-                  horizontal: padH, vertical: padV),
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: _navy,
+                letterSpacing: 0.5,
+              ),
             ),
-            onChanged: (v) {
-              widget.logger.d('📋 DailyForm: building changed → "$v"');
-              _saveDraftToCache();
-            },
           ),
-        ),
-      ]),
+          // Input — text vertically centred inside the fixed-height row
+          Expanded(
+            child: Center(
+              child: TextFormField(
+                controller: _buildingController,
+                textAlignVertical: TextAlignVertical.center,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(
+                      RegExp(r'[a-zA-Z0-9\s\-_/]'))
+                ],
+                style:
+                    GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
+                decoration: InputDecoration(
+                  hintText: 'Building number, ID, or name…',
+                  hintStyle: GoogleFonts.poppins(
+                      color: Colors.grey[400], fontSize: 12),
+                  border: InputBorder.none,
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 14),
+                ),
+                onChanged: (v) {
+                  widget.logger.d('📋 DailyForm: building changed → "$v"');
+                  _saveDraftToCache();
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1293,7 +1715,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             showIndent: true,
             showClearFormat: true,
             showFontSize: false,
-            showFontFamily: false,
+            showFontFamily: false,          // disabled — font picker needs custom config not supported in 11.5.0 SimpleToolbar
             showColorButton: false,
             showBackgroundColorButton: false,
             showSubscript: false,
@@ -1303,7 +1725,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             showQuote: false,
             showLink: false,
             showSearchButton: false,
-            showAlignmentButtons: false,
+            showAlignmentButtons: true,     // ← ENABLED: L / C / R / Justify
             showHeaderStyle: false,
             showDividers: true,
             toolbarIconAlignment: WrapAlignment.start,
@@ -1664,15 +2086,9 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     );
   }
 
-  // ── Action buttons ────────────────────────────────────────────
+  // ── Action buttons — fixed size, capped width on wide screens ───
   Widget _buildActionButtons(double aw) {
     widget.logger.d('📋 DailyForm: _buildActionButtons → aw=$aw');
-    final double fs     = (aw * 0.032).clamp(11.0, 14.0);
-    final double padV   = aw * 0.035;
-    final double padH   = aw * 0.020;
-    final double radius = aw * 0.022;
-    final double iconSz = (aw * 0.040).clamp(14.0, 20.0);
-    final double gap    = aw * 0.020;
 
     Widget btn({
       required String label,
@@ -1682,29 +2098,35 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       required VoidCallback onTap,
     }) {
       return Expanded(
-        child: ElevatedButton.icon(
-          onPressed: isLoading ? null : onTap,
-          icon: isLoading
-              ? SizedBox(
-                  width: 16, height: 16,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: const AlwaysStoppedAnimation<Color>(
-                          Colors.white)))
-              : Icon(icon, size: iconSz),
-          label: Text(label,
+        child: SizedBox(
+          height: 44,
+          child: ElevatedButton.icon(
+            onPressed: isLoading ? null : onTap,
+            icon: isLoading
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white)))
+                : Icon(icon, size: 16),
+            label: Text(
+              label,
               style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.w600, fontSize: fs)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: color.withValues(alpha: 0.5),
-            disabledForegroundColor: Colors.white70,
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(radius)),
-            padding:
-                EdgeInsets.symmetric(vertical: padV, horizontal: padH),
-            elevation: 2,
+                  fontWeight: FontWeight.w600, fontSize: 13),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: color,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: color.withValues(alpha: 0.5),
+              disabledForegroundColor: Colors.white70,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(6)),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+              elevation: 2,
+            ),
           ),
         ),
       );
@@ -1721,7 +2143,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
           _saveReport();
         },
       ),
-      SizedBox(width: gap),
+      const SizedBox(width: 10),
       btn(
         label: 'Download PDF',
         icon: Icons.picture_as_pdf_rounded,
@@ -1732,7 +2154,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
           _downloadAsPdf();
         },
       ),
-      SizedBox(width: gap),
+      const SizedBox(width: 10),
       btn(
         label: '+ New Form',
         icon: Icons.add_circle_outline_rounded,
