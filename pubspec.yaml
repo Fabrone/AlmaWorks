@@ -60,6 +60,7 @@ dependencies:
   pdf: ^3.11.3
   flutter_localizations:
     sdk: flutter
+  pluto_grid: ^8.1.0
 
 dev_dependencies:
   flutter_test:
