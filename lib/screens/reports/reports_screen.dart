@@ -180,7 +180,8 @@ class _ReportsScreenState extends State<ReportsScreen>
           .collection('Reports')
           .where('projectId', isEqualTo: widget.project.id)
           .where('type', isEqualTo: type)
-          .orderBy('uploadedAt', descending: true)
+          // No orderBy — allows fetching legacy docs that lack 'uploadedAt'.
+          // Sorting is done client-side below using whichever timestamp exists.
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -199,9 +200,19 @@ class _ReportsScreenState extends State<ReportsScreen>
           return const Center(child: CircularProgressIndicator());
         }
 
-        final documents = snapshot.data!.docs;
+        final rawDocs = snapshot.data!.docs;
         widget.logger
-            .i('📊 ReportsScreen: Loaded ${documents.length} Reports ($type)');
+            .i('📊 ReportsScreen: Loaded ${rawDocs.length} Reports ($type)');
+
+        // Sort client-side: prefer uploadedAt, fall back to savedAt, then epoch.
+        final documents = List.of(rawDocs)..sort((a, b) {
+          DateTime tsOf(QueryDocumentSnapshot doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            final ts = d['uploadedAt'] ?? d['savedAt'];
+            return ts is Timestamp ? ts.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
+          }
+          return tsOf(b).compareTo(tsOf(a)); // descending
+        });
 
         if (documents.isEmpty) {
           return _buildEmptyState(type);
@@ -248,7 +259,7 @@ class _ReportsScreenState extends State<ReportsScreen>
           .collection('Reports')
           .where('projectId', isEqualTo: widget.project.id)
           .where('type', whereIn: ['SafetyWeekly', 'SafetyMonthly', 'Safety'])
-          .orderBy('uploadedAt', descending: true)
+          // No orderBy — fetch all, sort client-side for legacy compatibility.
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -267,9 +278,19 @@ class _ReportsScreenState extends State<ReportsScreen>
           return const Center(child: CircularProgressIndicator());
         }
 
-        final reports = snapshot.data!.docs;
+        final rawReports = snapshot.data!.docs;
         widget.logger
-            .i('📊 ReportsScreen: Loaded ${reports.length} Safety Reports');
+            .i('📊 ReportsScreen: Loaded ${rawReports.length} Safety Reports');
+
+        // Sort client-side descending by uploadedAt → savedAt → epoch
+        final reports = List.of(rawReports)..sort((a, b) {
+          DateTime tsOf(QueryDocumentSnapshot doc) {
+            final d = doc.data() as Map<String, dynamic>;
+            final ts = d['uploadedAt'] ?? d['savedAt'];
+            return ts is Timestamp ? ts.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
+          }
+          return tsOf(b).compareTo(tsOf(a));
+        });
 
         if (reports.isEmpty) {
           return _buildEmptyState('Safety Meeting');
