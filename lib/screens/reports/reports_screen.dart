@@ -215,6 +215,13 @@ class _ReportsScreenState extends State<ReportsScreen>
             ...documents.map((doc) {
               try {
                 final data = doc.data() as Map<String, dynamic>;
+                // ── Form-filled report (has savedAt, no file url) ──
+                final isFormReport = data['savedAt'] != null &&
+                    (data['url'] == null || data['url'] == '');
+                if (isFormReport) {
+                  return _buildFormReportItem(doc.id, data, type);
+                }
+                // ── Uploaded file report ───────────────────────────
                 final report = ReportModel.fromMap(doc.id, data);
                 return _buildReportItem(report);
               } catch (e, st) {
@@ -428,6 +435,240 @@ class _ReportsScreenState extends State<ReportsScreen>
         ],
       ),
     );
+  }
+
+  // ─────────────────────── FORM REPORT ITEM ────────────────────
+
+  /// Builds a list tile for a form-filled report (Daily / Weekly / Monthly).
+  Widget _buildFormReportItem(
+      String docId, Map<String, dynamic> data, String type) {
+    // Derive a human-readable name from savedAt timestamp
+    final savedAt = data['savedAt'] != null
+        ? (data['savedAt'] as Timestamp).toDate()
+        : (data['uploadedAt'] != null
+            ? (data['uploadedAt'] as Timestamp).toDate()
+            : DateTime.now());
+    final storedName = data['name'] as String?;
+    final displayName = storedName != null && storedName.isNotEmpty
+        ? storedName
+        : '$type Report – ${DateFormat('dd MMM yyyy, hh:mm a').format(savedAt)}';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _openFormReport(docId, data, type, readOnly: true),
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          leading: CircleAvatar(
+            backgroundColor:
+                const Color(0xFF0A2E5A).withValues(alpha: 0.12),
+            child: const Icon(
+              Icons.description_rounded,
+              color: Color(0xFF0A2E5A),
+              size: 22,
+            ),
+          ),
+          title: Text(
+            displayName,
+            style: GoogleFonts.poppins(
+                fontWeight: FontWeight.w600, fontSize: 15),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 2),
+              Text(
+                'Saved: ${_dateFormat.format(savedAt)}',
+                style:
+                    GoogleFonts.poppins(color: Colors.grey[600], fontSize: 13),
+              ),
+              const SizedBox(height: 2),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0A2E5A).withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '$type Form',
+                  style: GoogleFonts.poppins(
+                      fontSize: 11,
+                      color: const Color(0xFF0A2E5A),
+                      fontWeight: FontWeight.w500),
+                ),
+              ),
+            ],
+          ),
+          isThreeLine: true,
+          trailing: PopupMenuButton<String>(
+            onSelected: (action) =>
+                _handleFormReportAction(action, docId, data, type),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12)),
+            itemBuilder: (context) => [
+              _popupItem('open', Icons.visibility_rounded,
+                  Colors.blue[700]!, 'Open'),
+              _popupItem('edit', Icons.edit_rounded,
+                  const Color(0xFF0A2E5A), 'Edit'),
+              _popupItem('delete', Icons.delete_rounded,
+                  Colors.red[600]!, 'Delete'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleFormReportAction(
+      String action, String docId, Map<String, dynamic> data, String type) async {
+    switch (action) {
+      case 'open':
+        _openFormReport(docId, data, type, readOnly: true);
+        break;
+      case 'edit':
+        _openFormReport(docId, data, type, readOnly: false);
+        break;
+      case 'delete':
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
+            title: Text('Delete Report',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            content: Text(
+                'Are you sure you want to permanently delete this $type report? This cannot be undone.',
+                style: GoogleFonts.poppins()),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text('Cancel', style: GoogleFonts.poppins()),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white),
+                child: Text('Delete', style: GoogleFonts.poppins()),
+              ),
+            ],
+          ),
+        );
+        if (confirmed == true) {
+          await _deleteFormReport(docId, data);
+        }
+        break;
+    }
+  }
+
+  void _openFormReport(
+      String docId, Map<String, dynamic> data, String type,
+      {required bool readOnly}) {
+    widget.logger.i(
+        '📊 ReportsScreen: Opening form report $docId (readOnly=$readOnly, type=$type)');
+    try {
+      if (type == 'Daily') {
+        final report = DailyReportData.fromMap({...data, 'id': docId});
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => DailyReportFormScreen(
+              project: widget.project,
+              logger: widget.logger,
+              existingReport: report,
+              isReadOnly: readOnly,
+            ),
+          ),
+        );
+      } else if (type == 'Weekly') {
+        final report = WeeklyReportData.fromMap({...data, 'id': docId});
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => WeeklyReportFormScreen(
+              project: widget.project,
+              logger: widget.logger,
+              existingReport: report,
+              isReadOnly: readOnly,
+            ),
+          ),
+        );
+      } else if (type == 'Monthly') {
+        final report = MonthlyReportData.fromMap({...data, 'id': docId});
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MonthlyReportFormScreen(
+              project: widget.project,
+              logger: widget.logger,
+              existingReport: report,
+              isReadOnly: readOnly,
+            ),
+          ),
+        );
+      } else {
+        widget.logger.w(
+            '⚠️ ReportsScreen: No form viewer for type=$type');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('In-app viewer not available for $type reports.',
+                style: GoogleFonts.poppins()),
+          ));
+        }
+      }
+    } catch (e, st) {
+      widget.logger.e('❌ ReportsScreen: Error opening form report',
+          error: e, stackTrace: st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error opening report: $e',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
+  }
+
+  Future<void> _deleteFormReport(
+      String docId, Map<String, dynamic> data) async {
+    widget.logger.i('🗑️ ReportsScreen: Deleting form report: $docId');
+    try {
+      // Delete all associated images from Firebase Storage
+      final imageUrls = List<String>.from(data['imageUrls'] ?? []);
+      for (final url in imageUrls) {
+        try {
+          await FirebaseStorage.instance.refFromURL(url).delete();
+          widget.logger.d('🗑️ ReportsScreen: Deleted image $url');
+        } catch (imgErr) {
+          widget.logger.w('⚠️ ReportsScreen: Could not delete image $url – $imgErr');
+        }
+      }
+      // Delete the Firestore document
+      await FirebaseFirestore.instance.collection('Reports').doc(docId).delete();
+      widget.logger.i('✅ ReportsScreen: Form report $docId deleted');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Report deleted successfully',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.green,
+        ));
+      }
+    } catch (e, st) {
+      widget.logger.e('❌ ReportsScreen: Error deleting form report',
+          error: e, stackTrace: st);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Error deleting report: $e',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red,
+        ));
+      }
+    }
   }
 
   // ─────────────────────── FAB LOGIC ───────────────────────────

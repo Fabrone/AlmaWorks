@@ -125,14 +125,17 @@ class DailyReportData {
 class DailyReportFormScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
-  /// Pass an existing report to open in edit mode; null = new form.
+  /// Pass an existing report to open in view/edit mode; null = new form.
   final DailyReportData? existingReport;
+  /// When true, all fields are read-only and a floating Edit button is shown.
+  final bool isReadOnly;
 
   const DailyReportFormScreen({
     super.key,
     required this.project,
     required this.logger,
     this.existingReport,
+    this.isReadOnly = false,
   });
 
   @override
@@ -162,6 +165,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
   final List<String> _savedImageUrls = [];
   bool _isSaving = false;
   bool _isGeneratingPdf = false;
+  bool _isReadOnly = false;
 
   List<String> _subcontractorNames = [];
 
@@ -191,6 +195,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
 
     _reportId = widget.existingReport?.id ?? const Uuid().v4();
     widget.logger.i('📋 DailyForm: reportId=$_reportId');
+    _isReadOnly = widget.isReadOnly;
 
     _extractSubcontractors();
 
@@ -504,10 +509,16 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       final map = report.toMap();
       if (widget.existingReport == null) {
         widget.logger.i('📋 DailyForm: _saveReport: creating new Firestore doc');
+        final readableName =
+            'Daily Report – ${DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now())}';
         await FirebaseFirestore.instance
             .collection('Reports')
             .doc(_reportId)
-            .set(map);
+            .set({
+          ...map,
+          'uploadedAt': Timestamp.now(),
+          'name': readableName,
+        });
       } else {
         widget.logger.i('📋 DailyForm: _saveReport: updating existing Firestore doc');
         await FirebaseFirestore.instance
@@ -1225,7 +1236,8 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         title: Text(
-          '${widget.project.name} — Daily Report',
+          '${widget.project.name} — Daily Report'
+          '${_isReadOnly ? '  (View)' : ''}',
           style: GoogleFonts.poppins(
               fontWeight: FontWeight.w600, fontSize: 16),
         ),
@@ -1234,11 +1246,24 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
           onPressed: () async {
             final nav = Navigator.of(context);
             widget.logger.d('📋 DailyForm: back pressed – saving draft');
-            await _saveDraftToCache();
+            if (!_isReadOnly) await _saveDraftToCache();
             nav.pop();
           },
         ),
       ),
+      // ── Floating Edit button (read-only mode only) ──────────────
+      floatingActionButton: _isReadOnly
+          ? FloatingActionButton.extended(
+              onPressed: () {
+                widget.logger.i('📋 DailyForm: FAB Edit tapped – switching to edit mode');
+                setState(() => _isReadOnly = false);
+              },
+              backgroundColor: _navy,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.edit_rounded),
+              label: Text('Edit', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            )
+          : null,
       body: LayoutBuilder(
         builder: (context, constraints) {
           final aw = constraints.maxWidth;
@@ -1390,11 +1415,12 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                 width: 180,
                 child: TextFormField(
                   controller: _contractController,
+                  readOnly: _isReadOnly,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(
                       color: Colors.white, fontSize: 13),
                   decoration: InputDecoration(
-                    hintText: 'e.g. CN-2024-001',
+                    hintText: _isReadOnly ? '—' : 'e.g. CN-2024-001',
                     hintStyle: GoogleFonts.poppins(
                         color: Colors.white38, fontSize: 12),
                     isDense: true,
@@ -1410,7 +1436,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                     contentPadding: const EdgeInsets.symmetric(
                         vertical: 4, horizontal: 2),
                   ),
-                  onChanged: (v) {
+                  onChanged: _isReadOnly ? null : (v) {
                     widget.logger.d(
                         '📋 DailyForm: contractNumber changed → "$v"');
                     _saveDraftToCache();
@@ -1472,7 +1498,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       required VoidCallback onTap,
     }) {
       return GestureDetector(
-        onTap: onTap,
+        onTap: _isReadOnly ? null : onTap,
         child: Container(
           height: 58,
           decoration: BoxDecoration(
@@ -1574,7 +1600,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                           style:
                               GoogleFonts.poppins(fontSize: valueFs))))
                   .toList(),
-              onChanged: (v) {
+              onChanged: _isReadOnly ? null : (v) {
                 widget.logger.i('📋 DailyForm: weather selected → "$v"');
                 setState(() => _weather = v ?? '');
                 _saveDraftToCache();
@@ -1652,6 +1678,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             child: Center(
               child: TextFormField(
                 controller: _buildingController,
+                readOnly: _isReadOnly,
                 textAlignVertical: TextAlignVertical.center,
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(
@@ -1660,7 +1687,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                 style:
                     GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
                 decoration: InputDecoration(
-                  hintText: 'Building number, ID, or name…',
+                  hintText: _isReadOnly ? '—' : 'Building number, ID, or name…',
                   hintStyle: GoogleFonts.poppins(
                       color: Colors.grey[400], fontSize: 12),
                   border: InputBorder.none,
@@ -1668,7 +1695,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 14),
                 ),
-                onChanged: (v) {
+                onChanged: _isReadOnly ? null : (v) {
                   widget.logger.d('📋 DailyForm: building changed → "$v"');
                   _saveDraftToCache();
                 },
@@ -1702,6 +1729,9 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     try {
       // ── Toolbar ──────────────────────────────────────────────
       Widget toolbarWidget;
+      if (_isReadOnly) {
+        toolbarWidget = const SizedBox.shrink();
+      } else {
       try {
         widget.logger.d('📋 DailyForm: [$fieldKey] building QuillSimpleToolbar (toolbarSize=$toolbarSz)');
         toolbarWidget = quill.QuillSimpleToolbar(
@@ -1745,39 +1775,43 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
           ),
         );
       }
+      }
 
       // ── Editor ───────────────────────────────────────────────
       Widget editorWidget;
       try {
         widget.logger.d('📋 DailyForm: [$fieldKey] building QuillEditor (minH=$minH  fontSize=$editorFs)');
-        editorWidget = Container(
-          constraints: BoxConstraints(minHeight: minH),
-          padding: EdgeInsets.all(editorPad),
-          child: quill.QuillEditor.basic(
-            controller: controller,
-            config: quill.QuillEditorConfig(
-              placeholder: hint,
-              minHeight: minH,
-              expands: false,
-              scrollable: true,
-              autoFocus: false,
-              enableInteractiveSelection: true,
-              customStyles: quill.DefaultStyles(
-                placeHolder: quill.DefaultTextBlockStyle(
-                  GoogleFonts.poppins(
-                      color: Colors.grey[400], fontSize: editorFs),
-                  const quill.HorizontalSpacing(0, 0),
-                  const quill.VerticalSpacing(0, 0),
-                  const quill.VerticalSpacing(0, 0),
-                  null,
-                ),
-                paragraph: quill.DefaultTextBlockStyle(
-                  GoogleFonts.poppins(
-                      color: Colors.black87, fontSize: editorFs),
-                  const quill.HorizontalSpacing(0, 0),
-                  const quill.VerticalSpacing(2, 2),
-                  const quill.VerticalSpacing(0, 0),
-                  null,
+        editorWidget = AbsorbPointer(
+          absorbing: _isReadOnly,
+          child: Container(
+            constraints: BoxConstraints(minHeight: minH),
+            padding: EdgeInsets.all(editorPad),
+            child: quill.QuillEditor.basic(
+              controller: controller,
+              config: quill.QuillEditorConfig(
+                placeholder: hint,
+                minHeight: minH,
+                expands: false,
+                scrollable: true,
+                autoFocus: false,
+                enableInteractiveSelection: true,
+                customStyles: quill.DefaultStyles(
+                  placeHolder: quill.DefaultTextBlockStyle(
+                    GoogleFonts.poppins(
+                        color: Colors.grey[400], fontSize: editorFs),
+                    const quill.HorizontalSpacing(0, 0),
+                    const quill.VerticalSpacing(0, 0),
+                    const quill.VerticalSpacing(0, 0),
+                    null,
+                  ),
+                  paragraph: quill.DefaultTextBlockStyle(
+                    GoogleFonts.poppins(
+                        color: Colors.black87, fontSize: editorFs),
+                    const quill.HorizontalSpacing(0, 0),
+                    const quill.VerticalSpacing(2, 2),
+                    const quill.VerticalSpacing(0, 0),
+                    null,
+                  ),
                 ),
               ),
             ),
@@ -1831,7 +1865,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                       fontSize: titleFs,
                       letterSpacing: 0.8)),
             ),
-            Container(
+            if (!_isReadOnly) Container(
               decoration: BoxDecoration(
                 color: _sectionBg,
                 border: Border(
@@ -1940,7 +1974,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                                 style:
                                     GoogleFonts.poppins(fontSize: valueFs))))
                         .toList(),
-                    onChanged: (v) {
+                    onChanged: _isReadOnly ? null : (v) {
                       widget.logger.i('📋 DailyForm: subContractor selected → "$v"');
                       setState(() => _subContractor = v ?? '');
                       _saveDraftToCache();
@@ -2028,6 +2062,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                                   height: thumbSz,
                                   fit: BoxFit.cover),
                         ),
+                        if (!_isReadOnly)
                         Positioned(
                           top: 4, right: 4,
                           child: GestureDetector(
@@ -2058,6 +2093,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                 ),
                 SizedBox(height: aw * 0.025),
               ],
+              if (!_isReadOnly)
               OutlinedButton.icon(
                 onPressed: () {
                   widget.logger.d('📋 DailyForm: pick images tapped');
@@ -2132,7 +2168,20 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       );
     }
 
-    return Row(children: [
+    return _isReadOnly
+        ? Row(children: [
+            btn(
+              label: 'Download PDF',
+              icon: Icons.picture_as_pdf_rounded,
+              color: const Color(0xFF1B5E20),
+              isLoading: _isGeneratingPdf,
+              onTap: () {
+                widget.logger.i('📋 DailyForm: Download PDF tapped (readOnly)');
+                _downloadAsPdf();
+              },
+            ),
+          ])
+        : Row(children: [
       btn(
         label: 'Save Report',
         icon: Icons.save_rounded,

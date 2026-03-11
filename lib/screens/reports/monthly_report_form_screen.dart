@@ -209,12 +209,15 @@ class MonthlyReportFormScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
   final MonthlyReportData? existingReport;
+  /// When true all fields are read-only; a floating Edit button unlocks them.
+  final bool isReadOnly;
 
   const MonthlyReportFormScreen({
     super.key,
     required this.project,
     required this.logger,
     this.existingReport,
+    this.isReadOnly = false,
   });
 
   @override
@@ -226,6 +229,9 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   // ── Form + scroll ──────────────────────────────────────────────
   final _formKey = GlobalKey<FormState>();
   final _scrollCtrl = ScrollController();
+
+  // ── Read-only mode ─────────────────────────────────────────────
+  bool _isReadOnly = false;
 
   // ── Design constants ───────────────────────────────────────────
   static const _navy = Color(0xFF0A2E5A);
@@ -301,6 +307,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     super.initState();
     widget.logger.i('📋 MonthlyForm: initState START');
     _reportId = widget.existingReport?.id ?? const Uuid().v4();
+    _isReadOnly = widget.isReadOnly;
 
     // Default month: first→last of current month
     final now = DateTime.now();
@@ -608,12 +615,21 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         ],
         isDraft: false,
       );
-      await FirebaseFirestore.instance
-          .collection('projects')
-          .doc(widget.project.id)
-          .collection('reports')
-          .doc(_reportId)
-          .set(report.toMap());
+      final map = report.toMap();
+      if (widget.existingReport == null) {
+        map['uploadedAt'] = Timestamp.now();
+        map['name'] =
+            'Monthly Report – ${DateFormat('MMMM yyyy').format(_monthStart)}';
+        await FirebaseFirestore.instance
+            .collection('Reports')
+            .doc(_reportId)
+            .set(map);
+      } else {
+        await FirebaseFirestore.instance
+            .collection('Reports')
+            .doc(_reportId)
+            .update(map);
+      }
       await _clearCache();
       widget.logger.i('✅ MonthlyForm: saved $_reportId');
       if (!silent && mounted) {
@@ -1241,12 +1257,21 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
+      floatingActionButton: _isReadOnly
+          ? FloatingActionButton.extended(
+              onPressed: () => setState(() => _isReadOnly = false),
+              backgroundColor: _navy,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.edit_rounded),
+              label: Text('Edit', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            )
+          : null,
       appBar: AppBar(
         backgroundColor: _navy,
         foregroundColor: Colors.white,
         elevation: 0,
         title: Text(
-          '${widget.project.name} — Monthly Report',
+          '${widget.project.name} — Monthly Report${_isReadOnly ? ' (View)' : ''}',
           style: GoogleFonts.poppins(
               fontWeight: FontWeight.w600, fontSize: 16),
         ),
@@ -1404,6 +1429,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                 width: 180,
                 child: TextFormField(
                   controller: _contractCtrl,
+                  readOnly: _isReadOnly,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(
                       color: Colors.white, fontSize: 13),
@@ -1424,7 +1450,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                     contentPadding: const EdgeInsets.symmetric(
                         vertical: 4, horizontal: 2),
                   ),
-                  onChanged: (_) => _saveDraftToCache(),
+                  onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
                 ),
               ),
             ],
@@ -1463,7 +1489,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         required VoidCallback onTap}) {
       return Expanded(
         child: GestureDetector(
-          onTap: onTap,
+          onTap: _isReadOnly ? null : onTap,
           child: Container(
             height: 58,
             decoration: BoxDecoration(
@@ -1558,6 +1584,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             child: Center(
               child: TextFormField(
                 controller: _buildingCtrl,
+                readOnly: _isReadOnly,
                 textAlignVertical: TextAlignVertical.center,
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(
@@ -1574,7 +1601,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 14),
                 ),
-                onChanged: (_) => _saveDraftToCache(),
+                onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
               ),
             ),
           ),
@@ -1734,10 +1761,12 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                                       color: Colors.white,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600)))),
-                      onChanged: (v) {
-                        setState(() => _plannedMonth = v ?? _plannedMonth);
-                        _saveDraftToCache();
-                      },
+                      onChanged: _isReadOnly
+                          ? null
+                          : (v) {
+                              setState(() => _plannedMonth = v ?? _plannedMonth);
+                              _saveDraftToCache();
+                            },
                     ),
                   ),
                 ),
@@ -1858,7 +1887,8 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                     letterSpacing: 0.7)),
           ),
 
-          // Toolbar + table insert button
+          // Toolbar + table insert button — hidden in read-only mode
+          if (!_isReadOnly)
           Container(
             decoration: BoxDecoration(
               color: _sectionBg,
@@ -1918,34 +1948,37 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
           ),
 
           // Quill editor
-          Container(
-            constraints: const BoxConstraints(minHeight: 160),
-            padding: const EdgeInsets.all(12),
-            child: quill.QuillEditor.basic(
-              controller: ctrl,
-              config: quill.QuillEditorConfig(
-                placeholder: hint,
-                minHeight: 160,
-                expands: false,
-                scrollable: true,
-                autoFocus: false,
-                enableInteractiveSelection: true,
-                customStyles: quill.DefaultStyles(
-                  placeHolder: quill.DefaultTextBlockStyle(
-                    GoogleFonts.poppins(
-                        color: Colors.grey[400], fontSize: 13),
-                    const quill.HorizontalSpacing(0, 0),
-                    const quill.VerticalSpacing(0, 0),
-                    const quill.VerticalSpacing(0, 0),
-                    null,
-                  ),
-                  paragraph: quill.DefaultTextBlockStyle(
-                    GoogleFonts.poppins(
-                        color: Colors.black87, fontSize: 13),
-                    const quill.HorizontalSpacing(0, 0),
-                    const quill.VerticalSpacing(2, 2),
-                    const quill.VerticalSpacing(0, 0),
-                    null,
+          AbsorbPointer(
+            absorbing: _isReadOnly,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 160),
+              padding: const EdgeInsets.all(12),
+              child: quill.QuillEditor.basic(
+                controller: ctrl,
+                config: quill.QuillEditorConfig(
+                  placeholder: hint,
+                  minHeight: 160,
+                  expands: false,
+                  scrollable: true,
+                  autoFocus: false,
+                  enableInteractiveSelection: true,
+                  customStyles: quill.DefaultStyles(
+                    placeHolder: quill.DefaultTextBlockStyle(
+                      GoogleFonts.poppins(
+                          color: Colors.grey[400], fontSize: 13),
+                      const quill.HorizontalSpacing(0, 0),
+                      const quill.VerticalSpacing(0, 0),
+                      const quill.VerticalSpacing(0, 0),
+                      null,
+                    ),
+                    paragraph: quill.DefaultTextBlockStyle(
+                      GoogleFonts.poppins(
+                          color: Colors.black87, fontSize: 13),
+                      const quill.HorizontalSpacing(0, 0),
+                      const quill.VerticalSpacing(2, 2),
+                      const quill.VerticalSpacing(0, 0),
+                      null,
+                    ),
                   ),
                 ),
               ),
@@ -2023,7 +2056,8 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     final isLoading = _sectionPdfLoading[sectionIndex];
 
     return Row(children: [
-      // Attach Images
+      // Attach Images — hidden in read-only mode
+      if (!_isReadOnly) ...[
       Expanded(
         child: SizedBox(
           height: 40,
@@ -2067,7 +2101,8 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         ),
       ),
       const SizedBox(width: 8),
-      // Download PDF
+      ],
+      // Download PDF — always visible
       Expanded(
         child: SizedBox(
           height: 40,
@@ -2229,7 +2264,8 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               icon: Icons.business_outlined),
           const SizedBox(height: 10),
 
-          // Signature pad
+          // Signature pad — hidden in read-only mode
+          if (!_isReadOnly) ...[
           Text('Signature',
               style: GoogleFonts.poppins(
                   fontSize: 11,
@@ -2239,6 +2275,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
           _SignaturePadWidget(
             onSignatureChanged: onSignature,
           ),
+          ],
         ],
       ),
     );
@@ -2252,6 +2289,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   }) {
     return TextFormField(
       controller: ctrl,
+      readOnly: _isReadOnly,
       style: GoogleFonts.poppins(fontSize: 13, color: Colors.black87),
       decoration: InputDecoration(
         labelText: label,
@@ -2278,7 +2316,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
           borderSide: const BorderSide(color: _navy, width: 1.5),
         ),
       ),
-      onChanged: (_) => _saveDraftToCache(),
+      onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
     );
   }
 
@@ -2321,6 +2359,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     }
 
     return Row(children: [
+      if (!_isReadOnly) ...[
       btn(
         label: 'Save Report',
         icon: Icons.save_rounded,
@@ -2329,6 +2368,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         onTap: _saveReport,
       ),
       const SizedBox(width: 10),
+      ],
       btn(
         label: 'Download PDF',
         icon: Icons.picture_as_pdf_rounded,
@@ -2336,6 +2376,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         isLoading: _isGeneratingPdf,
         onTap: _downloadAsPdf,
       ),
+      if (!_isReadOnly) ...[
       const SizedBox(width: 10),
       btn(
         label: '+ New Form',
@@ -2344,6 +2385,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         isLoading: false,
         onTap: _addNewForm,
       ),
+      ],
     ]);
   }
 }

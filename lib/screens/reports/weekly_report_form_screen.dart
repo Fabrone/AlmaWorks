@@ -137,11 +137,14 @@ class WeeklyReportFormScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
   final WeeklyReportData? existingReport;
+  /// When true all fields are read-only; a floating Edit button unlocks them.
+  final bool isReadOnly;
   const WeeklyReportFormScreen({
     super.key,
     required this.project,
     required this.logger,
     this.existingReport,
+    this.isReadOnly = false,
   });
   @override
   State<WeeklyReportFormScreen> createState() => _WeeklyReportFormScreenState();
@@ -154,6 +157,8 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
   final _notesCtrl = TextEditingController();
   final _percentageCtrl = TextEditingController(text: '0');
   final _scrollCtrl = ScrollController();
+  // ── read-only mode ────────────────────────────────────────────
+  bool _isReadOnly = false;
   // ── state ─────────────────────────────────────────────────────
   late String _reportId;
   // Week range — default to current Mon–Sun
@@ -184,6 +189,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     super.initState();
     widget.logger.i('📋 WeeklyForm: initState START project=${widget.project.name}');
     _reportId = widget.existingReport?.id ?? const Uuid().v4();
+    _isReadOnly = widget.isReadOnly;
     _extractSubcontractors();
     // Default week: most recent Monday → Sunday
     final now = DateTime.now();
@@ -442,6 +448,9 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       final report = await _buildReportData();
       final map = report.toMap();
       if (widget.existingReport == null) {
+        map['uploadedAt'] = Timestamp.now();
+        map['name'] =
+            'Weekly Report – ${DateFormat('dd MMM yyyy').format(_weekStart)} → ${DateFormat('dd MMM yyyy').format(_weekEnd)}';
         await FirebaseFirestore.instance
             .collection('Reports')
             .doc(_reportId)
@@ -1055,12 +1064,21 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
+      floatingActionButton: _isReadOnly
+          ? FloatingActionButton.extended(
+              onPressed: () => setState(() => _isReadOnly = false),
+              backgroundColor: _navy,
+              foregroundColor: Colors.white,
+              icon: const Icon(Icons.edit_rounded),
+              label: Text('Edit', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            )
+          : null,
       appBar: AppBar(
         backgroundColor: _navy,
         foregroundColor: Colors.white,
         elevation: 0,
         title: Text(
-          '${widget.project.name} — Weekly Report',
+          '${widget.project.name} — Weekly Report${_isReadOnly ? ' (View)' : ''}',
           style:
               GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 16),
         ),
@@ -1172,6 +1190,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                 width: 180,
                 child: TextFormField(
                   controller: _contractCtrl,
+                  readOnly: _isReadOnly,
                   textAlign: TextAlign.center,
                   style: GoogleFonts.poppins(
                       color: Colors.white, fontSize: 13),
@@ -1192,7 +1211,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                     contentPadding: const EdgeInsets.symmetric(
                         vertical: 4, horizontal: 2),
                   ),
-                  onChanged: (_) => _saveDraftToCache(),
+                  onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
                 ),
               ),
             ],
@@ -1231,7 +1250,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     }) {
       return Expanded(
         child: GestureDetector(
-          onTap: onTap,
+          onTap: _isReadOnly ? null : onTap,
           child: Container(
             height: 58,
             decoration: BoxDecoration(
@@ -1326,6 +1345,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             child: Center(
               child: TextFormField(
                 controller: _buildingCtrl,
+                readOnly: _isReadOnly,
                 textAlignVertical: TextAlignVertical.center,
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(
@@ -1342,7 +1362,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                   contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 14),
                 ),
-                onChanged: (_) => _saveDraftToCache(),
+                onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
               ),
             ),
           ),
@@ -1409,10 +1429,12 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                                 style: GoogleFonts.poppins(
                                     fontSize: valueFs))))
                         .toList(),
-                    onChanged: (v) {
-                      setState(() => _subContractor = v ?? '');
-                      _saveDraftToCache();
-                    },
+                    onChanged: _isReadOnly
+                        ? null
+                        : (v) {
+                            setState(() => _subContractor = v ?? '');
+                            _saveDraftToCache();
+                          },
                   ),
           ),
         ],
@@ -1474,7 +1496,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       ),
     );
   }
-  List<PlutoColumn> _buildColumns() => [
+  List<PlutoColumn> _buildColumns({bool readOnly = false}) => [
         PlutoColumn(
           title: 'No.',
           field: 'no',
@@ -1486,16 +1508,19 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
           title: 'Activity',
           field: 'activity',
           type: PlutoColumnType.text(),
+          readOnly: readOnly,
         ),
         PlutoColumn(
           title: 'Progress',
           field: 'progress',
           type: PlutoColumnType.text(),
+          readOnly: readOnly,
         ),
         PlutoColumn(
           title: 'Comment',
           field: 'comment',
           type: PlutoColumnType.text(),
+          readOnly: readOnly,
         ),
       ];
   List<PlutoRow> _buildPlutoRows(List<ActivityRow> rows) {
@@ -1541,7 +1566,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
           ),
           height: 300, // Adjustable height for the grid
           child: PlutoGrid(
-            columns: _buildColumns(),
+            columns: _buildColumns(readOnly: _isReadOnly),
             rows: _buildPlutoRows(rows),
             onLoaded: (PlutoGridOnLoadedEvent event) {
               if (isSloped) {
@@ -1550,7 +1575,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                 flatGridManager = event.stateManager;
               }
             },
-            onChanged: (event) => _onGridChanged(event, isSloped),
+            onChanged: _isReadOnly ? null : (event) => _onGridChanged(event, isSloped),
             configuration: PlutoGridConfiguration(
               style: PlutoGridStyleConfig(
                 gridBackgroundColor: Colors.white,
@@ -1571,7 +1596,8 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             ),
           ),
         ),
-        // Row controls
+        // Row controls — hidden in read-only mode
+        if (!_isReadOnly) ...[
         const SizedBox(height: 6),
         Row(
           children: [
@@ -1602,6 +1628,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
               ),
           ],
         ),
+        ],
       ],
     );
   }
@@ -1622,6 +1649,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             padding: const EdgeInsets.all(12),
             child: TextFormField(
               controller: _notesCtrl,
+              readOnly: _isReadOnly,
               maxLines: 5,
               minLines: 3,
               maxLength: 800,
@@ -1647,7 +1675,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                 counterStyle:
                     GoogleFonts.poppins(fontSize: 10, color: Colors.grey),
               ),
-              onChanged: (_) => _saveDraftToCache(),
+              onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
             ),
           ),
         ],
@@ -1693,6 +1721,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             child: Center(
               child: TextFormField(
                 controller: _percentageCtrl,
+                readOnly: _isReadOnly,
                 textAlign: TextAlign.center,
                 textAlignVertical: TextAlignVertical.center,
                 keyboardType: const TextInputType.numberWithOptions(
@@ -1727,7 +1756,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                   if (val < 0 || val > 100) return '0–100';
                   return null;
                 },
-                onChanged: (_) => _saveDraftToCache(),
+                onChanged: _isReadOnly ? null : (_) => _saveDraftToCache(),
               ),
             ),
           ),
@@ -1803,33 +1832,35 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                                   height: thumbSz,
                                   fit: BoxFit.cover),
                         ),
-                        Positioned(
-                          top: 4, right: 4,
-                          child: GestureDetector(
-                            onTap: () => setState(() {
-                              if (i < _localImages.length) {
-                                _localImages.removeAt(i);
-                              } else {
-                                _savedImageUrls.removeAt(
-                                    i - _localImages.length);
-                              }
-                            }),
-                            child: Container(
-                              decoration: const BoxDecoration(
-                                  color: Colors.black54,
-                                  shape: BoxShape.circle),
-                              padding: const EdgeInsets.all(3),
-                              child: const Icon(Icons.close,
-                                  size: 12, color: Colors.white),
+                        if (!_isReadOnly)
+                          Positioned(
+                            top: 4, right: 4,
+                            child: GestureDetector(
+                              onTap: () => setState(() {
+                                if (i < _localImages.length) {
+                                  _localImages.removeAt(i);
+                                } else {
+                                  _savedImageUrls.removeAt(
+                                      i - _localImages.length);
+                                }
+                              }),
+                              child: Container(
+                                decoration: const BoxDecoration(
+                                    color: Colors.black54,
+                                    shape: BoxShape.circle),
+                                padding: const EdgeInsets.all(3),
+                                child: const Icon(Icons.close,
+                                    size: 12, color: Colors.white),
+                              ),
                             ),
                           ),
-                        ),
                       ]);
                     },
                   ),
                 ),
                 const SizedBox(height: 12),
               ],
+              if (!_isReadOnly)
               OutlinedButton.icon(
                 onPressed: _pickImages,
                 icon: const Icon(
@@ -1897,6 +1928,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       );
     }
     return Row(children: [
+      if (!_isReadOnly) ...[
       btn(
         label: 'Save Report',
         icon: Icons.save_rounded,
@@ -1905,6 +1937,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
         onTap: _saveReport,
       ),
       const SizedBox(width: 10),
+      ],
       btn(
         label: 'Download PDF',
         icon: Icons.picture_as_pdf_rounded,
@@ -1912,6 +1945,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
         isLoading: _isGeneratingPdf,
         onTap: _downloadAsPdf,
       ),
+      if (!_isReadOnly) ...[
       const SizedBox(width: 10),
       btn(
         label: '+ New Form',
@@ -1920,6 +1954,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
         isLoading: false,
         onTap: _addNewForm,
       ),
+      ],
     ]);
   }
   // ── Shared section title bar builder ──────────────────────────
