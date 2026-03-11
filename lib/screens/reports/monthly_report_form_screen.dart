@@ -739,11 +739,24 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
           font: pw.Font.helvetica(), fontSize: 9, color: PdfColors.black);
 
       // ── Collect all section images ──────────────────────────
+      // ── Collect images per section: local bytes + Firebase Storage URLs ──
       Future<List<pw.MemoryImage>> loadImgs(
           List<Uint8List> local, List<String> urls) async {
         final imgs = <pw.MemoryImage>[];
+        // 1) Local bytes picked this session
         for (final b in local) {
           imgs.add(pw.MemoryImage(b));
+        }
+        // 2) Previously-saved URLs — download via Firebase Storage
+        for (final url in urls) {
+          try {
+            final data = await FirebaseStorage.instance
+                .refFromURL(url)
+                .getData(10 * 1024 * 1024);
+            if (data != null) imgs.add(pw.MemoryImage(data));
+          } catch (e) {
+            widget.logger.w('⚠️ MonthlyForm: could not fetch image for PDF – $url – $e');
+          }
         }
         return imgs;
       }

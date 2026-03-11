@@ -706,9 +706,22 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       final fileName =
           'Weekly_Report_${report.projectName.replaceAll(' ', '_')}_'
           '${DateFormat('yyyyMMdd').format(_weekStart)}.pdf';
+      // ── Collect images: local (in-session) + saved (Firebase Storage URLs) ──
       final List<pw.MemoryImage> pdfImages = [];
+      // 1) Local bytes picked this session
       for (final bytes in _localImages) {
         pdfImages.add(pw.MemoryImage(bytes));
+      }
+      // 2) Previously-saved URLs — download bytes via Firebase Storage
+      for (final url in _savedImageUrls) {
+        try {
+          final data = await FirebaseStorage.instance
+              .refFromURL(url)
+              .getData(10 * 1024 * 1024);
+          if (data != null) pdfImages.add(pw.MemoryImage(data));
+        } catch (e) {
+          widget.logger.w('⚠️ WeeklyForm: could not fetch image for PDF – $url – $e');
+        }
       }
       // ── Styles ───────────────────────────────────────────────
       final navyColor = PdfColor.fromHex('#0A2E5A');
