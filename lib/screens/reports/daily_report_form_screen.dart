@@ -456,6 +456,18 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     widget.logger.i('📋 DailyForm: _pickImages: total local images now=${_localImages.length}');
   }
 
+  // ── Full-screen image viewer ──────────────────────────────────
+  void _showImageViewer(List<_ImageItem> images, int initialIndex) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      builder: (_) => _ImageViewerDialog(
+        images: images,
+        initialIndex: initialIndex,
+      ),
+    );
+  }
+
   // ── save to Firestore ─────────────────────────────────────────
   Future<DailyReportData> _buildReportData() async {
     widget.logger.d('📋 DailyForm: _buildReportData: uploading ${_localImages.length} local image(s)');
@@ -820,6 +832,47 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     }
   }
 
+  // ── PDF 2-column image grid ───────────────────────────────────
+  // A4 content width after 28pt margins = ~539pt.
+  // 1 image  → centred at 55% of page width.
+  // 2+ images → rows of 2, each column ~half page width.
+  List<pw.Widget> _buildPdfImageGrid(List<pw.MemoryImage> images) {
+    const double pageW  = 539.0;
+    const double gap    = 8.0;
+    const double colW2  = (pageW - gap) / 2;   // 2-col width
+    const double colH2  = colW2 * 0.68;        // ~3:2 ratio
+    const double soloW  = pageW * 0.55;         // single-image width
+    const double soloH  = soloW * 0.68;
+
+    final rows = <pw.Widget>[];
+
+    if (images.length == 1) {
+      rows.add(pw.Center(
+        child: pw.Image(images[0],
+            width: soloW, height: soloH, fit: pw.BoxFit.cover),
+      ));
+      return rows;
+    }
+
+    for (int i = 0; i < images.length; i += 2) {
+      final hasNext = i + 1 < images.length;
+      rows.add(pw.Row(
+        children: [
+          pw.Image(images[i],
+              width: colW2, height: colH2, fit: pw.BoxFit.cover),
+          if (hasNext) ...[
+            pw.SizedBox(width: gap),
+            pw.Image(images[i + 1],
+                width: colW2, height: colH2, fit: pw.BoxFit.cover),
+          ] else
+            pw.SizedBox(width: colW2 + gap), // keep row balanced
+        ],
+      ));
+      if (i + 2 < images.length) rows.add(pw.SizedBox(height: gap));
+    }
+    return rows;
+  }
+
   Future<void> _downloadAsPdf() async {
     widget.logger.i('📋 DailyForm: _downloadAsPdf: START');
     setState(() => _isGeneratingPdf = true);
@@ -1163,15 +1216,10 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             // ══ ATTACHED IMAGES ══════════════════════════════════
             if (pdfImages.isNotEmpty) ...[
               sectionBar('ATTACHED IMAGES'),
-              pw.SizedBox(height: 6),
-              pw.Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: pdfImages
-                    .map((img) => pw.Image(img,
-                        width: 155, height: 116, fit: pw.BoxFit.cover))
-                    .toList(),
-              ),
+              pw.SizedBox(height: 8),
+              // 2-column grid: single image centred at 60% width,
+              // multiple images in rows of 2 filling page width.
+              ..._buildPdfImageGrid(pdfImages),
             ],
           ],
         ),
@@ -2007,11 +2055,14 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     ];
     widget.logger.d('📋 DailyForm: _buildImageSection → aw=$aw  local=${_localImages.length}  saved=${_savedImageUrls.length}');
 
-    final double thumbSz = (aw * 0.24).clamp(80.0, 130.0);
     final double titleFs = (aw * 0.030).clamp(10.0, 14.0);
     final double radius  = aw * 0.022;
     final double padH    = aw * 0.035;
     final double padV    = aw * 0.025;
+
+    // Thumbnail width: 2 columns with 8px gap
+    final double thumbW = ((aw - padH * 2 - 8) / 2).clamp(100.0, 300.0);
+    final double thumbH = thumbW * 0.70; // 10:7 ratio
 
     return Container(
       decoration: BoxDecoration(
@@ -2022,6 +2073,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Header bar ───────────────────────────────────────
           Container(
             width: double.infinity,
             padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
@@ -2033,6 +2085,9 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
               ),
             ),
             child: Row(children: [
+              const Icon(Icons.photo_library_rounded,
+                  color: Colors.white70, size: 16),
+              const SizedBox(width: 8),
               Text('ATTACHED IMAGES',
                   style: GoogleFonts.poppins(
                       color: Colors.white,
@@ -2047,88 +2102,161 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                         fontSize: titleFs * 0.85)),
             ]),
           ),
+
           Padding(
             padding: EdgeInsets.all(padH),
-            child: Column(children: [
-              if (allImages.isNotEmpty) ...[
-                SizedBox(
-                  height: thumbSz,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: allImages.length,
-                    separatorBuilder: (_, __) =>
-                        SizedBox(width: aw * 0.020),
-                    itemBuilder: (ctx, i) {
-                      final item = allImages[i];
-                      widget.logger.d('📋 DailyForm: image[$i] ${item.bytes != null ? "local" : "url"}');
-                      return Stack(children: [
-                        ClipRRect(
-                          borderRadius:
-                              BorderRadius.circular(radius * 0.6),
-                          child: item.bytes != null
-                              ? Image.memory(item.bytes!,
-                                  width: thumbSz,
-                                  height: thumbSz,
-                                  fit: BoxFit.cover)
-                              : Image.network(item.url!,
-                                  width: thumbSz,
-                                  height: thumbSz,
-                                  fit: BoxFit.cover),
-                        ),
-                        if (!_isReadOnly)
-                        Positioned(
-                          top: 4, right: 4,
-                          child: GestureDetector(
-                            onTap: () {
-                              widget.logger.i('📋 DailyForm: removing image[$i]');
-                              setState(() {
-                                if (i < _localImages.length) {
-                                  _localImages.removeAt(i);
-                                } else {
-                                  _savedImageUrls.removeAt(
-                                      i - _localImages.length);
-                                }
-                              });
-                            },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (allImages.isNotEmpty) ...[
+                  // ── 2-column image grid ─────────────────────
+                  if (allImages.length == 1) ...[
+                    // Single image: centred, wider display
+                    Center(
+                      child: GestureDetector(
+                        onTap: () => _showImageViewer(allImages, 0),
+                        child: Stack(children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(radius * 0.6),
+                            child: allImages[0].bytes != null
+                                ? Image.memory(allImages[0].bytes!,
+                                    width: thumbW * 1.5,
+                                    height: thumbH * 1.5,
+                                    fit: BoxFit.cover)
+                                : Image.network(allImages[0].url!,
+                                    width: thumbW * 1.5,
+                                    height: thumbH * 1.5,
+                                    fit: BoxFit.cover),
+                          ),
+                          // Expand hint
+                          Positioned(
+                            bottom: 6, right: 6,
                             child: Container(
+                              padding: const EdgeInsets.all(4),
                               decoration: const BoxDecoration(
-                                  color: Colors.black54,
+                                  color: Colors.black45,
                                   shape: BoxShape.circle),
-                              padding: const EdgeInsets.all(3),
-                              child: const Icon(Icons.close,
-                                  size: 12, color: Colors.white),
+                              child: const Icon(Icons.zoom_out_map_rounded,
+                                  size: 14, color: Colors.white),
                             ),
                           ),
-                        ),
-                      ]);
+                          if (!_isReadOnly)
+                            Positioned(
+                              top: 4, right: 4,
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() {
+                                    if (_localImages.isNotEmpty) {
+                                      _localImages.removeAt(0);
+                                    } else {
+                                      _savedImageUrls.removeAt(0);
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  decoration: const BoxDecoration(
+                                      color: Colors.black54,
+                                      shape: BoxShape.circle),
+                                  padding: const EdgeInsets.all(3),
+                                  child: const Icon(Icons.close,
+                                      size: 12, color: Colors.white),
+                                ),
+                              ),
+                            ),
+                        ]),
+                      ),
+                    ),
+                  ] else ...[
+                    // Multiple images: 2-column wrap grid
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: List.generate(allImages.length, (i) {
+                        final item = allImages[i];
+                        widget.logger.d('📋 DailyForm: image[$i] ${item.bytes != null ? "local" : "url"}');
+                        return GestureDetector(
+                          onTap: () => _showImageViewer(allImages, i),
+                          child: Stack(children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(radius * 0.6),
+                              child: item.bytes != null
+                                  ? Image.memory(item.bytes!,
+                                      width: thumbW,
+                                      height: thumbH,
+                                      fit: BoxFit.cover)
+                                  : Image.network(item.url!,
+                                      width: thumbW,
+                                      height: thumbH,
+                                      fit: BoxFit.cover),
+                            ),
+                            // Expand hint
+                            Positioned(
+                              bottom: 4, right: _isReadOnly ? 4 : 24,
+                              child: Container(
+                                padding: const EdgeInsets.all(3),
+                                decoration: const BoxDecoration(
+                                    color: Colors.black45,
+                                    shape: BoxShape.circle),
+                                child: const Icon(Icons.zoom_out_map_rounded,
+                                    size: 11, color: Colors.white),
+                              ),
+                            ),
+                            if (!_isReadOnly)
+                              Positioned(
+                                top: 4, right: 4,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    widget.logger.i('📋 DailyForm: removing image[$i]');
+                                    setState(() {
+                                      if (i < _localImages.length) {
+                                        _localImages.removeAt(i);
+                                      } else {
+                                        _savedImageUrls.removeAt(
+                                            i - _localImages.length);
+                                      }
+                                    });
+                                  },
+                                  child: Container(
+                                    decoration: const BoxDecoration(
+                                        color: Colors.black54,
+                                        shape: BoxShape.circle),
+                                    padding: const EdgeInsets.all(3),
+                                    child: const Icon(Icons.close,
+                                        size: 12, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                          ]),
+                        );
+                      }),
+                    ),
+                  ],
+                  SizedBox(height: aw * 0.025),
+                ],
+                if (!_isReadOnly)
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      widget.logger.d('📋 DailyForm: pick images tapped');
+                      _pickImages();
                     },
+                    icon: const Icon(
+                        Icons.add_photo_alternate_rounded, size: 18),
+                    label: Text(
+                      allImages.isEmpty ? 'Attach Image(s)' : 'Add More Images',
+                      style: GoogleFonts.poppins(
+                          fontSize: (aw * 0.032).clamp(11.0, 14.0)),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _navy,
+                      side: const BorderSide(color: _navy, width: 1.5),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(aw * 0.018)),
+                      padding: EdgeInsets.symmetric(
+                          horizontal: aw * 0.045, vertical: aw * 0.030),
+                    ),
                   ),
-                ),
-                SizedBox(height: aw * 0.025),
               ],
-              if (!_isReadOnly)
-              OutlinedButton.icon(
-                onPressed: () {
-                  widget.logger.d('📋 DailyForm: pick images tapped');
-                  _pickImages();
-                },
-                icon: const Icon(
-                    Icons.add_photo_alternate_rounded, size: 18),
-                label: Text(
-                  allImages.isEmpty ? 'Attach Image(s)' : 'Add More Images',
-                  style: GoogleFonts.poppins(
-                      fontSize: (aw * 0.032).clamp(11.0, 14.0)),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _navy,
-                  side: const BorderSide(color: _navy, width: 1.5),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(aw * 0.018)),
-                  padding: EdgeInsets.symmetric(
-                      horizontal: aw * 0.045, vertical: aw * 0.030),
-                ),
-              ),
-            ]),
+            ),
           ),
         ],
       ),
@@ -2252,4 +2380,160 @@ class _ImageItem {
   final Uint8List? bytes;
   final String? url;
   _ImageItem({this.bytes, this.url});
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FULL-SCREEN IMAGE VIEWER DIALOG
+// ══════════════════════════════════════════════════════════════════
+
+class _ImageViewerDialog extends StatefulWidget {
+  final List<_ImageItem> images;
+  final int initialIndex;
+  const _ImageViewerDialog(
+      {required this.images, required this.initialIndex});
+
+  @override
+  State<_ImageViewerDialog> createState() => _ImageViewerDialogState();
+}
+
+class _ImageViewerDialogState extends State<_ImageViewerDialog> {
+  late int _current;
+  late PageController _pageCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _current = widget.initialIndex;
+    _pageCtrl = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: EdgeInsets.zero,
+      child: Stack(
+        children: [
+          // ── Full-screen paged viewer ─────────────────────────
+          SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: PageView.builder(
+              controller: _pageCtrl,
+              itemCount: widget.images.length,
+              onPageChanged: (i) => setState(() => _current = i),
+              itemBuilder: (_, i) {
+                final item = widget.images[i];
+                return InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 5.0,
+                  child: Center(
+                    child: item.bytes != null
+                        ? Image.memory(item.bytes!, fit: BoxFit.contain)
+                        : Image.network(item.url!, fit: BoxFit.contain),
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // ── Close button ─────────────────────────────────────
+          Positioned(
+            top: 40, right: 16,
+            child: SafeArea(
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: 38, height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.4), width: 1),
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Image counter ────────────────────────────────────
+          if (widget.images.length > 1)
+            Positioned(
+              top: 48, left: 0, right: 0,
+              child: SafeArea(
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_current + 1} / ${widget.images.length}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+          // ── Prev arrow ───────────────────────────────────────
+          if (_current > 0)
+            Positioned(
+              left: 8, top: 0, bottom: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () => _pageCtrl.previousPage(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.chevron_left_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                ),
+              ),
+            ),
+
+          // ── Next arrow ───────────────────────────────────────
+          if (_current < widget.images.length - 1)
+            Positioned(
+              right: 8, top: 0, bottom: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () => _pageCtrl.nextPage(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.chevron_right_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }

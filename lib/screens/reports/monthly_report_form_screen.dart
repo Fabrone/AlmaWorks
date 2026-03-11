@@ -549,6 +549,51 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     }
   }
 
+  // ── Full-screen image viewer ──────────────────────────────────
+  void _showImageViewer(List<_MImageItem> images, int initialIndex) {
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.92),
+      builder: (_) => _MImageViewerDialog(
+        images: images,
+        initialIndex: initialIndex,
+      ),
+    );
+  }
+
+  // ── PDF 2-column image grid ───────────────────────────────────
+  List<pw.Widget> _buildPdfImageGrid(List<pw.MemoryImage> images) {
+    const double pageW = 539.0;
+    const double gap   = 8.0;
+    const double colW2 = (pageW - gap) / 2;
+    const double colH2 = colW2 * 0.68;
+    const double soloW = pageW * 0.55;
+    const double soloH = soloW * 0.68;
+    final rows = <pw.Widget>[];
+    if (images.length == 1) {
+      rows.add(pw.Center(
+        child: pw.Image(images[0],
+            width: soloW, height: soloH, fit: pw.BoxFit.cover),
+      ));
+      return rows;
+    }
+    for (int i = 0; i < images.length; i += 2) {
+      final hasNext = i + 1 < images.length;
+      rows.add(pw.Row(children: [
+        pw.Image(images[i],
+            width: colW2, height: colH2, fit: pw.BoxFit.cover),
+        if (hasNext) ...[
+          pw.SizedBox(width: gap),
+          pw.Image(images[i + 1],
+              width: colW2, height: colH2, fit: pw.BoxFit.cover),
+        ] else
+          pw.SizedBox(width: colW2 + gap),
+      ]));
+      if (i + 2 < images.length) rows.add(pw.SizedBox(height: gap));
+    }
+    return rows;
+  }
+
   // ─────────────────────────────────────────────────────────────
   // TABLE INSERT DIALOG
   // Uses a dedicated StatefulWidget so TextFields never lose focus
@@ -1093,15 +1138,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             ...tableBodies(_sectionATables),
             if (aImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
-              pw.Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: aImgs
-                      .map((i) => pw.Image(i,
-                          width: 120,
-                          height: 90,
-                          fit: pw.BoxFit.cover))
-                      .toList()),
+              ..._buildPdfImageGrid(aImgs),
             ],
             pw.SizedBox(height: 10),
             // ── SECTION B ─────────────────────────────────
@@ -1111,15 +1148,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             ...tableBodies(_sectionBTables),
             if (bImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
-              pw.Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: bImgs
-                      .map((i) => pw.Image(i,
-                          width: 120,
-                          height: 90,
-                          fit: pw.BoxFit.cover))
-                      .toList()),
+              ..._buildPdfImageGrid(bImgs),
             ],
             pw.SizedBox(height: 10),
             // ── SECTION C ─────────────────────────────────
@@ -1129,15 +1158,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             ...tableBodies(_sectionCTables),
             if (cImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
-              pw.Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: cImgs
-                      .map((i) => pw.Image(i,
-                          width: 120,
-                          height: 90,
-                          fit: pw.BoxFit.cover))
-                      .toList()),
+              ..._buildPdfImageGrid(cImgs),
             ],
             pw.SizedBox(height: 10),
             // ── SECTION D ─────────────────────────────────
@@ -1148,15 +1169,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             ...tableBodies(_sectionDTables),
             if (dImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
-              pw.Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: dImgs
-                      .map((i) => pw.Image(i,
-                          width: 120,
-                          height: 90,
-                          fit: pw.BoxFit.cover))
-                      .toList()),
+              ..._buildPdfImageGrid(dImgs),
             ],
             pw.SizedBox(height: 12),
             // ── SIGNATURES ────────────────────────────────
@@ -1636,54 +1649,221 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     required bool showBuildingField,
   }) {
     const double radius = 10.0;
+    final allImages = [
+      ...localImages.map((b) => _MImageItem(bytes: b)),
+      ...savedUrls.map((u) => _MImageItem(url: u)),
+    ];
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: _fieldBorder, width: 1),
-        boxShadow: [
-          BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 6,
-              offset: const Offset(0, 2))
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // ── Section title bar with letter badge ───────────
-          _buildSectionTitleBar(letter, title, radius),
+    return LayoutBuilder(builder: (context, constraints) {
+      final aw = constraints.maxWidth;
+      final double thumbW = ((aw - 24 - 8) / 2).clamp(100.0, 300.0);
+      final double thumbH = thumbW * 0.70;
 
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Building field — Section A only
-                if (showBuildingField) ...[
-                  _buildBuildingField(),
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(radius),
+          border: Border.all(color: _fieldBorder, width: 1),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 6,
+                offset: const Offset(0, 2))
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Section title bar with letter badge ───────────
+            _buildSectionTitleBar(letter, title, radius),
+
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Building field — Section A only
+                  if (showBuildingField) ...[
+                    _buildBuildingField(),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // ACTIVITIES rich text editor + inline tables
+                  _buildRichEditorWithTables(
+                    sectionKey: 'section$letter',
+                    sectionTitle: 'ACTIVITIES',
+                    hint: hint,
+                    ctrl: ctrl,
+                    tables: tables,
+                  ),
                   const SizedBox(height: 12),
+
+                  // ── Image thumbnails (if any attached) ───────
+                  if (allImages.isNotEmpty) ...[
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF5F7FA),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: const Color(0xFFB0BEC5), width: 0.8),
+                      ),
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(children: [
+                            const Icon(Icons.photo_library_rounded,
+                                size: 14, color: _navy),
+                            const SizedBox(width: 6),
+                            Text('Images (${allImages.length})',
+                                style: GoogleFonts.poppins(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: _navy)),
+                          ]),
+                          const SizedBox(height: 8),
+                          if (allImages.length == 1) ...[
+                            Center(
+                              child: GestureDetector(
+                                onTap: () =>
+                                    _showImageViewer(allImages, 0),
+                                child: Stack(children: [
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(7),
+                                    child: allImages[0].bytes != null
+                                        ? Image.memory(
+                                            allImages[0].bytes!,
+                                            width: thumbW * 1.4,
+                                            height: thumbH * 1.4,
+                                            fit: BoxFit.cover)
+                                        : Image.network(
+                                            allImages[0].url!,
+                                            width: thumbW * 1.4,
+                                            height: thumbH * 1.4,
+                                            fit: BoxFit.cover),
+                                  ),
+                                  Positioned(
+                                    bottom: 5, right: 5,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: const BoxDecoration(
+                                          color: Colors.black45,
+                                          shape: BoxShape.circle),
+                                      child: const Icon(
+                                          Icons.zoom_out_map_rounded,
+                                          size: 13,
+                                          color: Colors.white),
+                                    ),
+                                  ),
+                                  if (!_isReadOnly)
+                                    Positioned(
+                                      top: 4, right: 4,
+                                      child: GestureDetector(
+                                        onTap: () => setState(() {
+                                          if (localImages.isNotEmpty) {
+                                            localImages.removeAt(0);
+                                          } else {
+                                            savedUrls.removeAt(0);
+                                          }
+                                        }),
+                                        child: Container(
+                                          decoration: const BoxDecoration(
+                                              color: Colors.black54,
+                                              shape: BoxShape.circle),
+                                          padding:
+                                              const EdgeInsets.all(3),
+                                          child: const Icon(Icons.close,
+                                              size: 11,
+                                              color: Colors.white),
+                                        ),
+                                      ),
+                                    ),
+                                ]),
+                              ),
+                            ),
+                          ] else ...[
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children:
+                                  List.generate(allImages.length, (i) {
+                                final item = allImages[i];
+                                return GestureDetector(
+                                  onTap: () =>
+                                      _showImageViewer(allImages, i),
+                                  child: Stack(children: [
+                                    ClipRRect(
+                                      borderRadius:
+                                          BorderRadius.circular(7),
+                                      child: item.bytes != null
+                                          ? Image.memory(item.bytes!,
+                                              width: thumbW,
+                                              height: thumbH,
+                                              fit: BoxFit.cover)
+                                          : Image.network(item.url!,
+                                              width: thumbW,
+                                              height: thumbH,
+                                              fit: BoxFit.cover),
+                                    ),
+                                    Positioned(
+                                      bottom: 4,
+                                      right: _isReadOnly ? 4 : 22,
+                                      child: Container(
+                                        padding:
+                                            const EdgeInsets.all(3),
+                                        decoration: const BoxDecoration(
+                                            color: Colors.black45,
+                                            shape: BoxShape.circle),
+                                        child: const Icon(
+                                            Icons.zoom_out_map_rounded,
+                                            size: 10,
+                                            color: Colors.white),
+                                      ),
+                                    ),
+                                    if (!_isReadOnly)
+                                      Positioned(
+                                        top: 4, right: 4,
+                                        child: GestureDetector(
+                                          onTap: () => setState(() {
+                                            if (i < localImages.length) {
+                                              localImages.removeAt(i);
+                                            } else {
+                                              savedUrls.removeAt(
+                                                  i - localImages.length);
+                                            }
+                                          }),
+                                          child: Container(
+                                            decoration: const BoxDecoration(
+                                                color: Colors.black54,
+                                                shape: BoxShape.circle),
+                                            padding:
+                                                const EdgeInsets.all(3),
+                                            child: const Icon(Icons.close,
+                                                size: 11,
+                                                color: Colors.white),
+                                          ),
+                                        ),
+                                      ),
+                                  ]),
+                                );
+                              }),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // Section action buttons
+                  _buildSectionButtons(sectionIndex, localImages, savedUrls),
                 ],
-
-                // ACTIVITIES rich text editor + inline tables
-                _buildRichEditorWithTables(
-                  sectionKey: 'section$letter',
-                  sectionTitle: 'ACTIVITIES',
-                  hint: hint,
-                  ctrl: ctrl,
-                  tables: tables,
-                ),
-                const SizedBox(height: 12),
-
-                // Section action buttons
-                _buildSectionButtons(sectionIndex, localImages, savedUrls),
-              ],
+              ),
             ),
-          ),
-        ],
-      ),
-    );
+          ],
+        ),
+      );
+    });
   }
 
   // ── Section D: Planned Activities (with month picker) ───────
@@ -3676,4 +3856,164 @@ class _SignaturePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SignaturePainter old) => old.strokes != strokes;
+}
+// ══════════════════════════════════════════════════════════════════
+//  MONTHLY FORM IMAGE HELPERS
+// ══════════════════════════════════════════════════════════════════
+
+class _MImageItem {
+  final Uint8List? bytes;
+  final String? url;
+  _MImageItem({this.bytes, this.url});
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  FULL-SCREEN IMAGE VIEWER DIALOG (monthly)
+// ══════════════════════════════════════════════════════════════════
+
+class _MImageViewerDialog extends StatefulWidget {
+  final List<_MImageItem> images;
+  final int initialIndex;
+  const _MImageViewerDialog(
+      {required this.images, required this.initialIndex});
+
+  @override
+  State<_MImageViewerDialog> createState() => _MImageViewerDialogState();
+}
+
+class _MImageViewerDialogState extends State<_MImageViewerDialog> {
+  late int _current;
+  late PageController _pageCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _current = widget.initialIndex;
+    _pageCtrl = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: EdgeInsets.zero,
+      child: Stack(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: PageView.builder(
+              controller: _pageCtrl,
+              itemCount: widget.images.length,
+              onPageChanged: (i) => setState(() => _current = i),
+              itemBuilder: (_, i) {
+                final item = widget.images[i];
+                return InteractiveViewer(
+                  minScale: 0.8,
+                  maxScale: 5.0,
+                  child: Center(
+                    child: item.bytes != null
+                        ? Image.memory(item.bytes!, fit: BoxFit.contain)
+                        : Image.network(item.url!, fit: BoxFit.contain),
+                  ),
+                );
+              },
+            ),
+          ),
+          // Close button
+          Positioned(
+            top: 40, right: 16,
+            child: SafeArea(
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: Container(
+                  width: 38, height: 38,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.4), width: 1),
+                  ),
+                  child: const Icon(Icons.close_rounded,
+                      color: Colors.white, size: 20),
+                ),
+              ),
+            ),
+          ),
+          // Counter
+          if (widget.images.length > 1)
+            Positioned(
+              top: 48, left: 0, right: 0,
+              child: SafeArea(
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_current + 1} / ${widget.images.length}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          // Prev arrow
+          if (_current > 0)
+            Positioned(
+              left: 8, top: 0, bottom: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () => _pageCtrl.previousPage(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.chevron_left_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                ),
+              ),
+            ),
+          // Next arrow
+          if (_current < widget.images.length - 1)
+            Positioned(
+              right: 8, top: 0, bottom: 0,
+              child: Center(
+                child: GestureDetector(
+                  onTap: () => _pageCtrl.nextPage(
+                      duration: const Duration(milliseconds: 250),
+                      curve: Curves.easeInOut),
+                  child: Container(
+                    width: 36, height: 36,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.chevron_right_rounded,
+                        color: Colors.white, size: 22),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
