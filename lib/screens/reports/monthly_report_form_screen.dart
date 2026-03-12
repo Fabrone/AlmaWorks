@@ -283,7 +283,6 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   // ── Loading flags ──────────────────────────────────────────────
   bool _isSaving = false;
   bool _isGeneratingPdf = false;
-  final List<bool> _sectionPdfLoading = [false, false, false, false];
 
   // ── Report ID ─────────────────────────────────────────────────
   late String _reportId;
@@ -762,36 +761,60 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   // ─────────────────────────────────────────────────────────────
   // PDF GENERATION
   // ─────────────────────────────────────────────────────────────
+  // Ruled blank lines for empty printed sections.
+  // Returns a flat List<pw.Widget> to be spread directly into a parent —
+  // identical pattern to the working weekly report _writingLines.
+  List<pw.Widget> _pdfWritingLines(int count) =>
+      List.generate(
+        count,
+        (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.SizedBox(height: 18),
+            pw.Container(height: 0.5, color: PdfColors.grey400),
+          ],
+        ),
+      );
+
   Future<void> _downloadAsPdf() async {
     setState(() => _isGeneratingPdf = true);
     try {
-      final navyColor = PdfColor.fromHex('#0A2E5A');
-      final lightBlue = PdfColor.fromHex('#E8EEF6');
+      // ── Colours ──────────────────────────────────────────────
+      final navyColor       = PdfColor.fromHex('#0A2E5A');
+      final lightBlue       = PdfColor.fromHex('#E8EEF6');
       final sectionLetterBg = PdfColor.fromHex('#1A4070');
 
-      final headerStyle = pw.TextStyle(
-          font: pw.Font.helveticaBold(),
-          fontSize: 9.5,
-          color: PdfColors.white,
-          letterSpacing: 0.5);
+      // ── Text styles ──────────────────────────────────────────
+      final sectionHeaderStyle = pw.TextStyle(
+        font: pw.Font.helveticaBold(),
+        fontSize: 9.5,
+        color: PdfColors.white,
+        letterSpacing: 0.5,
+      );
+      final tableHeaderStyle = pw.TextStyle(
+        font: pw.Font.helveticaBold(),
+        fontSize: 7.5,
+        color: PdfColors.white,
+      );
       final fieldLabelStyle = pw.TextStyle(
-          font: pw.Font.helveticaBold(),
-          fontSize: 8,
-          color: navyColor,
-          letterSpacing: 0.3);
+        font: pw.Font.helveticaBold(),
+        fontSize: 8,
+        color: navyColor,
+        letterSpacing: 0.3,
+      );
       final fieldValueStyle = pw.TextStyle(
-          font: pw.Font.helvetica(), fontSize: 9, color: PdfColors.black);
+        font: pw.Font.helvetica(),
+        fontSize: 9,
+        color: PdfColors.black,
+      );
 
-      // ── Collect all section images ──────────────────────────
-      // ── Collect images per section: local bytes + Firebase Storage URLs ──
+      // ── Collect section images ────────────────────────────────
       Future<List<pw.MemoryImage>> loadImgs(
           List<Uint8List> local, List<String> urls) async {
         final imgs = <pw.MemoryImage>[];
-        // 1) Local bytes picked this session
         for (final b in local) {
           imgs.add(pw.MemoryImage(b));
         }
-        // 2) Previously-saved URLs — download via Firebase Storage
         for (final url in urls) {
           try {
             final data = await FirebaseStorage.instance
@@ -799,70 +822,101 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                 .getData(10 * 1024 * 1024);
             if (data != null) imgs.add(pw.MemoryImage(data));
           } catch (e) {
-            widget.logger.w('⚠️ MonthlyForm: could not fetch image for PDF – $url – $e');
+            widget.logger.w('⚠️ MonthlyForm: image fetch – $url – $e');
           }
         }
         return imgs;
       }
 
-      final aImgs =
-          await loadImgs(_sectionALocalImages, _sectionASavedUrls);
-      final bImgs =
-          await loadImgs(_sectionBLocalImages, _sectionBSavedUrls);
-      final cImgs =
-          await loadImgs(_sectionCLocalImages, _sectionCSavedUrls);
-      final dImgs =
-          await loadImgs(_sectionDLocalImages, _sectionDSavedUrls);
+      final aImgs = await loadImgs(_sectionALocalImages, _sectionASavedUrls);
+      final bImgs = await loadImgs(_sectionBLocalImages, _sectionBSavedUrls);
+      final cImgs = await loadImgs(_sectionCLocalImages, _sectionCSavedUrls);
+      final dImgs = await loadImgs(_sectionDLocalImages, _sectionDSavedUrls);
 
-      // ── Helper: section bar ─────────────────────────────────
-      pw.Widget sectionBar(String letter, String title) => pw.Container(
+      // ── Helper: section bar ──────────────────────────────────
+      // Identical structure to weekly sectionBar — plain Container + Text,
+      // NO pw.Row / pw.Expanded inside. The letter badge uses a Row but
+      // the Container itself is the top-level MultiPage child.
+      pw.Widget sectionBar(String letter, String title) =>
+          pw.Container(
             width: double.infinity,
-            child: pw.Row(children: [
-              pw.Container(
-                color: sectionLetterBg,
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6),
-                child: pw.Text(letter,
-                    style: pw.TextStyle(
-                        font: pw.Font.helveticaBold(),
-                        fontSize: 11,
-                        color: PdfColors.white)),
-              ),
-              pw.Expanded(
-                child: pw.Container(
-                  color: navyColor,
+            color: navyColor,
+            child: pw.Row(
+              children: [
+                pw.Container(
+                  color: sectionLetterBg,
                   padding: const pw.EdgeInsets.symmetric(
                       horizontal: 10, vertical: 6),
-                  child: pw.Text(title, style: headerStyle),
+                  child: pw.Text(letter,
+                      style: pw.TextStyle(
+                          font: pw.Font.helveticaBold(),
+                          fontSize: 11,
+                          color: PdfColors.white)),
                 ),
-              ),
-            ]),
+                pw.Expanded(
+                  child: pw.Container(
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    child: pw.Text(title, style: sectionHeaderStyle),
+                  ),
+                ),
+              ],
+            ),
           );
 
-      // ── Helper: plain text section body ────────────────────
+      // ── Helper: meta cell (label + value) ────────────────────
+      // pw.Expanded wrapping — same as weekly metaCellFilled pattern.
+      pw.Widget metaCell(String label, String value) =>
+          pw.Expanded(
+            child: pw.Container(
+              decoration: pw.BoxDecoration(
+                  border: pw.Border.all(
+                      color: PdfColors.blueGrey300, width: 0.5)),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Container(
+                    width: double.infinity,
+                    color: lightBlue,
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 3),
+                    child: pw.Text(label, style: fieldLabelStyle),
+                  ),
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 5),
+                    child: pw.Text(
+                        value.isEmpty ? '–' : value,
+                        style: fieldValueStyle),
+                  ),
+                ],
+              ),
+            ),
+          );
+
+      // ── Helper: text body for a section ──────────────────────
       pw.Widget richBody(quill.QuillController ctrl) {
         final text = ctrl.document.toPlainText().trim();
         return pw.Container(
           width: double.infinity,
           decoration: pw.BoxDecoration(
-              border:
-                  pw.Border.all(color: PdfColors.blueGrey300, width: 0.5)),
+              border: pw.Border.all(
+                  color: PdfColors.blueGrey300, width: 0.5)),
           padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 8),
           child: text.isEmpty
-              ? pw.Column(children: _pdfWritingLines(8))
+              ? pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: _pdfWritingLines(8))
               : pw.Text(text, style: fieldValueStyle),
         );
       }
 
-      // ── Helper: table body ──────────────────────────────────
-      // ── Helper: table bodies — pw.Table for full text wrapping ──
+      // ── Helper: inline table bodies ──────────────────────────
+      // Structurally identical to weekly _buildPdfTable.
       List<pw.Widget> tableBodies(List<MonthlyTableData> tables) {
         return tables.map((t) {
           if (t.columnNames.isEmpty) return pw.SizedBox();
-
           final colCount = t.columnNames.length;
-
-          // Equal flex widths per data column; row-number col is fixed
           final Map<int, pw.TableColumnWidth> colWidths = {};
           int offset = 0;
           if (t.showRowNumbers) {
@@ -872,20 +926,14 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
           for (int i = 0; i < colCount; i++) {
             colWidths[i + offset] = const pw.FlexColumnWidth(1);
           }
-
           final tableRows = <pw.TableRow>[];
-
-          // ── Header row ──────────────────────────────────────
+          // Header row
           final headerCells = <pw.Widget>[];
           if (t.showRowNumbers) {
             headerCells.add(pw.Padding(
               padding: const pw.EdgeInsets.symmetric(
                   horizontal: 4, vertical: 5),
-              child: pw.Text('#',
-                  style: pw.TextStyle(
-                      font: pw.Font.helveticaBold(),
-                      fontSize: 7.5,
-                      color: PdfColors.white)),
+              child: pw.Text('#', style: tableHeaderStyle),
             ));
           }
           for (final col in t.columnNames) {
@@ -893,24 +941,19 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               padding: const pw.EdgeInsets.symmetric(
                   horizontal: 4, vertical: 5),
               child: pw.Text(col,
-                  softWrap: true,
-                  style: pw.TextStyle(
-                      font: pw.Font.helveticaBold(),
-                      fontSize: 7.5,
-                      color: PdfColors.white)),
+                  softWrap: true, style: tableHeaderStyle),
             ));
           }
           tableRows.add(pw.TableRow(
             decoration: pw.BoxDecoration(color: navyColor),
             children: headerCells,
           ));
-
-          // ── Data rows ───────────────────────────────────────
+          // Data / blank rows
           if (t.rows.isEmpty) {
-            // Blank form — draw empty ruled rows
             for (int i = 0; i < 4; i++) {
-              final bg =
-                  i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
+              final bg = i.isEven
+                  ? PdfColors.white
+                  : PdfColor.fromHex('#F5F7FA');
               final totalCols =
                   t.showRowNumbers ? colCount + 1 : colCount;
               tableRows.add(pw.TableRow(
@@ -928,14 +971,16 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             }
           } else {
             for (int i = 0; i < t.rows.length; i++) {
-              final bg =
-                  i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
+              final bg = i.isEven
+                  ? PdfColors.white
+                  : PdfColor.fromHex('#F5F7FA');
               final cells = <pw.Widget>[];
               if (t.showRowNumbers) {
                 cells.add(pw.Padding(
                   padding: const pw.EdgeInsets.symmetric(
                       horizontal: 4, vertical: 5),
-                  child: pw.Text('${i + 1}', style: fieldValueStyle),
+                  child: pw.Text('${i + 1}',
+                      style: fieldValueStyle),
                 ));
               }
               for (final col in t.columnNames) {
@@ -944,7 +989,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                       horizontal: 4, vertical: 5),
                   child: pw.Text(
                     t.rows[i][col] ?? '',
-                    softWrap: true,       // ← full wrap in PDF cell
+                    softWrap: true,
                     style: fieldValueStyle,
                   ),
                 ));
@@ -955,13 +1000,13 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               ));
             }
           }
-
+          // Outer Column — same as weekly _buildPdfTable (no mainAxisSize)
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.SizedBox(height: 6),
-              // Table title label
               pw.Container(
+                width: double.infinity,
                 color: lightBlue,
                 padding: const pw.EdgeInsets.symmetric(
                     horizontal: 6, vertical: 3),
@@ -971,7 +1016,6 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                         fontSize: 8,
                         color: navyColor)),
               ),
-              // pw.Table renders borders + wraps text correctly
               pw.Table(
                 border: pw.TableBorder.all(
                     color: PdfColors.blueGrey300, width: 0.5),
@@ -983,7 +1027,8 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         }).toList();
       }
 
-      // ── Helper: signature block ─────────────────────────────
+      // ── Helper: signature block ───────────────────────────────
+      // Uses pw.Expanded — same as weekly metaCellFilled pattern.
       pw.Widget signeeBlock(
           String label, String name, String org, Uint8List? sig) {
         return pw.Expanded(
@@ -996,15 +1041,18 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 pw.Container(
+                  width: double.infinity,
                   color: lightBlue,
                   padding: const pw.EdgeInsets.symmetric(
                       horizontal: 5, vertical: 3),
                   child: pw.Text(label, style: fieldLabelStyle),
                 ),
                 pw.SizedBox(height: 4),
-                pw.Text('Name: $name', style: fieldValueStyle),
+                pw.Text('Name: ${name.isEmpty ? "–" : name}',
+                    style: fieldValueStyle),
                 pw.SizedBox(height: 2),
-                pw.Text('Organisation: $org', style: fieldValueStyle),
+                pw.Text('Organisation: ${org.isEmpty ? "–" : org}',
+                    style: fieldValueStyle),
                 pw.SizedBox(height: 6),
                 pw.Text('Signature:', style: fieldLabelStyle),
                 pw.SizedBox(height: 4),
@@ -1024,6 +1072,21 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         );
       }
 
+      // ── Smart section body ────────────────────────────────────
+      List<pw.Widget> sectionBody(
+          quill.QuillController ctrl, List<MonthlyTableData> tables) {
+        final hasText = ctrl.document.toPlainText().trim().isNotEmpty;
+        final hasTables = tables.isNotEmpty;
+        if (!hasText && !hasTables) return [richBody(ctrl)];
+        return [
+          if (hasText) richBody(ctrl),
+          ...tableBodies(tables),
+        ];
+      }
+
+      // ══════════════════════════════════════════════════════════
+      // BUILD PDF — structure mirrors the working weekly report
+      // ══════════════════════════════════════════════════════════
       final pdf = pw.Document();
       pdf.addPage(
         pw.MultiPage(
@@ -1036,8 +1099,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                         color: PdfColors.grey400, width: 0.5))),
             padding: const pw.EdgeInsets.only(top: 4),
             child: pw.Row(
-              mainAxisAlignment:
-                  pw.MainAxisAlignment.spaceBetween,
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
                     '© JV Almacis Site Management System — Monthly Report',
@@ -1054,129 +1116,76 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             ),
           ),
           build: (ctx) => [
-            // ── TITLE BLOCK ──────────────────────────────────
+            // ── HEADER BAND ────────────────────────────────────
             pw.Container(
-                width: double.infinity,
-                color: navyColor,
-                padding:
-                    const pw.EdgeInsets.fromLTRB(16, 14, 16, 2),
-                child: pw.Text(widget.project.name,
-                    textAlign: pw.TextAlign.center,
-                    style: pw.TextStyle(
-                        font: pw.Font.helveticaBold(),
-                        fontSize: 14,
-                        color: PdfColors.white))),
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.fromLTRB(16, 14, 16, 2),
+              child: pw.Text(widget.project.name,
+                  textAlign: pw.TextAlign.center,
+                  style: pw.TextStyle(
+                      font: pw.Font.helveticaBold(),
+                      fontSize: 14,
+                      color: PdfColors.white)),
+            ),
             pw.Container(
-                width: double.infinity,
-                color: navyColor,
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 4),
-                child: pw.Text('MONTHLY REPORT',
-                    textAlign: pw.TextAlign.center,
-                    style: pw.TextStyle(
-                        font: pw.Font.helveticaBold(),
-                        fontSize: 10,
-                        color: PdfColors.white,
-                        letterSpacing: 2.5))),
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 4),
+              child: pw.Text('MONTHLY REPORT',
+                  textAlign: pw.TextAlign.center,
+                  style: pw.TextStyle(
+                      font: pw.Font.helveticaBold(),
+                      fontSize: 10,
+                      color: PdfColors.white,
+                      letterSpacing: 2.5)),
+            ),
             pw.Container(
-                width: double.infinity,
-                color: navyColor,
-                padding: const pw.EdgeInsets.fromLTRB(16, 2, 16, 12),
-                child: pw.Text(
-                    'Contract No: ${_contractCtrl.text.isEmpty ? '–' : _contractCtrl.text}',
-                    textAlign: pw.TextAlign.center,
-                    style: pw.TextStyle(
-                        font: pw.Font.helvetica(),
-                        fontSize: 8.5,
-                        color: PdfColor.fromHex('#FFFFFFB3')))),
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.fromLTRB(16, 2, 16, 12),
+              child: pw.Text(
+                  'Contract No: ${_contractCtrl.text.isEmpty ? "–" : _contractCtrl.text}',
+                  textAlign: pw.TextAlign.center,
+                  style: pw.TextStyle(
+                      font: pw.Font.helvetica(),
+                      fontSize: 8.5,
+                      color: PdfColor.fromHex('#FFFFFFB3'))),
+            ),
             pw.SizedBox(height: 10),
-            // ── DATE META ROW ──────────────────────────────
+            // ── DATE META ROW ──────────────────────────────────
             pw.Row(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Expanded(
-                    child: pw.Container(
-                      decoration: pw.BoxDecoration(
-                          border: pw.Border.all(
-                              color: PdfColors.blueGrey300,
-                              width: 0.5)),
-                      child: pw.Column(
-                        crossAxisAlignment:
-                            pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Container(
-                              width: double.infinity,
-                              color: lightBlue,
-                              padding:
-                                  const pw.EdgeInsets.symmetric(
-                                      horizontal: 5, vertical: 3),
-                              child: pw.Text('MONTH START',
-                                  style: fieldLabelStyle)),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 5),
-                            child: pw.Text(
-                                DateFormat('EEE, MMM d, yyyy')
-                                    .format(_monthStart),
-                                style: fieldValueStyle),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  pw.SizedBox(width: 4),
-                  pw.Expanded(
-                    child: pw.Container(
-                      decoration: pw.BoxDecoration(
-                          border: pw.Border.all(
-                              color: PdfColors.blueGrey300,
-                              width: 0.5)),
-                      child: pw.Column(
-                        crossAxisAlignment:
-                            pw.CrossAxisAlignment.start,
-                        children: [
-                          pw.Container(
-                              width: double.infinity,
-                              color: lightBlue,
-                              padding:
-                                  const pw.EdgeInsets.symmetric(
-                                      horizontal: 5, vertical: 3),
-                              child: pw.Text('MONTH END',
-                                  style: fieldLabelStyle)),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 5),
-                            child: pw.Text(
-                                DateFormat('EEE, MMM d, yyyy')
-                                    .format(_monthEnd),
-                                style: fieldValueStyle),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ]),
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                metaCell('MONTH START',
+                    DateFormat('EEE, MMM d, yyyy').format(_monthStart)),
+                pw.SizedBox(width: 4),
+                metaCell('MONTH END',
+                    DateFormat('EEE, MMM d, yyyy').format(_monthEnd)),
+              ],
+            ),
+            pw.SizedBox(height: 10),
+            // ══ SECTION A ══════════════════════════════════════
+            sectionBar('A', 'SITE ACTIVITIES'),
             pw.SizedBox(height: 4),
-            // ── BUILDING — full-width row ──────────────────
+            // Building — inline label + value row
             pw.Container(
               width: double.infinity,
               decoration: pw.BoxDecoration(
                   border: pw.Border.all(
-                      color: PdfColors.blueGrey300,
-                      width: 0.5)),
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      color: PdfColors.blueGrey300, width: 0.5)),
+              child: pw.Row(
                 children: [
                   pw.Container(
-                      width: double.infinity,
-                      color: lightBlue,
-                      padding: const pw.EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 3),
-                      child: pw.Text('BUILDING',
-                          style: fieldLabelStyle)),
-                  pw.Padding(
+                    color: lightBlue,
                     padding: const pw.EdgeInsets.symmetric(
-                        horizontal: 5, vertical: 5),
+                        horizontal: 8, vertical: 8),
+                    child: pw.Text('BUILDING',
+                        style: fieldLabelStyle),
+                  ),
+                  pw.SizedBox(width: 6),
+                  pw.Expanded(
                     child: pw.Text(
                         _buildingCtrl.text.isEmpty
                             ? '–'
@@ -1186,55 +1195,49 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                 ],
               ),
             ),
-            pw.SizedBox(height: 10),
-            // ── SECTION A ─────────────────────────────────
-            sectionBar('A', 'SITE ACTIVITIES'),
             pw.SizedBox(height: 4),
-            richBody(_sectionACtrl),
-            ...tableBodies(_sectionATables),
+            ...sectionBody(_sectionACtrl, _sectionATables),
             if (aImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
               ..._buildPdfImageGrid(aImgs),
             ],
             pw.SizedBox(height: 10),
-            // ── SECTION B ─────────────────────────────────
+            // ══ SECTION B ══════════════════════════════════════
             sectionBar('B', 'QUALITY REPORT'),
             pw.SizedBox(height: 4),
-            richBody(_sectionBCtrl),
-            ...tableBodies(_sectionBTables),
+            ...sectionBody(_sectionBCtrl, _sectionBTables),
             if (bImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
               ..._buildPdfImageGrid(bImgs),
             ],
             pw.SizedBox(height: 10),
-            // ── SECTION C ─────────────────────────────────
+            // ══ SECTION C ══════════════════════════════════════
             sectionBar('C', 'SAFETY REPORT'),
             pw.SizedBox(height: 4),
-            richBody(_sectionCCtrl),
-            ...tableBodies(_sectionCTables),
+            ...sectionBody(_sectionCCtrl, _sectionCTables),
             if (cImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
               ..._buildPdfImageGrid(cImgs),
             ],
             pw.SizedBox(height: 10),
-            // ── SECTION D ─────────────────────────────────
+            // ══ SECTION D ══════════════════════════════════════
             sectionBar('D',
                 'PLANNED ACTIVITIES FOR ${_monthNames[_plannedMonth - 1].toUpperCase()}'),
             pw.SizedBox(height: 4),
-            richBody(_sectionDCtrl),
-            ...tableBodies(_sectionDTables),
+            ...sectionBody(_sectionDCtrl, _sectionDTables),
             if (dImgs.isNotEmpty) ...[
               pw.SizedBox(height: 6),
               ..._buildPdfImageGrid(dImgs),
             ],
             pw.SizedBox(height: 12),
-            // ── SIGNATURES ────────────────────────────────
+            // ══ SIGNATURES ═════════════════════════════════════
             pw.Container(
-                width: double.infinity,
-                color: navyColor,
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6),
-                child: pw.Text('SIGNATURES', style: headerStyle)),
+              width: double.infinity,
+              color: navyColor,
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 10, vertical: 6),
+              child: pw.Text('SIGNATURES', style: sectionHeaderStyle),
+            ),
             pw.SizedBox(height: 6),
             pw.Row(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -1262,18 +1265,6 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     } finally {
       if (mounted) setState(() => _isGeneratingPdf = false);
     }
-  }
-
-  static List<pw.Widget> _pdfWritingLines(int count) {
-    return List.generate(
-        count,
-        (_) => pw.Column(children: [
-              pw.SizedBox(height: 10),
-              pw.Container(
-                  height: 0.5,
-                  color: PdfColors.grey400,
-                  margin: const pw.EdgeInsets.symmetric(vertical: 2)),
-            ]));
   }
 
   Future<void> _savePdfBytes(Uint8List bytes, String fileName) async {
@@ -2296,18 +2287,18 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     );
   }
 
-  // ── Section action buttons (Attach / Add Form / Download PDF) ─
+  // ── Section action buttons (Attach Image / Add New Form) — edit mode only ─
   Widget _buildSectionButtons(
     int sectionIndex,
     List<Uint8List> localImages,
     List<String> savedUrls,
   ) {
     final imageCount = localImages.length + savedUrls.length;
-    final isLoading = _sectionPdfLoading[sectionIndex];
+
+    // In read-only mode there are no section-level action buttons
+    if (_isReadOnly) return const SizedBox.shrink();
 
     return Row(children: [
-      // Attach Images — hidden in read-only mode
-      if (!_isReadOnly) ...[
       Expanded(
         child: SizedBox(
           height: 40,
@@ -2351,36 +2342,6 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         ),
       ),
       const SizedBox(width: 8),
-      ],
-      // Download PDF — always visible
-      Expanded(
-        child: SizedBox(
-          height: 40,
-          child: ElevatedButton.icon(
-            onPressed: isLoading ? null : _downloadAsPdf,
-            icon: isLoading
-                ? const SizedBox(
-                    width: 12,
-                    height: 12,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(Colors.white)))
-                : const Icon(Icons.picture_as_pdf_rounded, size: 15),
-            label: Text('Download',
-                style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w600, fontSize: 12)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _accentGreen,
-              foregroundColor: Colors.white,
-              disabledBackgroundColor: _accentGreen.withValues(alpha: 0.5),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(7)),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              elevation: 1,
-            ),
-          ),
-        ),
-      ),
     ]);
   }
 
