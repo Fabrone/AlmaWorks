@@ -1078,7 +1078,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  '© JV Almacis Site Management System — Daily Report',
+                  '© JV Almacis Site Management System Daily Report',
                   style: pw.TextStyle(
                       font: pw.Font.helvetica(),
                       fontSize: 7,

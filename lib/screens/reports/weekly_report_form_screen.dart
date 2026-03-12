@@ -17,8 +17,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:pluto_grid/pluto_grid.dart';
-
 // ══════════════════════════════════════════════════════════════════
 // ACTIVITY ROW MODEL
 // ══════════════════════════════════════════════════════════════════
@@ -54,9 +52,8 @@ class WeeklyReportData {
   DateTime weekEnd;
   String subContractor;
   String building;
-  // Activities template — two roof sections
+  // Activities template — SLOPED ROOF only
   List<ActivityRow> slopedRoofRows;
-  List<ActivityRow> flatRoofRows;
   // Notes and percentage
   String notes;
   double percentageDone;
@@ -74,15 +71,13 @@ class WeeklyReportData {
     this.subContractor = '',
     this.building = '',
     List<ActivityRow>? slopedRoofRows,
-    List<ActivityRow>? flatRoofRows,
     this.notes = '',
     this.percentageDone = 0,
     this.imageUrls = const [],
     this.localImages = const [],
     this.isDraft = true,
     this.savedAt,
-  }) : slopedRoofRows = slopedRoofRows ?? _defaultRows(),
-        flatRoofRows = flatRoofRows ?? _defaultRows();
+  }) : slopedRoofRows = slopedRoofRows ?? _defaultRows();
   static List<ActivityRow> _defaultRows() =>
       List.generate(5, (_) => ActivityRow());
   Map<String, dynamic> toMap() => {
@@ -95,7 +90,6 @@ class WeeklyReportData {
         'subContractor': subContractor,
         'building': building,
         'slopedRoofRows': slopedRoofRows.map((r) => r.toMap()).toList(),
-        'flatRoofRows': flatRoofRows.map((r) => r.toMap()).toList(),
         'notes': notes,
         'percentageDone': percentageDone,
         'imageUrls': imageUrls,
@@ -122,7 +116,6 @@ class WeeklyReportData {
       subContractor: m['subContractor'] ?? '',
       building: m['building'] ?? '',
       slopedRoofRows: parseRows(m['slopedRoofRows']),
-      flatRoofRows: parseRows(m['flatRoofRows']),
       notes: m['notes'] ?? '',
       percentageDone: (m['percentageDone'] as num?)?.toDouble() ?? 0.0,
       imageUrls: List<String>.from(m['imageUrls'] ?? []),
@@ -166,11 +159,8 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
   late DateTime _weekEnd;
   String _subContractor = '';
   List<String> _subcontractorNames = [];
-  // Activity table rows — 5 default rows each, user can add more
+  // Activity table rows — 5 default rows, user can add more
   late List<ActivityRow> _slopedRows;
-  late List<ActivityRow> _flatRows;
-  PlutoGridStateManager? slopedGridManager;
-  PlutoGridStateManager? flatGridManager;
   final List<Uint8List> _localImages = [];
   final List<String> _savedImageUrls = [];
   bool _isSaving = false;
@@ -200,7 +190,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       _loadFromExisting(widget.existingReport!);
     } else {
       _slopedRows = WeeklyReportData._defaultRows();
-      _flatRows = WeeklyReportData._defaultRows();
       _loadDraftFromCache();
     }
     widget.logger.i('📋 WeeklyForm: initState END reportId=$_reportId');
@@ -222,7 +211,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     _subContractor = r.subContractor;
     _savedImageUrls.addAll(r.imageUrls);
     _slopedRows = r.slopedRoofRows;
-    _flatRows = r.flatRoofRows;
     widget.logger.i('📋 WeeklyForm: loaded from existing report');
   }
   @override
@@ -233,8 +221,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     _notesCtrl.dispose();
     _percentageCtrl.dispose();
     _scrollCtrl.dispose();
-    slopedGridManager?.dispose();
-    flatGridManager?.dispose();
     super.dispose();
   }
   // ─────────────────────────────────────────────────────────────
@@ -250,7 +236,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
         'weekEnd': _weekEnd.toIso8601String(),
         'subContractor': _subContractor,
         'slopedRoofRows': _slopedRows.map((r) => r.toMap()).toList(),
-        'flatRoofRows': _flatRows.map((r) => r.toMap()).toList(),
         'notes': _notesCtrl.text,
         'percentage': _percentageCtrl.text,
         'imageUrls': _savedImageUrls,
@@ -287,11 +272,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
               .map((e) => ActivityRow.fromMap(Map<String, dynamic>.from(e as Map)))
               .toList();
         }
-        if (data['flatRoofRows'] != null) {
-          _flatRows = (data['flatRoofRows'] as List)
-              .map((e) => ActivityRow.fromMap(Map<String, dynamic>.from(e as Map)))
-              .toList();
-        }
       });
       widget.logger.i('📋 WeeklyForm: draft restored from cache');
     } catch (e, st) {
@@ -303,39 +283,10 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     await prefs.remove(_cacheKey);
   }
   // ─────────────────────────────────────────────────────────────
-  // TABLE ROW MANAGEMENT
+  // TABLE ROW MANAGEMENT (called from _WeeklyActivityTableWidget)
   // ─────────────────────────────────────────────────────────────
-  void _addRow(bool isSloped) {
-    setState(() {
-      final rows = isSloped ? _slopedRows : _flatRows;
-      final manager = isSloped ? slopedGridManager : flatGridManager;
-      if (manager == null) return;
-      rows.add(ActivityRow());
-      manager.appendRows([
-        PlutoRow(
-          cells: {
-            'no': PlutoCell(value: '${rows.length}'),
-            'activity': PlutoCell(value: ''),
-            'progress': PlutoCell(value: ''),
-            'comment': PlutoCell(value: ''),
-          },
-        )
-      ]);
-    });
-    _saveDraftToCache();
-  }
-  void _removeRow(bool isSloped, int index) {
-    setState(() {
-      final rows = isSloped ? _slopedRows : _flatRows;
-      final manager = isSloped ? slopedGridManager : flatGridManager;
-      if (manager == null || rows.length <= 1) return;
-      rows.removeAt(index);
-      manager.removeRows([manager.rows[index]]);
-      // Update No. for remaining rows
-      for (int i = 0; i < manager.rows.length; i++) {
-        manager.rows[i].cells['no']!.value = '${i + 1}';
-      }
-    });
+  void _onSlopedRowsChanged(List<ActivityRow> updated) {
+    _slopedRows = updated;
     _saveDraftToCache();
   }
   // ─────────────────────────────────────────────────────────────
@@ -445,7 +396,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       subContractor: _subContractor,
       building: _buildingCtrl.text.trim(),
       slopedRoofRows: _slopedRows,
-      flatRoofRows: _flatRows,
       notes: _notesCtrl.text.trim(),
       percentageDone: double.tryParse(_percentageCtrl.text) ?? 0,
       imageUrls: allUrls,
@@ -505,7 +455,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
           ],
         ),
       );
-  // Build a PDF table for one roof section
+  // Build a PDF table for the SLOPED ROOF section using pw.Table for proper cell borders
   pw.Widget _buildPdfTable(
     String label,
     List<ActivityRow> rows,
@@ -514,120 +464,74 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     PdfColor navyColor,
     PdfColor lightBlue,
   ) {
-    final headers = ['No.', 'Activity', 'Progress', 'Comment'];
-    final colWidths = [0.07, 0.28, 0.25, 0.40]; // fractions of table width
-    // Header row
-    pw.Widget headerRow = pw.Row(
-      children: List.generate(headers.length, (ci) {
-        return pw.Expanded(
-          flex: (colWidths[ci] * 100).round(),
-          child: pw.Container(
-            color: navyColor,
-            padding: const pw.EdgeInsets.symmetric(
-                horizontal: 4, vertical: 4),
-            child: pw.Text(headers[ci], style: headerStyle),
-          ),
-        );
-      }),
-    );
-    // Data rows — if all rows are empty, render writing lines instead
     final hasData = rows.any((r) =>
         r.activity.isNotEmpty ||
         r.progress.isNotEmpty ||
         r.comment.isNotEmpty);
-    List<pw.Widget> dataRows = [];
+
+    final tableRows = <pw.TableRow>[];
+
+    // Header row
+    tableRows.add(pw.TableRow(
+      decoration: pw.BoxDecoration(color: navyColor),
+      children: ['No.', 'Activity', 'Progress', 'Comment'].map((h) =>
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          child: pw.Text(h, style: headerStyle),
+        ),
+      ).toList(),
+    ));
+
     if (hasData) {
       for (int i = 0; i < rows.length; i++) {
         final r = rows[i];
         final bg = i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
-        dataRows.add(
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // No.
-              pw.Expanded(
-                flex: (colWidths[0] * 100).round(),
-                child: pw.Container(
-                  color: bg,
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 5),
-                  child: pw.Text('${i + 1}', style: cellStyle),
-                ),
-              ),
-              // Activity
-              pw.Expanded(
-                flex: (colWidths[1] * 100).round(),
-                child: pw.Container(
-                  color: bg,
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 5),
-                  child: pw.Text(r.activity, style: cellStyle),
-                ),
-              ),
-              // Progress
-              pw.Expanded(
-                flex: (colWidths[2] * 100).round(),
-                child: pw.Container(
-                  color: bg,
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 5),
-                  child: pw.Text(r.progress, style: cellStyle),
-                ),
-              ),
-              // Comment
-              pw.Expanded(
-                flex: (colWidths[3] * 100).round(),
-                child: pw.Container(
-                  color: bg,
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 5),
-                  child: pw.Text(r.comment, style: cellStyle),
-                ),
-              ),
-            ],
-          ),
-        );
+        tableRows.add(pw.TableRow(
+          decoration: pw.BoxDecoration(color: bg),
+          children: [
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+              child: pw.Text('${i + 1}', style: cellStyle),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+              child: pw.Text(r.activity, style: cellStyle),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+              child: pw.Text(r.progress, style: cellStyle),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+              child: pw.Text(r.comment, style: cellStyle),
+            ),
+          ],
+        ));
       }
     } else {
-      // Blank printed form — writing lines inside each cell row
+      // Empty form — show blank rows with light lines
       for (int i = 0; i < rows.length; i++) {
-        dataRows.add(
-          pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.center,
-            children: [
-              pw.Expanded(
-                flex: (colWidths[0] * 100).round(),
-                child: pw.Container(
-                  padding: const pw.EdgeInsets.symmetric(
-                      horizontal: 4, vertical: 10),
-                  child: pw.Text('${i + 1}', style: cellStyle),
-                ),
-              ),
-              ...List.generate(3, (ci) {
-                return pw.Expanded(
-                  flex: (colWidths[ci + 1] * 100).round(),
-                  child: pw.Container(
-                    padding: const pw.EdgeInsets.only(
-                        left: 4, right: 4, bottom: 6, top: 6),
-                    child: pw.Container(
-                        height: 0.5, color: PdfColors.grey400),
-                  ),
-                );
-              }),
-            ],
+        final bg = i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
+        tableRows.add(pw.TableRow(
+          decoration: pw.BoxDecoration(color: bg),
+          children: List.generate(4, (_) =>
+            pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+              child: pw.Container(height: 0.5, color: PdfColors.grey300),
+            ),
           ),
-        );
+        ));
       }
     }
+
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
-        // Sub-section label (SLOPED ROOF / FLAT ROOF)
+        // Sub-section label
         pw.Container(
           width: double.infinity,
           color: lightBlue,
-          padding: const pw.EdgeInsets.symmetric(
-              horizontal: 8, vertical: 4),
+          padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: pw.Text(
             label,
             style: pw.TextStyle(
@@ -638,17 +542,18 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             ),
           ),
         ),
-        pw.Container(
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(
-                color: PdfColors.blueGrey300, width: 0.5),
+        pw.Table(
+          border: pw.TableBorder.all(
+            color: PdfColors.blueGrey300,
+            width: 0.5,
           ),
-          child: pw.Column(
-            children: [
-              headerRow,
-              ...dataRows,
-            ],
-          ),
+          columnWidths: {
+            0: const pw.FixedColumnWidth(32),
+            1: const pw.FlexColumnWidth(3),
+            2: const pw.FlexColumnWidth(2),
+            3: const pw.FlexColumnWidth(4),
+          },
+          children: tableRows,
         ),
       ],
     );
@@ -856,8 +761,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             ),
           );
       final isFilled = report.building.isNotEmpty ||
-          report.slopedRoofRows.any((r) => r.activity.isNotEmpty) ||
-          report.flatRoofRows.any((r) => r.activity.isNotEmpty);
+          report.slopedRoofRows.any((r) => r.activity.isNotEmpty);
       final pdf = pw.Document();
       pdf.addPage(
         pw.MultiPage(
@@ -983,16 +887,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
             _buildPdfTable(
               'SLOPED ROOF',
               report.slopedRoofRows,
-              tableHeaderStyle,
-              cellStyle,
-              navyColor,
-              lightBlue,
-            ),
-            pw.SizedBox(height: 8),
-            // FLAT ROOF table
-            _buildPdfTable(
-              'FLAT ROOF',
-              report.flatRoofRows,
               tableHeaderStyle,
               cellStyle,
               navyColor,
@@ -1492,7 +1386,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       ),
     );
   }
-  // ── Activities Template (two roof tables) ─────────────────────
+  // ── Activities Template (SLOPED ROOF only) ───────────────────
   Widget _buildActivitiesTemplate(double aw) {
     const double radius = 8.0;
     return Container(
@@ -1513,13 +1407,13 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
               children: [
                 // ── SLOPED ROOF ──────────────────────────────
                 _buildRoofSubHeader('SLOPED ROOF'),
-                const SizedBox(height: 6),
-                _buildActivityTable(isSloped: true),
-                const SizedBox(height: 16),
-                // ── FLAT ROOF ────────────────────────────────
-                _buildRoofSubHeader('FLAT ROOF'),
-                const SizedBox(height: 6),
-                _buildActivityTable(isSloped: false),
+                const SizedBox(height: 8),
+                _WeeklyActivityTableWidget(
+                  key: const ValueKey('sloped_activity_table'),
+                  rows: _slopedRows,
+                  readOnly: _isReadOnly,
+                  onChanged: _onSlopedRowsChanged,
+                ),
               ],
             ),
           ),
@@ -1527,15 +1421,14 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
       ),
     );
   }
-  // Sub-header chip for each roof section
+  // Sub-header chip for the roof section
   Widget _buildRoofSubHeader(String label) {
     return Container(
       decoration: BoxDecoration(
         color: const Color(0xFFE8EEF6),
         borderRadius: BorderRadius.circular(4),
       ),
-      padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       child: Text(
         label,
         style: GoogleFonts.poppins(
@@ -1545,142 +1438,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
           letterSpacing: 0.5,
         ),
       ),
-    );
-  }
-  List<PlutoColumn> _buildColumns({bool readOnly = false}) => [
-        PlutoColumn(
-          title: 'No.',
-          field: 'no',
-          type: PlutoColumnType.text(),
-          readOnly: true,
-          width: 60,
-        ),
-        PlutoColumn(
-          title: 'Activity',
-          field: 'activity',
-          type: PlutoColumnType.text(),
-          readOnly: readOnly,
-        ),
-        PlutoColumn(
-          title: 'Progress',
-          field: 'progress',
-          type: PlutoColumnType.text(),
-          readOnly: readOnly,
-        ),
-        PlutoColumn(
-          title: 'Comment',
-          field: 'comment',
-          type: PlutoColumnType.text(),
-          readOnly: readOnly,
-        ),
-      ];
-  List<PlutoRow> _buildPlutoRows(List<ActivityRow> rows) {
-    return rows.asMap().entries.map((entry) {
-      int index = entry.key;
-      ActivityRow row = entry.value;
-      return PlutoRow(
-        cells: {
-          'no': PlutoCell(value: '${index + 1}'),
-          'activity': PlutoCell(value: row.activity),
-          'progress': PlutoCell(value: row.progress),
-          'comment': PlutoCell(value: row.comment),
-        },
-      );
-    }).toList();
-  }
-  void _onGridChanged(PlutoGridOnChangedEvent event, bool isSloped) {
-    final rows = isSloped ? _slopedRows : _flatRows;
-    final rowIdx = event.rowIdx;
-    final field = event.column.field;
-    final value = event.value as String;
-    if (field == 'activity') {
-      rows[rowIdx].activity = value;
-    } else if (field == 'progress') {
-      rows[rowIdx].progress = value;
-    } else if (field == 'comment') {
-      rows[rowIdx].comment = value;
-    }
-    _saveDraftToCache();
-  }
-  // Activity table widget — using PlutoGrid
-  Widget _buildActivityTable({
-    required bool isSloped,
-  }) {
-    final rows = isSloped ? _slopedRows : _flatRows;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            border: Border.all(color: _fieldBorder, width: 1),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          height: 300, // Adjustable height for the grid
-          child: PlutoGrid(
-            columns: _buildColumns(readOnly: _isReadOnly),
-            rows: _buildPlutoRows(rows),
-            onLoaded: (PlutoGridOnLoadedEvent event) {
-              if (isSloped) {
-                slopedGridManager = event.stateManager;
-              } else {
-                flatGridManager = event.stateManager;
-              }
-            },
-            onChanged: _isReadOnly ? null : (event) => _onGridChanged(event, isSloped),
-            configuration: PlutoGridConfiguration(
-              style: PlutoGridStyleConfig(
-                gridBackgroundColor: Colors.white,
-                rowColor: Colors.white,
-                activatedColor: _navy.withValues(alpha: 0.1),
-                borderColor: _fieldBorder,
-                activatedBorderColor: _navy,
-                columnTextStyle: GoogleFonts.poppins(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: _navy,
-                ),
-                cellTextStyle: GoogleFonts.poppins(
-                  fontSize: 12,
-                  color: Colors.black87,
-                ),
-              ),
-            ),
-          ),
-        ),
-        // Row controls — hidden in read-only mode
-        if (!_isReadOnly) ...[
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            TextButton.icon(
-              onPressed: () => _addRow(isSloped),
-              icon: const Icon(Icons.add_rounded, size: 14),
-              label: Text('Add Row',
-                  style: GoogleFonts.poppins(fontSize: 11)),
-              style: TextButton.styleFrom(
-                foregroundColor: _navy,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
-              ),
-            ),
-            const SizedBox(width: 8),
-            if (rows.length > 1)
-              TextButton.icon(
-                onPressed: () =>
-                    _removeRow(isSloped, rows.length - 1),
-                icon: const Icon(Icons.remove_rounded, size: 14),
-                label: Text('Remove Last',
-                    style: GoogleFonts.poppins(fontSize: 11)),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.red[700],
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
-                ),
-              ),
-          ],
-        ),
-        ],
-      ],
     );
   }
   // ── Notes section (max 4–5 lines) ─────────────────────────────
@@ -2103,6 +1860,524 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
     );
   }
 }
+// ══════════════════════════════════════════════════════════════════
+// WEEKLY ACTIVITY TABLE WIDGET
+// Custom multi-line editable table matching monthly report styling.
+// Fixed columns: Activity, Progress, Comment (no delete, no add col).
+// ══════════════════════════════════════════════════════════════════
+class _WeeklyActivityTableWidget extends StatefulWidget {
+  final List<ActivityRow> rows;
+  final bool readOnly;
+  final Function(List<ActivityRow>) onChanged;
+
+  const _WeeklyActivityTableWidget({
+    super.key,
+    required this.rows,
+    required this.readOnly,
+    required this.onChanged,
+  });
+
+  @override
+  State<_WeeklyActivityTableWidget> createState() =>
+      _WeeklyActivityTableWidgetState();
+}
+
+class _WeeklyActivityTableWidgetState
+    extends State<_WeeklyActivityTableWidget> {
+  static const _navy = Color(0xFF0A2E5A);
+  static const _fieldBorder = Color(0xFFB0BEC5);
+
+  // Mutable column headers (user can rename via Edit Headers dialog)
+  final List<String> _headers = ['Activity', 'Progress', 'Comment'];
+  bool _showRowNumbers = false;
+
+  // Cell controllers indexed [rowIndex][colIndex]
+  late List<List<TextEditingController>> _controllers;
+
+  @override
+  void initState() {
+    super.initState();
+    _initControllers();
+  }
+
+  @override
+  void didUpdateWidget(_WeeklyActivityTableWidget old) {
+    super.didUpdateWidget(old);
+    // Re-init if rows were replaced externally (e.g. cache load)
+    if (old.rows != widget.rows ||
+        old.rows.length != _controllers.length) {
+      _disposeControllers();
+      _initControllers();
+    }
+  }
+
+  void _initControllers() {
+    _controllers = widget.rows.map((row) => [
+          TextEditingController(text: row.activity),
+          TextEditingController(text: row.progress),
+          TextEditingController(text: row.comment),
+        ]).toList();
+  }
+
+  void _disposeControllers() {
+    for (final rowCtrls in _controllers) {
+      for (final c in rowCtrls) {
+        c.dispose();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposeControllers();
+    super.dispose();
+  }
+
+  // ── Sync controllers → data model and notify parent ───────────
+  void _notifyChanged() {
+    for (int i = 0; i < widget.rows.length && i < _controllers.length; i++) {
+      widget.rows[i].activity = _controllers[i][0].text;
+      widget.rows[i].progress = _controllers[i][1].text;
+      widget.rows[i].comment = _controllers[i][2].text;
+    }
+    widget.onChanged(widget.rows);
+  }
+
+  // ── Add a blank row ────────────────────────────────────────────
+  void _addRow() {
+    final newRow = ActivityRow();
+    widget.rows.add(newRow);
+    setState(() {
+      _controllers.add([
+        TextEditingController(),
+        TextEditingController(),
+        TextEditingController(),
+      ]);
+    });
+    widget.onChanged(widget.rows);
+  }
+
+  // ── Remove last row ────────────────────────────────────────────
+  void _removeLastRow() {
+    if (widget.rows.isEmpty || widget.rows.length <= 1) return;
+    widget.rows.removeLast();
+    setState(() {
+      final last = _controllers.removeLast();
+      for (final c in last) {
+        c.dispose();
+      }
+    });
+    widget.onChanged(widget.rows);
+  }
+
+  // ── Toggle row-number column ───────────────────────────────────
+  void _toggleRowNumbers() {
+    setState(() => _showRowNumbers = !_showRowNumbers);
+  }
+
+  // ── Edit column headers dialog ─────────────────────────────────
+  Future<void> _showEditHeadersDialog() async {
+    final ctrls = _headers
+        .map((h) => TextEditingController(text: h))
+        .toList();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 480),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+                decoration: const BoxDecoration(
+                  color: _navy,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.drive_file_rename_outline_rounded,
+                      color: Colors.white, size: 18),
+                  const SizedBox(width: 10),
+                  Text('Edit Column Headers',
+                      style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14)),
+                  const Spacer(),
+                  GestureDetector(
+                      onTap: () => Navigator.pop(ctx, false),
+                      child: const Icon(Icons.close_rounded,
+                          color: Colors.white70, size: 18)),
+                ]),
+              ),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                  child: Column(
+                    children: List.generate(ctrls.length, (i) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(children: [
+                        Container(
+                          width: 26, height: 26,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: _navy.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text('${i + 1}',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 11, fontWeight: FontWeight.w700, color: _navy)),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: ctrls[i],
+                            style: GoogleFonts.poppins(fontSize: 12),
+                            autofocus: i == 0,
+                            textInputAction: i < ctrls.length - 1
+                                ? TextInputAction.next
+                                : TextInputAction.done,
+                            decoration: InputDecoration(
+                              isDense: true,
+                              hintText: 'Column ${i + 1}',
+                              hintStyle: GoogleFonts.poppins(
+                                  color: Colors.grey[400], fontSize: 11),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6)),
+                              focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide: const BorderSide(
+                                      color: _navy, width: 1.5)),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
+                            ),
+                          ),
+                        ),
+                      ]),
+                    )),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                child: Row(children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: _navy),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: Text('Cancel',
+                          style: GoogleFonts.poppins(color: _navy, fontSize: 13)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      icon: const Icon(Icons.check_rounded, size: 16),
+                      label: Text('Apply',
+                          style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w700, fontSize: 13)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _navy,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (confirmed != true) {
+      for (final c in ctrls) {
+        c.dispose();
+      }
+      return;
+    }
+
+    setState(() {
+      for (var i = 0; i < _headers.length; i++) {
+        final v = ctrls[i].text.trim();
+        if (v.isNotEmpty) _headers[i] = v;
+      }
+    });
+    for (final c in ctrls) {
+      c.dispose();
+    }
+  }
+
+  // ── Toolbar action button ──────────────────────────────────────
+  Widget _actionBtn({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    required VoidCallback? onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 28, height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: onTap != null
+                ? color.withValues(alpha: 0.12)
+                : Colors.grey[200],
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+                color: onTap != null
+                    ? color.withValues(alpha: 0.4)
+                    : Colors.grey[300]!,
+                width: 0.8),
+          ),
+          child: Icon(icon,
+              size: 15,
+              color: onTap != null ? color : Colors.grey[400]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rowCount = widget.rows.length;
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _navy.withValues(alpha: 0.22), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── Toolbar ────────────────────────────────────────────
+          Container(
+            decoration: BoxDecoration(
+              color: _navy.withValues(alpha: 0.06),
+              borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(7), topRight: Radius.circular(7)),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+            child: Row(children: [
+              const Icon(Icons.table_chart_rounded, color: _navy, size: 15),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text('Activity Table',
+                    style: GoogleFonts.poppins(
+                        color: _navy, fontWeight: FontWeight.w600, fontSize: 12)),
+              ),
+              // Row-number toggle
+              if (!widget.readOnly)
+                Tooltip(
+                  message: _showRowNumbers ? 'Hide Row Numbers' : 'Show Row Numbers',
+                  child: InkWell(
+                    onTap: _toggleRowNumbers,
+                    borderRadius: BorderRadius.circular(14),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _showRowNumbers
+                            ? _navy.withValues(alpha: 0.14)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: _showRowNumbers
+                                ? _navy.withValues(alpha: 0.45)
+                                : Colors.grey.withValues(alpha: 0.35),
+                            width: 0.9),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.format_list_numbered_rounded,
+                            size: 13,
+                            color: _showRowNumbers ? _navy : Colors.grey[500]),
+                        const SizedBox(width: 3),
+                        Text(' # ',
+                            style: GoogleFonts.poppins(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                color: _showRowNumbers ? _navy : Colors.grey[500])),
+                      ]),
+                    ),
+                  ),
+                ),
+              if (!widget.readOnly) ...[
+                const SizedBox(width: 6),
+                // Edit Headers button
+                Tooltip(
+                  message: 'Edit Column Headers',
+                  child: InkWell(
+                    onTap: _showEditHeadersDialog,
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                            color: Colors.grey.withValues(alpha: 0.35), width: 0.9),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.drive_file_rename_outline_rounded,
+                            size: 13, color: Colors.grey[600]),
+                        const SizedBox(width: 3),
+                        Text('Headers',
+                            style: GoogleFonts.poppins(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey[600])),
+                      ]),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                _actionBtn(
+                    icon: Icons.add_rounded,
+                    tooltip: 'Add Row',
+                    color: Colors.green[700]!,
+                    onTap: _addRow),
+                const SizedBox(width: 4),
+                _actionBtn(
+                    icon: Icons.remove_rounded,
+                    tooltip: 'Remove Last Row',
+                    color: Colors.orange[700]!,
+                    onTap: rowCount > 1 ? _removeLastRow : null),
+              ],
+            ]),
+          ),
+
+          // ── Hint strip ─────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            color: const Color(0xFFF3F6FA),
+            child: Row(children: [
+              Icon(Icons.info_outline_rounded, size: 12, color: Colors.grey[450]),
+              const SizedBox(width: 4),
+              Text('Tap "Headers" to rename columns • Content wraps automatically',
+                  style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey[500])),
+            ]),
+          ),
+
+          // ── Table ───────────────────────────────────────────────
+          ClipRRect(
+            borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(7),
+                bottomRight: Radius.circular(7)),
+            child: _buildTable(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTable() {
+    return LayoutBuilder(builder: (context, constraints) {
+      // Define column flex widths
+      const double noW = 42.0;
+      final availW = constraints.maxWidth;
+      // Proportional widths for 3 data columns
+      final dataW = _showRowNumbers ? availW - noW : availW;
+      final colWidths = [dataW * 0.35, dataW * 0.25, dataW * 0.40];
+
+      return Table(
+        border: TableBorder.all(color: _fieldBorder, width: 0.8),
+        columnWidths: {
+          if (_showRowNumbers) 0: const FixedColumnWidth(42),
+          if (_showRowNumbers) 1: FixedColumnWidth(colWidths[0]),
+          if (_showRowNumbers) 2: FixedColumnWidth(colWidths[1]),
+          if (_showRowNumbers) 3: FixedColumnWidth(colWidths[2]),
+          if (!_showRowNumbers) 0: FixedColumnWidth(colWidths[0]),
+          if (!_showRowNumbers) 1: FixedColumnWidth(colWidths[1]),
+          if (!_showRowNumbers) 2: FixedColumnWidth(colWidths[2]),
+        },
+        children: [
+          // Header row
+          TableRow(
+            decoration: const BoxDecoration(color: _navy),
+            children: [
+              if (_showRowNumbers)
+                _headerCell('#'),
+              ..._headers.map(_headerCell),
+            ],
+          ),
+          // Data rows
+          ...widget.rows.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final bg = idx.isEven ? Colors.white : const Color(0xFFF8FAFC);
+            return TableRow(children: [
+              if (_showRowNumbers)
+                Container(
+                  color: bg,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text('${idx + 1}',
+                      style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _navy.withValues(alpha: 0.55))),
+                ),
+              ...List.generate(3, (ci) => _dataCell(idx, ci, bg)),
+            ]);
+          }),
+        ],
+      );
+    });
+  }
+
+  Widget _headerCell(String text) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+        child: Text(text,
+            style: GoogleFonts.poppins(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 11)),
+      );
+
+  Widget _dataCell(int rowIdx, int colIdx, Color bg) {
+    if (widget.readOnly) {
+      return Container(
+        color: bg,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Text(
+          _controllers[rowIdx][colIdx].text,
+          style: GoogleFonts.poppins(fontSize: 12, color: Colors.black87),
+          softWrap: true,
+        ),
+      );
+    }
+    return Container(
+      color: bg,
+      child: TextFormField(
+        controller: _controllers[rowIdx][colIdx],
+        maxLines: null,
+        minLines: 1,
+        style: GoogleFonts.poppins(fontSize: 12, color: Colors.black87),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          isDense: true,
+        ),
+        onChanged: (_) => _notifyChanged(),
+      ),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // HELPERS
 // ══════════════════════════════════════════════════════════════════
