@@ -443,18 +443,6 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
   // ─────────────────────────────────────────────────────────────
   // PDF GENERATION
   // ─────────────────────────────────────────────────────────────
-  // Ruled blank lines for empty printed sections
-  List<pw.Widget> _writingLines(int count, {double spacing = 22}) =>
-      List.generate(
-        count,
-        (_) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.SizedBox(height: spacing - 0.5),
-            pw.Container(height: 0.5, color: PdfColors.grey400),
-          ],
-        ),
-      );
   // Build a PDF table for the SLOPED ROOF section using pw.Table for proper cell borders
   pw.Widget _buildPdfTable(
     String label,
@@ -509,17 +497,12 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
         ));
       }
     } else {
-      // Empty form — show blank rows with light lines
+      // Empty form — blank rows sized for hand-writing after printing
       for (int i = 0; i < rows.length; i++) {
         final bg = i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
         tableRows.add(pw.TableRow(
           decoration: pw.BoxDecoration(color: bg),
-          children: List.generate(4, (_) =>
-            pw.Padding(
-              padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 10),
-              child: pw.Container(height: 0.5, color: PdfColors.grey300),
-            ),
-          ),
+          children: List.generate(4, (_) => pw.SizedBox(height: 26)),
         ));
       }
     }
@@ -780,7 +763,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(
-                  '© JV Almacis Site Management System — Weekly Report',
+                  '© JV Almacis Site Management System - Weekly Report',
                   style: pw.TextStyle(
                       font: pw.Font.helvetica(),
                       fontSize: 7,
@@ -833,7 +816,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
               color: navyColor,
               padding: const pw.EdgeInsets.fromLTRB(16, 2, 16, 12),
               child: pw.Text(
-                'Contract No: ${report.contractNumber.isEmpty ? '' : report.contractNumber}',
+                'Contract No: ${report.contractNumber}',
                 textAlign: pw.TextAlign.center,
                 style: pw.TextStyle(
                   font: pw.Font.helvetica(),
@@ -873,8 +856,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                         color: PdfColors.blueGrey300, width: 0.5)),
                 padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 8),
                 child: report.subContractor.isEmpty
-                    ? pw.Column(
-                        children: _writingLines(2))
+                    ? pw.SizedBox(height: 60)
                     : pw.Text(report.subContractor,
                         style: fieldValueStyle),
               ),
@@ -902,7 +884,7 @@ class _WeeklyReportFormScreenState extends State<WeeklyReportFormScreen> {
                       color: PdfColors.blueGrey300, width: 0.5)),
               padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 8),
               child: report.notes.isEmpty
-                  ? pw.Column(children: _writingLines(5))
+                  ? pw.SizedBox(height: 60)
                   : pw.Text(report.notes, style: fieldValueStyle),
             ),
             pw.SizedBox(height: 8),

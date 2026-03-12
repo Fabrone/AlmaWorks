@@ -714,22 +714,6 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     return widgets;
   }
 
-  // ── Ruled writing lines for blank printed form ────────────────
-  // Renders [count] horizontal grey lines giving enough space for
-  // a user to write in each section by hand after printing.
-  // No placeholder text or icons — just clean lines.
-  List<pw.Widget> _writingLines(int count, {double lineSpacing = 22}) =>
-      List.generate(
-        count,
-        (_) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.SizedBox(height: lineSpacing - 0.5),
-            pw.Container(height: 0.5, color: PdfColors.grey400),
-          ],
-        ),
-      );
-
   // ── Cross-platform PDF save to device Downloads ───────────────
   // Web     → browser download via Printing.sharePdf
   // Android → system public Downloads folder
@@ -998,18 +982,16 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
 
       // ── Rich-text section builder ─────────────────────────────
       // Has content → render rich paragraphs from Delta.
-      // Empty       → render ruled writing lines only (no icons,
-      //               no placeholder text — just blank lines).
+      // Empty       → render a clean blank box (no ruled lines).
       List<pw.Widget> richSectionWidgets(
-          String label, quill.QuillController ctrl,
-          {int blankLines = 10}) {
+          String label, quill.QuillController ctrl) {
         final raw = ctrl.document.toPlainText().trim();
         final List<pw.Widget> body;
         if (raw.isEmpty) {
-          body = _writingLines(blankLines);
+          body = [pw.SizedBox(height: 60)];
         } else {
           body = _quillDeltaToPdfWidgets(ctrl, fieldValueStyle);
-          if (body.isEmpty) body.addAll(_writingLines(blankLines));
+          if (body.isEmpty) body.add(pw.SizedBox(height: 60));
         }
         return [
           sectionBar(label),
@@ -1029,10 +1011,9 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       }
 
       // ── Plain-text section (sub-contractor) ──────────────────
-      List<pw.Widget> plainSectionWidgets(String label, String value,
-          {int blankLines = 4}) {
+      List<pw.Widget> plainSectionWidgets(String label, String value) {
         final List<pw.Widget> body = value.isEmpty
-            ? _writingLines(blankLines)
+            ? [pw.SizedBox(height: 60)]
             : [pw.Text(value, style: fieldValueStyle)];
         return [
           sectionBar(label),
@@ -1136,7 +1117,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
               color: navyColor,
               padding: const pw.EdgeInsets.fromLTRB(16, 2, 16, 12),
               child: pw.Text(
-                'Contract No: ${report.contractNumber.isEmpty ? '' : report.contractNumber}',
+                'Contract No: ${report.contractNumber}',
                 textAlign: pw.TextAlign.center,
                 style: pw.TextStyle(
                   font: pw.Font.helvetica(),
@@ -1188,10 +1169,12 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                     child: pw.Padding(
                       padding: const pw.EdgeInsets.symmetric(
                           horizontal: 8, vertical: 10),
-                      child: pw.Text(
-                        report.building,
-                        style: fieldValueStyle,
-                      ),
+                      child: report.building.isEmpty
+                          ? pw.SizedBox()
+                          : pw.Text(
+                              report.building,
+                              style: fieldValueStyle,
+                            ),
                     ),
                   ),
                 ],
@@ -1200,18 +1183,13 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             pw.SizedBox(height: 8),
 
             // ══ CONTENT SECTIONS ═════════════════════════════════
-            ...richSectionWidgets('VISITORS', _visitorsCtrl,
-                blankLines: 10),
+            ...richSectionWidgets('VISITORS', _visitorsCtrl),
             ...plainSectionWidgets(
-                'SUB-CONTRACTOR', report.subContractor,
-                blankLines: 4),
+                'SUB-CONTRACTOR', report.subContractor),
             ...richSectionWidgets(
-                'PERSONNEL AND VEHICLES', _personnelCtrl,
-                blankLines: 10),
-            ...richSectionWidgets('ACTIVITIES', _activitiesCtrl,
-                blankLines: 12),
-            ...richSectionWidgets('REMARKS', _remarksCtrl,
-                blankLines: 8),
+                'PERSONNEL AND VEHICLES', _personnelCtrl),
+            ...richSectionWidgets('ACTIVITIES', _activitiesCtrl),
+            ...richSectionWidgets('REMARKS', _remarksCtrl),
 
             // ══ ATTACHED IMAGES ══════════════════════════════════
             if (pdfImages.isNotEmpty) ...[
