@@ -21,7 +21,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_file/open_file.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
-import 'package:pluto_grid/pluto_grid.dart';
 
 // ══════════════════════════════════════════════════════════════════
 // MONTHLY TABLE DATA MODEL
@@ -856,71 +855,128 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
       }
 
       // ── Helper: table body ──────────────────────────────────
+      // ── Helper: table bodies — pw.Table for full text wrapping ──
       List<pw.Widget> tableBodies(List<MonthlyTableData> tables) {
         return tables.map((t) {
           if (t.columnNames.isEmpty) return pw.SizedBox();
-          final headerRow = pw.Row(
-              children: t.columnNames
-                  .map((col) => pw.Expanded(
-                        child: pw.Container(
-                          color: navyColor,
-                          padding: const pw.EdgeInsets.symmetric(
-                              horizontal: 4, vertical: 4),
-                          child: pw.Text(col,
-                              style: pw.TextStyle(
-                                  font: pw.Font.helveticaBold(),
-                                  fontSize: 7.5,
-                                  color: PdfColors.white)),
-                        ),
-                      ))
-                  .toList());
 
-          final dataRows = t.rows.isEmpty
-              ? [
-                  pw.SizedBox(height: 20),
-                ]
-              : t.rows.asMap().entries.map((entry) {
-                  final bg = entry.key.isEven
-                      ? PdfColors.white
-                      : PdfColor.fromHex('#F5F7FA');
-                  return pw.Row(
-                      crossAxisAlignment:
-                          pw.CrossAxisAlignment.start,
-                      children: t.columnNames
-                          .map((col) => pw.Expanded(
-                                child: pw.Container(
-                                  color: bg,
-                                  padding:
-                                      const pw.EdgeInsets.symmetric(
-                                          horizontal: 4, vertical: 5),
-                                  child: pw.Text(
-                                      entry.value[col] ?? '',
-                                      style: fieldValueStyle),
-                                ),
-                              ))
-                          .toList());
-                }).toList();
+          final colCount = t.columnNames.length;
+
+          // Equal flex widths per data column; row-number col is fixed
+          final Map<int, pw.TableColumnWidth> colWidths = {};
+          int offset = 0;
+          if (t.showRowNumbers) {
+            colWidths[0] = const pw.FixedColumnWidth(28);
+            offset = 1;
+          }
+          for (int i = 0; i < colCount; i++) {
+            colWidths[i + offset] = const pw.FlexColumnWidth(1);
+          }
+
+          final tableRows = <pw.TableRow>[];
+
+          // ── Header row ──────────────────────────────────────
+          final headerCells = <pw.Widget>[];
+          if (t.showRowNumbers) {
+            headerCells.add(pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 4, vertical: 5),
+              child: pw.Text('#',
+                  style: pw.TextStyle(
+                      font: pw.Font.helveticaBold(),
+                      fontSize: 7.5,
+                      color: PdfColors.white)),
+            ));
+          }
+          for (final col in t.columnNames) {
+            headerCells.add(pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 4, vertical: 5),
+              child: pw.Text(col,
+                  softWrap: true,
+                  style: pw.TextStyle(
+                      font: pw.Font.helveticaBold(),
+                      fontSize: 7.5,
+                      color: PdfColors.white)),
+            ));
+          }
+          tableRows.add(pw.TableRow(
+            decoration: pw.BoxDecoration(color: navyColor),
+            children: headerCells,
+          ));
+
+          // ── Data rows ───────────────────────────────────────
+          if (t.rows.isEmpty) {
+            // Blank form — draw empty ruled rows
+            for (int i = 0; i < 4; i++) {
+              final bg =
+                  i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
+              final totalCols =
+                  t.showRowNumbers ? colCount + 1 : colCount;
+              tableRows.add(pw.TableRow(
+                decoration: pw.BoxDecoration(color: bg),
+                children: List.generate(
+                  totalCols,
+                  (_) => pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(
+                        horizontal: 4, vertical: 10),
+                    child: pw.Container(
+                        height: 0.5, color: PdfColors.grey300),
+                  ),
+                ),
+              ));
+            }
+          } else {
+            for (int i = 0; i < t.rows.length; i++) {
+              final bg =
+                  i.isEven ? PdfColors.white : PdfColor.fromHex('#F5F7FA');
+              final cells = <pw.Widget>[];
+              if (t.showRowNumbers) {
+                cells.add(pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 5),
+                  child: pw.Text('${i + 1}', style: fieldValueStyle),
+                ));
+              }
+              for (final col in t.columnNames) {
+                cells.add(pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 4, vertical: 5),
+                  child: pw.Text(
+                    t.rows[i][col] ?? '',
+                    softWrap: true,       // ← full wrap in PDF cell
+                    style: fieldValueStyle,
+                  ),
+                ));
+              }
+              tableRows.add(pw.TableRow(
+                decoration: pw.BoxDecoration(color: bg),
+                children: cells,
+              ));
+            }
+          }
 
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.SizedBox(height: 6),
+              // Table title label
               pw.Container(
                 color: lightBlue,
                 padding: const pw.EdgeInsets.symmetric(
                     horizontal: 6, vertical: 3),
-                child: pw.Text('📊 ${t.title}',
+                child: pw.Text(t.title,
                     style: pw.TextStyle(
                         font: pw.Font.helveticaBold(),
                         fontSize: 8,
                         color: navyColor)),
               ),
-              pw.Container(
-                decoration: pw.BoxDecoration(
-                    border: pw.Border.all(
-                        color: PdfColors.blueGrey300, width: 0.5)),
-                child: pw.Column(
-                    children: [headerRow, ...dataRows]),
+              // pw.Table renders borders + wraps text correctly
+              pw.Table(
+                border: pw.TableBorder.all(
+                    color: PdfColors.blueGrey300, width: 0.5),
+                columnWidths: colWidths,
+                children: tableRows,
               ),
             ],
           );
@@ -2189,6 +2245,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                   return _InlineTableWidget(
                     key: ValueKey(table.id),
                     tableData: table,
+                    readOnly: _isReadOnly,
                     onDelete: () {
                       setState(() => tables.removeAt(idx));
                       _saveDraftToCache();
@@ -2584,19 +2641,25 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// INLINE TABLE WIDGET — PlutoGrid-powered editable table
-// • Tap any column header to rename it via a focused dialog
-// • Toggle button to show / hide an auto-numbered "#" row column
-// • Add / remove rows; delete entire table
+
+// ══════════════════════════════════════════════════════════════════
+// INLINE TABLE WIDGET — Custom wrapping-cell editable table
+// Replaces PlutoGrid with Flutter Table + TextFormField(maxLines:null)
+// so every cell fully wraps its content — no "..." truncation — both
+// in the UI and when exported to PDF.
+// Features: rename headers · add column · toggle row-numbers ·
+//           add/remove rows · delete table
 // ══════════════════════════════════════════════════════════════════
 class _InlineTableWidget extends StatefulWidget {
   final MonthlyTableData tableData;
+  final bool readOnly;
   final VoidCallback onDelete;
   final Function(MonthlyTableData) onChanged;
 
   const _InlineTableWidget({
     super.key,
     required this.tableData,
+    this.readOnly = false,
     required this.onDelete,
     required this.onChanged,
   });
@@ -2607,126 +2670,104 @@ class _InlineTableWidget extends StatefulWidget {
 
 class _InlineTableWidgetState extends State<_InlineTableWidget> {
   static const _navy = Color(0xFF0A2E5A);
-  PlutoGridStateManager? _manager;
+  static const _fieldBorder = Color(0xFFB0BEC5);
 
-  // Reserved internal field name for the row-number column.
-  static const _rowNoField = '__row_no__';
+  // Cell controllers: _controllers[rowIndex][colIndex]
+  // colIndex matches widget.tableData.columnNames index
+  late List<List<TextEditingController>> _controllers;
 
-  // ── Sanitise a column name into a safe PlutoGrid field key ────
-  String _safeField(String name) =>
-      name.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_').toLowerCase();
-
-  // ── Build PlutoGrid columns ────────────────────────────────────
-  List<PlutoColumn> get _plutoColumns {
-    final cols = <PlutoColumn>[];
-
-    if (widget.tableData.showRowNumbers) {
-      cols.add(PlutoColumn(
-        title: '#',
-        field: _rowNoField,
-        type: PlutoColumnType.text(),
-        width: 52,
-        readOnly: true,
-        enableSorting: false,
-        enableContextMenu: false,
-        enableDropToResize: false,
-        titleTextAlign: PlutoColumnTextAlign.center,
-        textAlign: PlutoColumnTextAlign.center,
-        backgroundColor: _navy,
-        renderer: (ctx) => Center(
-          child: Text('${ctx.rowIdx + 1}',
-              style: GoogleFonts.poppins(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: _navy.withValues(alpha: 0.55))),
-        ),
-      ));
-    }
-
-    for (final name in widget.tableData.columnNames) {
-      cols.add(PlutoColumn(
-        title: name,
-        field: _safeField(name),
-        type: PlutoColumnType.text(),
-        width: 160,
-        enableSorting: false,
-        enableContextMenu: false,
-        enableDropToResize: true,
-        backgroundColor: _navy,
-      ));
-    }
-    return cols;
+  // ── Lifecycle ─────────────────────────────────────────────────
+  @override
+  void initState() {
+    super.initState();
+    _initControllers();
   }
 
-  // ── Build PlutoGrid rows ───────────────────────────────────────
-  List<PlutoRow> get _plutoRows {
-    return widget.tableData.rows.asMap().entries.map((entry) {
-      final idx = entry.key;
-      final rowMap = entry.value;
-      final cells = <String, PlutoCell>{};
-      if (widget.tableData.showRowNumbers) {
-        cells[_rowNoField] = PlutoCell(value: '${idx + 1}');
-      }
-      for (final name in widget.tableData.columnNames) {
-        cells[_safeField(name)] = PlutoCell(value: rowMap[name] ?? '');
-      }
-      return PlutoRow(cells: cells);
+  @override
+  void didUpdateWidget(_InlineTableWidget old) {
+    super.didUpdateWidget(old);
+    // Rebuild controllers if row count or column count changed externally
+    final colChanged =
+        old.tableData.columnNames.length != widget.tableData.columnNames.length ||
+        old.tableData.columnNames.join('|') != widget.tableData.columnNames.join('|');
+    final rowChanged = old.tableData.rows.length != _controllers.length;
+    if (colChanged || rowChanged) {
+      _disposeControllers();
+      _initControllers();
+    }
+  }
+
+  void _initControllers() {
+    _controllers = widget.tableData.rows.map((rowMap) {
+      return widget.tableData.columnNames
+          .map((col) => TextEditingController(text: rowMap[col] ?? ''))
+          .toList();
     }).toList();
   }
 
-  // ── Sync grid → data model ─────────────────────────────────────
-  void _syncRowsFromManager() {
-    if (_manager == null) return;
-    widget.tableData.rows.clear();
-    for (final row in _manager!.rows) {
-      final map = <String, String>{};
-      for (final name in widget.tableData.columnNames) {
-        map[name] = row.cells[_safeField(name)]?.value?.toString() ?? '';
+  void _disposeControllers() {
+    for (final row in _controllers) {
+      for (final c in row) {
+        c.dispose();
       }
-      widget.tableData.rows.add(map);
     }
   }
 
-  // ── Add a blank row ────────────────────────────────────────────
+  @override
+  void dispose() {
+    _disposeControllers();
+    super.dispose();
+  }
+
+  // ── Sync controllers → data model ─────────────────────────────
+  void _syncAndNotify() {
+    for (int r = 0; r < _controllers.length && r < widget.tableData.rows.length; r++) {
+      for (int c = 0; c < _controllers[r].length && c < widget.tableData.columnNames.length; c++) {
+        widget.tableData.rows[r][widget.tableData.columnNames[c]] =
+            _controllers[r][c].text;
+      }
+    }
+    widget.onChanged(widget.tableData);
+  }
+
+  // ── Add blank row ──────────────────────────────────────────────
   void _addRow() {
-    if (_manager == null) return;
-    final newIdx = widget.tableData.rows.length + 1;
-    final cells = <String, PlutoCell>{};
-    if (widget.tableData.showRowNumbers) {
-      cells[_rowNoField] = PlutoCell(value: '$newIdx');
-    }
-    for (final name in widget.tableData.columnNames) {
-      cells[_safeField(name)] = PlutoCell(value: '');
-    }
-    _manager!.appendRows([PlutoRow(cells: cells)]);
-    widget.tableData.rows
-        .add({for (final n in widget.tableData.columnNames) n: ''});
+    final newMap = {for (final n in widget.tableData.columnNames) n: ''};
+    widget.tableData.rows.add(newMap);
+    setState(() {
+      _controllers.add(
+        widget.tableData.columnNames
+            .map((_) => TextEditingController())
+            .toList(),
+      );
+    });
     widget.onChanged(widget.tableData);
   }
 
   // ── Remove last row ────────────────────────────────────────────
   void _removeLastRow() {
-    if (_manager == null || _manager!.rows.isEmpty) return;
-    _manager!.removeRows([_manager!.rows.last]);
-    if (widget.tableData.rows.isNotEmpty) widget.tableData.rows.removeLast();
+    if (widget.tableData.rows.isEmpty || widget.tableData.rows.length <= 1) return;
+    widget.tableData.rows.removeLast();
+    setState(() {
+      final last = _controllers.removeLast();
+      for (final c in last) {
+        c.dispose();
+      }
+    });
     widget.onChanged(widget.tableData);
   }
 
   // ── Toggle row-number column ───────────────────────────────────
   void _toggleRowNumbers() {
-    _syncRowsFromManager();
     setState(() {
       widget.tableData.showRowNumbers = !widget.tableData.showRowNumbers;
-      _manager = null; // force PlutoGrid to rebuild with new columns
     });
     widget.onChanged(widget.tableData);
   }
 
-  // ── Edit all headers at once in a single dialog ────────────────
-  // Opens a scrollable dialog with one TextField per column so the
-  // user can rename any or all headers in one step.
+  // ── Edit all column headers ────────────────────────────────────
   Future<void> _showEditHeadersDialog() async {
-    _syncRowsFromManager();
+    _syncAndNotify();
     final ctrls = widget.tableData.columnNames
         .map((n) => TextEditingController(text: n))
         .toList();
@@ -2735,23 +2776,19 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => Dialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         child: ConstrainedBox(
-          constraints:
-              const BoxConstraints(maxWidth: 420, maxHeight: 520),
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               // Header bar
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 13),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
                 decoration: const BoxDecoration(
                   color: _navy,
-                  borderRadius:
-                      BorderRadius.vertical(top: Radius.circular(14)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
                 ),
                 child: Row(children: [
                   const Icon(Icons.drive_file_rename_outline_rounded,
@@ -2769,62 +2806,58 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
                           color: Colors.white70, size: 18)),
                 ]),
               ),
-              // Fields
+              // Field list
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
                   child: Column(
-                    children: List.generate(ctrls.length, (i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Row(children: [
-                          Container(
-                            width: 26,
-                            height: 26,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: _navy.withValues(alpha: 0.10),
-                              borderRadius: BorderRadius.circular(5),
-                            ),
-                            child: Text('${i + 1}',
-                                style: GoogleFonts.poppins(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700,
-                                    color: _navy)),
+                    children: List.generate(ctrls.length, (i) => Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(children: [
+                        Container(
+                          width: 26, height: 26,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: _navy.withValues(alpha: 0.10),
+                            borderRadius: BorderRadius.circular(5),
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: TextField(
-                              controller: ctrls[i],
-                              style: GoogleFonts.poppins(fontSize: 12),
-                              autofocus: i == 0,
-                              textInputAction: i < ctrls.length - 1
-                                  ? TextInputAction.next
-                                  : TextInputAction.done,
-                              decoration: InputDecoration(
-                                isDense: true,
-                                hintText: 'Column ${i + 1}',
-                                hintStyle: GoogleFonts.poppins(
-                                    color: Colors.grey[400], fontSize: 11),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(6)),
-                                focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(6),
-                                    borderSide: const BorderSide(
-                                        color: _navy, width: 1.5)),
-                                contentPadding:
-                                    const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 8),
-                              ),
+                          child: Text('${i + 1}',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: _navy)),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: ctrls[i],
+                            style: GoogleFonts.poppins(fontSize: 12),
+                            autofocus: i == 0,
+                            textInputAction: i < ctrls.length - 1
+                                ? TextInputAction.next
+                                : TextInputAction.done,
+                            decoration: InputDecoration(
+                              isDense: true,
+                              hintText: 'Column ${i + 1}',
+                              hintStyle: GoogleFonts.poppins(
+                                  color: Colors.grey[400], fontSize: 11),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6)),
+                              focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(6),
+                                  borderSide:
+                                      const BorderSide(color: _navy, width: 1.5)),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 8),
                             ),
                           ),
-                        ]),
-                      );
-                    }),
+                        ),
+                      ]),
+                    )),
                   ),
                 ),
               ),
-              // Buttons
+              // Action buttons
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
                 child: Row(children: [
@@ -2833,8 +2866,7 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
                       onPressed: () => Navigator.pop(ctx, false),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: _navy),
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 11),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8)),
                       ),
@@ -2854,8 +2886,7 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _navy,
                         foregroundColor: Colors.white,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 11),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(8)),
                       ),
@@ -2870,11 +2901,13 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
     );
 
     if (confirmed != true) {
-      for (final c in ctrls) { c.dispose(); }
+      for (final c in ctrls) {
+        c.dispose();
+      }
       return;
     }
 
-    // Apply renames: migrate row data for any header that changed
+    // Apply renames — migrate row data keys
     final newNames = ctrls.asMap().entries.map((e) {
       final v = e.value.text.trim();
       return v.isNotEmpty ? v : widget.tableData.columnNames[e.key];
@@ -2889,46 +2922,323 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
         row[newName] = val;
       }
     }
+    for (final c in ctrls) {
+      c.dispose();
+    }
 
-    for (final c in ctrls) { c.dispose(); }
-
+    // Rebuild controllers with new names (text stays, just key changes)
+    _disposeControllers();
     setState(() {
       for (var i = 0; i < widget.tableData.columnNames.length; i++) {
         widget.tableData.columnNames[i] = newNames[i];
       }
-      _manager = null; // force PlutoGrid rebuild with new column names
+    });
+    _initControllers();
+    widget.onChanged(widget.tableData);
+  }
+
+  // ── Add a new column ──────────────────────────────────────────
+  Future<void> _showAddColumnDialog() async {
+    _syncAndNotify();
+    final nameCtrl = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 13),
+                decoration: const BoxDecoration(
+                  color: _navy,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.add_box_outlined,
+                      color: Colors.white, size: 18),
+                  const SizedBox(width: 10),
+                  Text('Add New Column',
+                      style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14)),
+                  const Spacer(),
+                  GestureDetector(
+                      onTap: () => Navigator.pop(ctx, false),
+                      child: const Icon(Icons.close_rounded,
+                          color: Colors.white70, size: 18)),
+                ]),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+                child: TextField(
+                  controller: nameCtrl,
+                  autofocus: true,
+                  style: GoogleFonts.poppins(fontSize: 13),
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => Navigator.pop(ctx, true),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    labelText: 'Column Name',
+                    labelStyle:
+                        GoogleFonts.poppins(fontSize: 12, color: _navy),
+                    hintText: 'e.g. Status',
+                    hintStyle: GoogleFonts.poppins(
+                        color: Colors.grey[400], fontSize: 12),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(7)),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(7),
+                        borderSide:
+                            const BorderSide(color: _navy, width: 1.5)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                child: Row(children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: _navy),
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: Text('Cancel',
+                          style: GoogleFonts.poppins(
+                              color: _navy, fontSize: 13)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      icon: const Icon(Icons.add_rounded, size: 16),
+                      label: Text('Add Column',
+                          style: GoogleFonts.poppins(
+                              fontWeight: FontWeight.w700, fontSize: 13)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _navy,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 11),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    nameCtrl.dispose();
+    if (confirmed != true) return;
+
+    // Deduplicate new column name
+    String newName = nameCtrl.text.trim().isEmpty
+        ? 'Column ${widget.tableData.columnNames.length + 1}'
+        : nameCtrl.text.trim();
+    int suffix = 2;
+    String candidate = newName;
+    while (widget.tableData.columnNames.contains(candidate)) {
+      candidate = '$newName ($suffix)';
+      suffix++;
+    }
+    newName = candidate;
+
+    // Add column: update data model + add controller per row
+    setState(() {
+      widget.tableData.columnNames.add(newName);
+      for (int r = 0; r < widget.tableData.rows.length; r++) {
+        widget.tableData.rows[r][newName] = '';
+        _controllers[r].add(TextEditingController());
+      }
     });
     widget.onChanged(widget.tableData);
   }
 
+  // ── Toolbar icon button ────────────────────────────────────────
+  Widget _tableBtn({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    required VoidCallback? onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 26, height: 26,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: onTap != null
+                ? color.withValues(alpha: 0.12)
+                : Colors.grey[200],
+            borderRadius: BorderRadius.circular(5),
+            border: Border.all(
+                color: onTap != null
+                    ? color.withValues(alpha: 0.4)
+                    : Colors.grey[300]!,
+                width: 0.8),
+          ),
+          child: Icon(icon,
+              size: 14,
+              color: onTap != null ? color : Colors.grey[400]),
+        ),
+      ),
+    );
+  }
+
+  // ── Header cell ────────────────────────────────────────────────
+  Widget _headerCell(String text) => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 9),
+        child: Text(
+          text,
+          style: GoogleFonts.poppins(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              fontSize: 11),
+          softWrap: true,
+        ),
+      );
+
+  // ── Data cell — wrapping TextField or read-only Text ──────────
+  Widget _dataCell(int rowIdx, int colIdx, Color bg, bool readOnly) {
+    if (readOnly) {
+      return Container(
+        color: bg,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Text(
+          _controllers[rowIdx][colIdx].text,
+          style: GoogleFonts.poppins(fontSize: 12, color: Colors.black87),
+          softWrap: true,
+        ),
+      );
+    }
+    return Container(
+      color: bg,
+      child: TextFormField(
+        controller: _controllers[rowIdx][colIdx],
+        maxLines: null,   // ← unlimited lines; cell grows with content
+        minLines: 1,
+        style: GoogleFonts.poppins(fontSize: 12, color: Colors.black87),
+        decoration: const InputDecoration(
+          border: InputBorder.none,
+          contentPadding:
+              EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          isDense: true,
+        ),
+        onChanged: (_) => _syncAndNotify(),
+      ),
+    );
+  }
+
+  // ── Build the Flutter Table ────────────────────────────────────
+  Widget _buildTable(bool readOnly) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final colCount = widget.tableData.columnNames.length;
+      const double noW = 42.0;
+      final availW = constraints.maxWidth;
+      final dataW =
+          widget.tableData.showRowNumbers ? availW - noW : availW;
+      // Equal width per column
+      final perColW = colCount > 0 ? dataW / colCount : dataW;
+
+      final Map<int, TableColumnWidth> colWidths = {};
+      int offset = 0;
+      if (widget.tableData.showRowNumbers) {
+        colWidths[0] = const FixedColumnWidth(noW);
+        offset = 1;
+      }
+      for (int i = 0; i < colCount; i++) {
+        colWidths[i + offset] = FixedColumnWidth(perColW);
+      }
+
+      return Table(
+        border: TableBorder.all(color: _fieldBorder, width: 0.8),
+        columnWidths: colWidths,
+        defaultVerticalAlignment: TableCellVerticalAlignment.top,
+        children: [
+          // ── Header row ──────────────────────────────────────
+          TableRow(
+            decoration: const BoxDecoration(color: _navy),
+            children: [
+              if (widget.tableData.showRowNumbers) _headerCell('#'),
+              ...widget.tableData.columnNames.map(_headerCell),
+            ],
+          ),
+          // ── Data rows ───────────────────────────────────────
+          ...widget.tableData.rows.asMap().entries.map((entry) {
+            final idx = entry.key;
+            final bg =
+                idx.isEven ? Colors.white : const Color(0xFFF8FAFC);
+            return TableRow(children: [
+              if (widget.tableData.showRowNumbers)
+                Container(
+                  color: bg,
+                  alignment: Alignment.topCenter,
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 10, horizontal: 4),
+                  child: Text('${idx + 1}',
+                      style: GoogleFonts.poppins(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: _navy.withValues(alpha: 0.55))),
+                ),
+              ...List.generate(
+                  colCount, (ci) => _dataCell(idx, ci, bg, readOnly)),
+            ]);
+          }),
+        ],
+      );
+    });
+  }
+
+  // ── Build ──────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    if (widget.tableData.columnNames.isEmpty) return const SizedBox();
+    final bool readOnly = widget.readOnly;
 
     final rowCount = widget.tableData.rows.length;
-    final tableHeight =
-        (42.0 + rowCount * 42.0 + 2.0).clamp(86.0, 440.0);
+    final colCount = widget.tableData.columnNames.length;
 
     return Container(
       margin: const EdgeInsets.only(top: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _navy.withValues(alpha: 0.22), width: 1),
+        border: Border.all(
+            color: _navy.withValues(alpha: 0.22), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Table toolbar ──────────────────────────────────────
+          // ── Toolbar ───────────────────────────────────────────
           Container(
             decoration: BoxDecoration(
               color: _navy.withValues(alpha: 0.06),
               borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(7), topRight: Radius.circular(7)),
+                  topLeft: Radius.circular(7),
+                  topRight: Radius.circular(7)),
             ),
             padding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             child: Row(children: [
-              const Icon(Icons.table_chart_rounded, color: _navy, size: 15),
+              const Icon(Icons.table_chart_rounded,
+                  color: _navy, size: 15),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(widget.tableData.title,
@@ -2960,26 +3270,28 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
                               : Colors.grey.withValues(alpha: 0.35),
                           width: 0.9),
                     ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.format_list_numbered_rounded,
-                          size: 13,
-                          color: widget.tableData.showRowNumbers
-                              ? _navy
-                              : Colors.grey[500]),
-                      const SizedBox(width: 3),
-                      Text(' # ',
-                          style: GoogleFonts.poppins(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
+                    child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.format_list_numbered_rounded,
+                              size: 13,
                               color: widget.tableData.showRowNumbers
                                   ? _navy
-                                  : Colors.grey[500])),
-                    ]),
+                                  : Colors.grey[500]),
+                          const SizedBox(width: 3),
+                          Text(' # ',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: widget.tableData.showRowNumbers
+                                      ? _navy
+                                      : Colors.grey[500])),
+                        ]),
                   ),
                 ),
               ),
               const SizedBox(width: 6),
-              // ── Edit column headers ──────────────────────────
+              // Edit column headers
               Tooltip(
                 message: 'Edit Column Headers',
                 child: InkWell(
@@ -2994,32 +3306,82 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
                           color: Colors.grey.withValues(alpha: 0.35),
                           width: 0.9),
                     ),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.drive_file_rename_outline_rounded,
-                          size: 13, color: Colors.grey[600]),
-                      const SizedBox(width: 3),
-                      Text('Headers',
-                          style: GoogleFonts.poppins(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.grey[600])),
-                    ]),
+                    child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                              Icons.drive_file_rename_outline_rounded,
+                              size: 13,
+                              color: Colors.grey[600]),
+                          const SizedBox(width: 3),
+                          Text('Headers',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.grey[600])),
+                        ]),
                   ),
                 ),
               ),
               const SizedBox(width: 6),
+              // Add new column
+              Tooltip(
+                message: colCount < 10
+                    ? 'Add New Column'
+                    : 'Maximum 10 columns reached',
+                child: InkWell(
+                  onTap: colCount < 10 ? _showAddColumnDialog : null,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: colCount < 10
+                          ? Colors.teal.withValues(alpha: 0.10)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                          color: colCount < 10
+                              ? Colors.teal.withValues(alpha: 0.45)
+                              : Colors.grey.withValues(alpha: 0.35),
+                          width: 0.9),
+                    ),
+                    child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.add_box_outlined,
+                              size: 13,
+                              color: colCount < 10
+                                  ? Colors.teal[700]
+                                  : Colors.grey[400]),
+                          const SizedBox(width: 3),
+                          Text('+ Col',
+                              style: GoogleFonts.poppins(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  color: colCount < 10
+                                      ? Colors.teal[700]
+                                      : Colors.grey[400])),
+                        ]),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              // Add row
               _tableBtn(
                   icon: Icons.add_rounded,
                   tooltip: 'Add Row',
                   color: Colors.green[700]!,
                   onTap: _addRow),
               const SizedBox(width: 4),
+              // Remove last row
               _tableBtn(
                   icon: Icons.remove_rounded,
                   tooltip: 'Remove Last Row',
                   color: Colors.orange[700]!,
                   onTap: rowCount > 1 ? _removeLastRow : null),
               const SizedBox(width: 4),
+              // Delete table
               _tableBtn(
                   icon: Icons.delete_outline_rounded,
                   tooltip: 'Delete Table',
@@ -3032,17 +3394,20 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
                             borderRadius: BorderRadius.circular(12)),
                         title: Text('Delete Table',
                             style: GoogleFonts.poppins(
-                                fontWeight: FontWeight.bold, fontSize: 15)),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
                         content: Text(
                             'Delete "${widget.tableData.title}"?',
                             style: GoogleFonts.poppins(fontSize: 13)),
                         actions: [
                           TextButton(
-                              onPressed: () => Navigator.pop(ctx, false),
-                              child:
-                                  Text('Cancel', style: GoogleFonts.poppins())),
+                              onPressed: () =>
+                                  Navigator.pop(ctx, false),
+                              child: Text('Cancel',
+                                  style: GoogleFonts.poppins())),
                           ElevatedButton(
-                            onPressed: () => Navigator.pop(ctx, true),
+                            onPressed: () =>
+                                Navigator.pop(ctx, true),
                             style: ElevatedButton.styleFrom(
                                 backgroundColor: Colors.red[600],
                                 foregroundColor: Colors.white),
@@ -3060,105 +3425,34 @@ class _InlineTableWidgetState extends State<_InlineTableWidget> {
 
           // ── Hint strip ────────────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             color: const Color(0xFFF3F6FA),
             child: Row(children: [
               Icon(Icons.info_outline_rounded,
                   size: 12, color: Colors.grey[450]),
               const SizedBox(width: 4),
-              Text('Use "Headers" button above to rename columns',
-                  style: GoogleFonts.poppins(
-                      fontSize: 10, color: Colors.grey[500])),
+              Expanded(
+                child: Text(
+                    '"Headers" to rename · "+ Col" to add column · content wraps automatically',
+                    style: GoogleFonts.poppins(
+                        fontSize: 10, color: Colors.grey[500])),
+              ),
             ]),
           ),
 
-          // ── PlutoGrid ──────────────────────────────────────────
+          // ── Wrapping Table ────────────────────────────────────
           ClipRRect(
             borderRadius: const BorderRadius.only(
                 bottomLeft: Radius.circular(7),
                 bottomRight: Radius.circular(7)),
-            child: SizedBox(
-              height: tableHeight,
-              child: PlutoGrid(
-                key: ValueKey(
-                    '${widget.tableData.id}_${widget.tableData.showRowNumbers}'
-                    '_${widget.tableData.columnNames.join('|')}'),
-                columns: _plutoColumns,
-                rows: _plutoRows,
-                onLoaded: (e) =>
-                    _manager = e.stateManager..setShowColumnFilter(false),
-                onChanged: (e) {
-                  _syncRowsFromManager();
-                  widget.onChanged(widget.tableData);
-                },
-                configuration: PlutoGridConfiguration(
-                  style: PlutoGridStyleConfig(
-                    gridBorderRadius: BorderRadius.zero,
-                    gridBackgroundColor: Colors.white,
-                    rowColor: Colors.white,
-                    oddRowColor: const Color(0xFFF8FAFC),
-                    activatedColor:
-                        const Color(0xFF0A2E5A).withValues(alpha: 0.08),
-                    activatedBorderColor: const Color(0xFF0A2E5A),
-                    columnTextStyle: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700),
-                    cellTextStyle: GoogleFonts.poppins(
-                        fontSize: 12, color: Colors.black87),
-                    columnHeight: 40,
-                    rowHeight: 40,
-                    defaultCellPadding:
-                        const EdgeInsets.symmetric(horizontal: 8),
-                    defaultColumnFilterPadding:
-                        const EdgeInsets.symmetric(horizontal: 4),
-                  ),
-                  columnSize: const PlutoGridColumnSizeConfig(
-                    autoSizeMode: PlutoAutoSizeMode.scale,
-                  ),
-                ),
-              ),
-            ),
+            child: _buildTable(readOnly),
           ),
         ],
       ),
     );
   }
-
-  Widget _tableBtn({
-    required IconData icon,
-    required String tooltip,
-    required Color color,
-    required VoidCallback? onTap,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 26,
-          height: 26,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: onTap != null
-                ? color.withValues(alpha: 0.12)
-                : Colors.grey[200],
-            borderRadius: BorderRadius.circular(5),
-            border: Border.all(
-                color: onTap != null
-                    ? color.withValues(alpha: 0.4)
-                    : Colors.grey[300]!,
-                width: 0.8),
-          ),
-          child: Icon(icon,
-              size: 14,
-              color: onTap != null ? color : Colors.grey[400]),
-        ),
-      ),
-    );
-  }
 }
-
 
 // ══════════════════════════════════════════════════════════════════
 // INSERT TABLE DIALOG — standalone StatefulWidget so TextFields
