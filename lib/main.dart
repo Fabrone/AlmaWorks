@@ -1,7 +1,13 @@
 import 'package:almaworks/authentication/login_screen.dart';
 import 'package:almaworks/authentication/welcome_screen.dart';
+import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/providers/locale_provider.dart';
 import 'package:almaworks/rbacsystem/auth_service.dart';
+import 'package:almaworks/screens/communication/communication_message_detail_screen.dart';
+import 'package:almaworks/screens/communication/communication_models.dart';
+import 'package:almaworks/screens/communication/communication_notification_service.dart';
+import 'package:almaworks/screens/communication/communication_screen.dart';
+import 'package:almaworks/screens/communication/communication_service.dart';
 import 'package:almaworks/screens/utils/app_theme.dart';
 import 'package:almaworks/services/notification_service.dart';
 import 'package:awesome_notifications/awesome_notifications.dart';
@@ -9,8 +15,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter_localizations/flutter_localizations.dart'; // ← ADDED
-import 'package:flutter_quill/flutter_quill.dart' show FlutterQuillLocalizations; // ← ADDED
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_quill/flutter_quill.dart' show FlutterQuillLocalizations;
 import 'package:logger/logger.dart';
 import 'firebase_options.dart';
 
@@ -48,7 +54,10 @@ void main() async {
     );
     logger.i('✅ Firestore settings configured');
 
-    // Initialize Awesome Notifications for schedule/task notifications
+    // ── Awesome Notifications ────────────────────────────────────────────────
+    // The communication_channel is registered here alongside the existing
+    // channels so that Awesome Notifications remains the single notification
+    // manager on Android, avoiding conflicts with flutter_local_notifications.
     await AwesomeNotifications().initialize(
       null, // Use default app icon
       [
@@ -96,18 +105,48 @@ void main() async {
           playSound: true,
           enableVibration: true,
         ),
+        // ── Communication channel ─────────────────────────────────────────
+        // Handles in-app message notifications (new messages, replies).
+        // Registered here so Awesome Notifications owns all channels and
+        // there is no conflict with the separate flutter_local_notifications
+        // instance used by CommunicationNotificationService for foreground
+        // pop-ups triggered by FCM.
+        NotificationChannel(
+          channelKey: 'communication_channel',
+          channelName: 'Messages',
+          channelDescription: 'AlmaWorks in-app communication notifications',
+          defaultColor: const Color(0xFF0A2E5A),
+          ledColor: const Color(0xFF0A2E5A),
+          importance: NotificationImportance.High,
+          channelShowBadge: true,
+          playSound: true,
+          enableVibration: true,
+          icon: 'resource://drawable/ic_launcher',
+        ),
       ],
       debug: false,
     );
     logger.i('✅ Awesome Notifications initialized successfully');
 
-    // Initialize Flutter Local Notifications Service for client requests
+    // ── Existing Notification Service (client requests) ───────────────────
     try {
       await NotificationService(logger: logger).initialize();
       logger.i('✅ Notification Service initialized successfully');
     } catch (e) {
-      logger.w('⚠️ Notification Service initialization failed (non-critical): $e');
-      // Non-critical - app can continue without notification service
+      logger.w(
+          '⚠️ Notification Service initialization failed (non-critical): $e');
+    }
+
+    // ── Communication Notification Service (FCM + foreground messages) ────
+    // Handles FCM token registration and foreground message display for the
+    // Communication section. Non-critical — app runs fully without it.
+    try {
+      await CommunicationNotificationService().initialize();
+      logger.i(
+          '✅ Communication Notification Service initialized successfully');
+    } catch (e) {
+      logger.w(
+          '⚠️ Communication Notification Service initialization failed (non-critical): $e');
     }
 
     runApp(AlmaWorksApp(logger: logger));
@@ -145,7 +184,7 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
         if (receivedAction.payload != null) {
           final notificationType = receivedAction.payload!['type'];
 
-          // Handle schedule/task notifications
+          // ── Schedule / task notifications ───────────────────────────────
           if (notificationType == 'schedule' || notificationType == null) {
             final projectId = receivedAction.payload!['projectId'];
             final taskId = receivedAction.payload!['taskId'];
@@ -154,7 +193,6 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
             widget.logger.d(
                 'Schedule notification: projectId=$projectId, taskId=$taskId, notifId=$notificationId');
 
-            // Mark as read and opened when user taps
             if (notificationId != null) {
               try {
                 await FirebaseFirestore.instance
@@ -166,21 +204,145 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
                   'openedAt': FieldValue.serverTimestamp(),
                   'readSource': 'system_tray',
                 });
-                widget.logger.i('✅ Marked notification as read from system tray');
+                widget.logger
+                    .i('✅ Marked notification as read from system tray');
               } catch (e) {
                 widget.logger.e('Error marking notification as read', error: e);
               }
             }
           }
 
-          // Handle client request notifications
+          // ── Client request notifications ────────────────────────────────
           else if (notificationType == 'client_request') {
             widget.logger.d('Client request notification tapped');
-            // Navigation will be handled by the NotificationService
+          }
+
+          // ── Communication (message) notifications ───────────────────────
+          else if (notificationType == 'communication') {
+            final messageId = receivedAction.payload!['messageId'];
+            final projectId = receivedAction.payload!['projectId'];
+            widget.logger.d(
+                'Communication notification tapped: messageId=$messageId, projectId=$projectId');
+
+            if (messageId != null && projectId != null) {
+              await _navigateToMessage(
+                messageId: messageId,
+                projectId: projectId,
+              );
+            }
           }
         }
       },
     );
+  }
+
+  // ─── Deep-link navigation ─────────────────────────────────────────────────
+  /// Fetches the project, message, current user, and project users from
+  /// Firestore, then pushes [CommunicationScreen] + [CommunicationMessageDetailScreen]
+  /// onto the current navigation stack using the global [navigatorKey].
+  ///
+  /// Called when the user taps a communication notification from the system
+  /// tray while the app is open or resuming from background.
+  Future<void> _navigateToMessage({
+    required String messageId,
+    required String projectId,
+  }) async {
+    final navState = navigatorKey.currentState;
+    if (navState == null) {
+      widget.logger.w(
+          '⚠️ _navigateToMessage: navigatorKey has no current state — app not yet ready');
+      return;
+    }
+
+    // Show a brief feedback snackbar while we fetch data
+    final messenger = ScaffoldMessenger.of(navigatorKey.currentContext!);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('Opening message…'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      final db = FirebaseFirestore.instance;
+      final commService = CommunicationService();
+
+      // 1 ── Fetch the message document ─────────────────────────────────────
+      final msgDoc =
+          await db.collection('Communication').doc(messageId).get();
+      if (!msgDoc.exists) {
+        widget.logger.w('⚠️ _navigateToMessage: message $messageId not found');
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Message not found or has been deleted.')),
+        );
+        return;
+      }
+      final message = CommunicationMessage.fromDoc(msgDoc);
+
+      // 2 ── Fetch the project document ─────────────────────────────────────
+      final projectDoc =
+          await db.collection('Projects').doc(projectId).get();
+      if (!projectDoc.exists) {
+        widget.logger
+            .w('⚠️ _navigateToMessage: project $projectId not found');
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Project not found.')),
+        );
+        return;
+      }
+      final project = ProjectModel.fromFirestore(projectDoc);
+
+      // 3 ── Fetch the current user's participant record ─────────────────────
+      final currentUser = await commService.getCurrentUserParticipant();
+      if (currentUser == null) {
+        widget.logger.w('⚠️ _navigateToMessage: could not resolve current user');
+        messenger.hideCurrentSnackBar();
+        return;
+      }
+
+      // 4 ── Fetch users who share this project (for Reply / Reply All) ──────
+      final projectUsers = await commService.getProjectUsers(projectId);
+
+      messenger.hideCurrentSnackBar();
+
+      // 5 ── Navigate ────────────────────────────────────────────────────────
+      // Push CommunicationScreen first so the user can tap Back and land on
+      // their inbox rather than wherever they were before the notification.
+      navState.push(
+        MaterialPageRoute(
+          builder: (_) => CommunicationScreen(
+            project: project,
+            logger: widget.logger,
+          ),
+        ),
+      );
+
+      // Then immediately push the specific message on top.
+      navState.push(
+        MaterialPageRoute(
+          builder: (_) => CommunicationMessageDetailScreen(
+            message: message,
+            service: commService,
+            currentUser: currentUser,
+            projectUsers: projectUsers,
+            projectId: projectId,
+          ),
+        ),
+      );
+
+      widget.logger.i(
+          '✅ _navigateToMessage: navigated to message $messageId in project $projectId');
+    } catch (e, stack) {
+      widget.logger.e('❌ _navigateToMessage failed',
+          error: e, stackTrace: stack);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        const SnackBar(
+            content: Text('Could not open message. Please try again.')),
+      );
+    }
   }
 
   @override
@@ -194,8 +356,6 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
       ),
     );
 
-    // ListenableBuilder rebuilds MaterialApp whenever localeProvider changes,
-    // which causes the entire widget tree to adopt the new locale immediately.
     return ListenableBuilder(
       listenable: localeProvider,
       builder: (context, _) => MaterialApp(
@@ -204,21 +364,12 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
         theme: AppTheme.lightTheme,
         debugShowCheckedModeBanner: false,
         locale: localeProvider.locale,
-
-        // ── Localization delegates ────────────────────────────────────────
-        // GlobalMaterialLocalizations  → Material widget strings (date pickers, etc.)
-        // GlobalCupertinoLocalizations → Cupertino widget strings (iOS-style widgets)
-        // GlobalWidgetsLocalizations   → Text direction (LTR / RTL)
-        // FlutterQuillLocalizations    → Quill toolbar tooltips & editor strings
-        //                               Without this, every QuillSimpleToolbar button
-        //                               throws MissingFlutterQuillLocalizationException.
         localizationsDelegates: const [
-          GlobalMaterialLocalizations.delegate,   // ← ADDED
-          GlobalCupertinoLocalizations.delegate,  // ← ADDED
-          GlobalWidgetsLocalizations.delegate,    // ← ADDED
-          FlutterQuillLocalizations.delegate,     // ← ADDED (fixes Quill crash)
+          GlobalMaterialLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          FlutterQuillLocalizations.delegate,
         ],
-
         supportedLocales: LocaleProvider.supportedLocales,
         home: AuthenticationWrapper(logger: widget.logger),
       ),
@@ -226,7 +377,7 @@ class _AlmaWorksAppState extends State<AlmaWorksApp> {
   }
 }
 
-// Authentication wrapper to handle persistent login
+// ─── Authentication wrapper ───────────────────────────────────────────────────
 class AuthenticationWrapper extends StatefulWidget {
   final Logger logger;
 
@@ -257,7 +408,6 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
 
       if (isLoggedIn) {
         widget.logger.i('✅ User is logged in, fetching user data...');
-
         final userData = await _authService.getUserData();
 
         if (userData != null) {
@@ -267,7 +417,6 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
             _role = userData['role'] ?? 'Client';
             _isLoading = false;
           });
-
           widget.logger.i('✅ User data loaded: $_username ($_role)');
         } else {
           widget.logger.w('⚠️ User data not found, redirecting to login');
@@ -329,10 +478,7 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
 
     if (_isLoggedIn) {
       widget.logger.i('🎯 Routing to WelcomeScreen for $_username');
-      return WelcomeScreen(
-        username: _username,
-        initialRole: _role,
-      );
+      return WelcomeScreen(username: _username, initialRole: _role);
     } else {
       widget.logger.i('🎯 Routing to LoginScreen');
       return const LoginScreen();
@@ -340,6 +486,7 @@ class _AuthenticationWrapperState extends State<AuthenticationWrapper> {
   }
 }
 
+// ─── Error fallback app ───────────────────────────────────────────────────────
 class ErrorApp extends StatelessWidget {
   final String error;
 
@@ -357,7 +504,8 @@ class ErrorApp extends StatelessWidget {
               const SizedBox(height: 16),
               const Text(
                 'Failed to initialize AlmaWorks',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                style:
+                    TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               Text(

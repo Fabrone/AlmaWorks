@@ -22,6 +22,8 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true">
+
+        <!-- FileProvider for sharing files (existing) -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -31,7 +33,8 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-        <!-- Awesome Notifications Receiver -->
+
+        <!-- Awesome Notifications Receiver (existing) -->
         <receiver 
             android:name="me.carda.awesome_notifications.core.broadcasters.receivers.AwesomeNotificationsBroadcastReceiver"
             android:exported="true"
@@ -44,6 +47,41 @@
             </intent-filter>
         </receiver>
 
+        <!-- ─────────────────────────────────────────────────────────────────
+             FCM (Firebase Cloud Messaging) — required for Communication push
+             ───────────────────────────────────────────────────────────────── -->
+
+        <!-- FCM background message handling service.
+             FlutterFirebaseMessagingService listens for messages when the
+             app is in the background or terminated. The FOREGROUND_ONLY
+             permission is NOT set so it can receive background messages.  -->
+        <service
+            android:name="io.flutter.plugins.firebase.messaging.FlutterFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Default FCM notification channel.
+             Must match the channelKey registered in main.dart →
+             AwesomeNotifications (communication_channel).
+             This ensures background FCM messages land in the correct
+             Awesome Notifications channel rather than an auto-generated one. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="communication_channel" />
+
+        <!-- Default notification icon used by FCM when no icon is specified
+             in the server payload. Ensures correct branding on the lock
+             screen and status bar. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+
+        <!-- ─────────────────────────────────────────────────────────────────
+             Main Activity (existing, untouched except notification tap filter)
+             ───────────────────────────────────────────────────────────────── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -53,34 +91,51 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
-            <!-- Specifies an Android theme to apply to this Activity as soon as
-                 the Android process has started. This theme is visible to the user
-                 while the Flutter UI initializes. After that, this theme continues
-                 to determine the Window background behind the Flutter UI. -->
+
             <meta-data
               android:name="io.flutter.embedding.android.NormalTheme"
               android:resource="@style/NormalTheme"
               />
+
+            <!-- App launcher intent (existing) -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+
+            <!-- Notification tap intent filter.
+                 Required so that tapping an FCM or Awesome Notification from
+                 the system tray re-opens the app instead of creating a new
+                 task. Applies to both the existing schedule/client-request
+                 notifications and the new communication notifications. -->
+            <intent-filter>
+                <action android:name="FLUTTER_NOTIFICATION_CLICK" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+
+        <!-- Flutter embedding version marker (existing, do not remove) -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-    </application>
-    <!-- Required to query activities that can process text, see:
-         https://developer.android.com/training/package-visibility and
-         https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
 
-         In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    </application>
+
+    <!-- Required to query activities that can process text (existing) -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- Required for url_launcher (attachment download) to find a
+             browser or file handler when opening attachment URLs. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
         </intent>
     </queries>
 </manifest>

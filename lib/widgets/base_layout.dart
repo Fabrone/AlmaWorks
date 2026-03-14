@@ -1,5 +1,6 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/rbacsystem/client_request_service.dart';
+import 'package:almaworks/screens/communication/communication_screen.dart'; // ← ADDED
 import 'package:almaworks/screens/financial_screen.dart';
 import 'package:almaworks/screens/photo_gallery_screen.dart';
 import 'package:almaworks/screens/photos_screen.dart';
@@ -231,6 +232,7 @@ class _BaseLayoutState extends State<BaseLayout> {
           child: ListView(
             padding: EdgeInsets.zero,
             children: [
+              // ── Switch Project ────────────────────────────────────────────
               ListTile(
                 leading: const Icon(Icons.swap_horiz),
                 title: Text(
@@ -256,6 +258,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                   );
                 },
               ),
+
+              // ── Overview ──────────────────────────────────────────────────
               ListTile(
                 leading: const Icon(Icons.dashboard),
                 title: Text('Overview', style: GoogleFonts.poppins()),
@@ -303,6 +307,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                   }
                 },
               ),
+
+              // ── Documents ─────────────────────────────────────────────────
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.description,
@@ -315,6 +321,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                   logger: widget.logger,
                 ),
               ),
+
+              // ── Drawings ──────────────────────────────────────────────────
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.architecture,
@@ -327,6 +335,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                   logger: widget.logger,
                 ),
               ),
+
+              // ── Schedule ──────────────────────────────────────────────────
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.schedule,
@@ -339,6 +349,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                   logger: widget.logger,
                 ),
               ),
+
+              // ── Quality & Safety ──────────────────────────────────────────
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.shield_sharp,
@@ -351,6 +363,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                   logger: widget.logger,
                 ),
               ),
+
+              // ── Reports (Admin / MainAdmin only) ──────────────────────────
               if (!isClient)
                 _buildProtectedMenuItem(
                   context: context,
@@ -364,7 +378,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                     logger: widget.logger,
                   ),
                 ),
-              // ── Photo Gallery: Admins / MainAdmins only ─────────────────
+
+              // ── Photo Gallery (Admin / MainAdmin only) ────────────────────
               if (!isClient)
                 _buildProtectedMenuItem(
                   context: context,
@@ -378,8 +393,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                     logger: widget.logger,
                   ),
                 ),
-              // ── Photos: Clients only ──────────────────────────────────────
-              // Clients see the curated Photos collection, not the raw gallery.
+
+              // ── Photos (Client only) ──────────────────────────────────────
               if (isClient)
                 _buildProtectedMenuItem(
                   context: context,
@@ -393,6 +408,8 @@ class _BaseLayoutState extends State<BaseLayout> {
                     logger: widget.logger,
                   ),
                 ),
+
+              // ── Financials ────────────────────────────────────────────────
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.account_balance,
@@ -401,6 +418,24 @@ class _BaseLayoutState extends State<BaseLayout> {
                 isMobile: isMobile,
                 isClient: isClient,
                 onNavigate: () => FinancialScreen(
+                  project: widget.project!,
+                  logger: widget.logger,
+                ),
+              ),
+
+              // ── Communication (all roles) ─────────────────────────────────
+              // Communication is intentionally available to ALL roles —
+              // Clients need to message their Admins and vice versa.
+              // The CommunicationService enforces project-scoped filtering,
+              // so no additional role guard is needed here.
+              _buildProtectedMenuItem(
+                context: context,
+                icon: Icons.mail_outline_rounded,
+                title: 'Communication',
+                selectedItem: 'Communication',
+                isMobile: isMobile,
+                isClient: isClient,
+                onNavigate: () => CommunicationScreen(
                   project: widget.project!,
                   logger: widget.logger,
                 ),
