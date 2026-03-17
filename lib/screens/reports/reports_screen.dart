@@ -463,16 +463,36 @@ class _ReportsScreenState extends State<ReportsScreen>
   /// Builds a list tile for a form-filled report (Daily / Weekly / Monthly).
   Widget _buildFormReportItem(
       String docId, Map<String, dynamic> data, String type) {
-    // Derive a human-readable name from savedAt timestamp
-    final savedAt = data['savedAt'] != null
+    // ── Derive the bold title from the date filled in the form ──
+    // Every form report stores the user-selected date in the 'date'
+    // Timestamp field (set in DailyReportData.toMap / _buildReportData).
+    // Using this means both old and new records always show the correct
+    // work day in the title, regardless of what is stored in 'name'.
+    final formDateRaw = data['date'];
+    final DateTime? formDate = formDateRaw is Timestamp
+        ? formDateRaw.toDate()
+        : null;
+
+    // savedAt is always needed for the "Saved:" subtitle line.
+    final DateTime savedAt = data['savedAt'] != null
         ? (data['savedAt'] as Timestamp).toDate()
         : (data['uploadedAt'] != null
             ? (data['uploadedAt'] as Timestamp).toDate()
             : DateTime.now());
-    final storedName = data['name'] as String?;
-    final displayName = storedName != null && storedName.isNotEmpty
-        ? storedName
-        : '$type Report – ${DateFormat('dd MMM yyyy, hh:mm a').format(savedAt)}';
+
+    final String displayName;
+    if (formDate != null) {
+      // Preferred path: title built from the actual form date field.
+      // Applies to every record — old and new — so no database edits needed.
+      displayName = '$type Report – ${DateFormat('dd MMM yyyy').format(formDate)}';
+    } else {
+      // Fallback for any legacy doc that somehow lacks a 'date' field:
+      // use the stored name, or derive from savedAt as a last resort.
+      final storedName = data['name'] as String?;
+      displayName = storedName != null && storedName.isNotEmpty
+          ? storedName
+          : '$type Report – ${DateFormat('dd MMM yyyy, hh:mm a').format(savedAt)}';
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),

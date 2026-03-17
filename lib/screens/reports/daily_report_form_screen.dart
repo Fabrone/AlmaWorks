@@ -537,8 +537,10 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       final map = report.toMap();
       if (widget.existingReport == null) {
         widget.logger.i('📋 DailyForm: _saveReport: creating new Firestore doc');
+        // Use the date filled in the form (not the save timestamp) as the
+        // human-readable document title shown in the reports list.
         final readableName =
-            'Daily Report – ${DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.now())}';
+            'Daily Report – ${DateFormat('dd MMM yyyy').format(_date)}';
         await FirebaseFirestore.instance
             .collection('Reports')
             .doc(_reportId)
