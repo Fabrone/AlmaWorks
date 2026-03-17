@@ -36,7 +36,7 @@ class DailyReportData {
 
   // Rich-text sections stored as Quill Delta JSON strings
   String visitorsJson;
-  String subContractor;
+  List<String> subContractors;
   String personnelVehiclesJson;
   String activitiesJson;
   String remarksJson;
@@ -57,7 +57,7 @@ class DailyReportData {
     this.weather = '',
     this.building = '',
     this.visitorsJson = '',
-    this.subContractor = '',
+    this.subContractors = const [],
     this.personnelVehiclesJson = '',
     this.activitiesJson = '',
     this.remarksJson = '',
@@ -81,7 +81,7 @@ class DailyReportData {
         'weather': weather,
         'building': building,
         'visitorsJson': visitorsJson,
-        'subContractor': subContractor,
+        'subContractors': subContractors,
         'personnelVehiclesJson': personnelVehiclesJson,
         'activitiesJson': activitiesJson,
         'remarksJson': remarksJson,
@@ -108,7 +108,13 @@ class DailyReportData {
         weather: m['weather'] ?? '',
         building: m['building'] ?? '',
         visitorsJson: m['visitorsJson'] ?? '',
-        subContractor: m['subContractor'] ?? '',
+        subContractors: m['subContractors'] != null
+            ? List<String>.from(m['subContractors'])
+            // Backward-compat: old docs stored a single string in 'subContractor'
+            : (m['subContractor'] != null &&
+                    (m['subContractor'] as String).isNotEmpty
+                ? [m['subContractor'] as String]
+                : []),
         personnelVehiclesJson: m['personnelVehiclesJson'] ?? '',
         activitiesJson: m['activitiesJson'] ?? '',
         remarksJson: m['remarksJson'] ?? '',
@@ -160,7 +166,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
   TimeOfDay? _startTime;
   TimeOfDay? _stopTime;
   String _weather = '';
-  String _subContractor = '';
+  final List<String> _selectedSubContractors = [];
   final List<Uint8List> _localImages = [];
   final List<String> _savedImageUrls = [];
   bool _isSaving = false;
@@ -239,7 +245,9 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     _startTime = r.startTime;
     _stopTime = r.stopTime;
     _weather = r.weather;
-    _subContractor = r.subContractor;
+    _selectedSubContractors
+      ..clear()
+      ..addAll(r.subContractors);
     _savedImageUrls.addAll(r.imageUrls);
     widget.logger.i('📋 DailyForm: _loadFromExisting: basic fields loaded. imageUrls.count=${r.imageUrls.length}');
 
@@ -297,7 +305,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             ? '${_stopTime!.hour}:${_stopTime!.minute}'
             : null,
         'weather': _weather,
-        'subContractor': _subContractor,
+        'subContractors': _selectedSubContractors,
         'visitorsJson': jsonEncode(_visitorsCtrl.document.toDelta().toJson()),
         'personnelVehiclesJson':
             jsonEncode(_personnelCtrl.document.toDelta().toJson()),
@@ -331,7 +339,15 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
         _startTime = _parseTime(data['startTime']);
         _stopTime = _parseTime(data['stopTime']);
         _weather = data['weather'] ?? '';
-        _subContractor = data['subContractor'] ?? '';
+        // Restore list — supports both old single-string and new list format
+        _selectedSubContractors.clear();
+        if (data['subContractors'] != null) {
+          _selectedSubContractors.addAll(
+              List<String>.from(data['subContractors']));
+        } else if (data['subContractor'] != null &&
+            (data['subContractor'] as String).isNotEmpty) {
+          _selectedSubContractors.add(data['subContractor'] as String);
+        }
         _savedImageUrls.clear();
         _savedImageUrls.addAll(List<String>.from(data['imageUrls'] ?? []));
       });
@@ -500,7 +516,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
       weather: _weather,
       building: _buildingController.text.trim(),
       visitorsJson: jsonEncode(_visitorsCtrl.document.toDelta().toJson()),
-      subContractor: _subContractor,
+      subContractors: List<String>.from(_selectedSubContractors),
       personnelVehiclesJson:
           jsonEncode(_personnelCtrl.document.toDelta().toJson()),
       activitiesJson: jsonEncode(_activitiesCtrl.document.toDelta().toJson()),
@@ -1010,11 +1026,50 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
         ];
       }
 
-      // ── Plain-text section (sub-contractor) ──────────────────
-      List<pw.Widget> plainSectionWidgets(String label, String value) {
-        final List<pw.Widget> body = value.isEmpty
-            ? [pw.SizedBox(height: 60)]
-            : [pw.Text(value, style: fieldValueStyle)];
+      // ── Multi-row sub-contractor section (one row per entry) ──
+      List<pw.Widget> subContractorSectionWidgets(
+          String label, List<String> contractors) {
+        final List<pw.Widget> rows;
+        if (contractors.isEmpty) {
+          rows = [pw.SizedBox(height: 60)];
+        } else {
+          rows = contractors.asMap().entries.map((entry) {
+            final idx  = entry.key + 1;
+            final name = entry.value;
+            return pw.Container(
+              width: double.infinity,
+              decoration: pw.BoxDecoration(
+                color: idx.isEven
+                    ? PdfColor.fromHex('#F5F7FA')
+                    : PdfColors.white,
+                border: const pw.Border(
+                  bottom: pw.BorderSide(
+                      color: PdfColors.blueGrey200, width: 0.4),
+                ),
+              ),
+              padding: const pw.EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 5),
+              child: pw.Row(
+                children: [
+                  pw.Container(
+                    width: 20,
+                    child: pw.Text(
+                      '$idx.',
+                      style: pw.TextStyle(
+                        font: pw.Font.helveticaBold(),
+                        fontSize: 8.5,
+                        color: navyColor,
+                      ),
+                    ),
+                  ),
+                  pw.Expanded(
+                    child: pw.Text(name, style: fieldValueStyle),
+                  ),
+                ],
+              ),
+            );
+          }).toList();
+        }
         return [
           sectionBar(label),
           pw.Container(
@@ -1022,10 +1077,9 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             decoration: pw.BoxDecoration(
                 border: pw.Border.all(
                     color: PdfColors.blueGrey300, width: 0.5)),
-            padding: const pw.EdgeInsets.fromLTRB(8, 6, 8, 8),
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: body,
+              children: rows,
             ),
           ),
           pw.SizedBox(height: 6),
@@ -1184,8 +1238,8 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
 
             // ══ CONTENT SECTIONS ═════════════════════════════════
             ...richSectionWidgets('MAIN CONTRACTOR/VISITORS', _visitorsCtrl),
-            ...plainSectionWidgets(
-                'SUB-CONTRACTOR', report.subContractor),
+            ...subContractorSectionWidgets(
+                'SUB-CONTRACTOR', report.subContractors),
             ...richSectionWidgets(
                 'PERSONNEL AND VEHICLES', _personnelCtrl),
             ...richSectionWidgets('ACTIVITIES', _activitiesCtrl),
@@ -1933,24 +1987,115 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
     }
   }
 
-  // ── Sub-contractor section ────────────────────────────────────
+  // ── Sub-contractor section (multi-select) ─────────────────────
   Widget _buildSubContractorSection(double aw) {
-    widget.logger.d('📋 DailyForm: _buildSubContractorSection → aw=$aw  names=${_subcontractorNames.length}');
-    final double titleFs = (aw * 0.030).clamp(10.0, 14.0);
-    final double valueFs = (aw * 0.032).clamp(11.0, 14.0);
-    final double radius  = aw * 0.022;
-    final double padH    = aw * 0.035;
-    final double padV    = aw * 0.025;
+    widget.logger.d(
+        '📋 DailyForm: _buildSubContractorSection → aw=$aw  '
+        'names=${_subcontractorNames.length}  '
+        'selected=${_selectedSubContractors.length}');
+
+    final double titleFs  = (aw * 0.030).clamp(10.0, 14.0);
+    final double valueFs  = (aw * 0.032).clamp(11.0, 14.0);
+    final double labelFs  = (aw * 0.026).clamp(9.5, 12.0);
+    final double radius   = aw * 0.022;
+    final double padH     = aw * 0.035;
+    final double padV     = aw * 0.025;
+
+    // Names still available to select (not yet chosen)
+    final available = _subcontractorNames
+        .where((n) => !_selectedSubContractors.contains(n))
+        .toList();
+
+    // Whether the dropdown should even show
+    final bool canAddMore = !_isReadOnly && available.isNotEmpty;
+
+    // ── Pre-build selected rows to avoid DDC web spread crash ──
+    // Flutter Web (DDC) cannot reliably spread List.generate(...)
+    // inline inside a children:[...] array; building the list
+    // eagerly beforehand is the safe cross-platform pattern.
+    final List<Widget> selectedRows = <Widget>[];
+    for (int i = 0; i < _selectedSubContractors.length; i++) {
+      final String name = _selectedSubContractors[i];
+      final int    idx  = i; // capture for closure
+      selectedRows.add(
+        Container(
+          margin: const EdgeInsets.only(bottom: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF0F4FA),
+            borderRadius: BorderRadius.circular(aw * 0.014),
+            border: Border.all(color: _fieldBorder, width: 0.8),
+          ),
+          child: Row(
+            children: [
+              // Index badge
+              Container(
+                width: 32,
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: _navy.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.only(
+                    topLeft:     Radius.circular(aw * 0.014),
+                    bottomLeft:  Radius.circular(aw * 0.014),
+                  ),
+                ),
+                child: Text(
+                  '${idx + 1}',
+                  style: GoogleFonts.poppins(
+                      fontSize: labelFs,
+                      fontWeight: FontWeight.w700,
+                      color: _navy),
+                ),
+              ),
+              const SizedBox(width: 10),
+              // Name
+              Expanded(
+                child: Text(
+                  name,
+                  style: GoogleFonts.poppins(
+                      fontSize: valueFs,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black87),
+                ),
+              ),
+              // Remove button — edit mode only
+              if (!_isReadOnly)
+                IconButton(
+                  onPressed: () {
+                    widget.logger.i(
+                        '📋 DailyForm: subContractor removed → "$name"');
+                    setState(() => _selectedSubContractors.removeAt(idx));
+                    _saveDraftToCache();
+                  },
+                  icon: const Icon(
+                      Icons.remove_circle_outline_rounded, size: 18),
+                  color: Colors.red[400],
+                  tooltip: 'Remove',
+                  padding: const EdgeInsets.all(8),
+                  constraints: const BoxConstraints(),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(radius),
         border: Border.all(color: _fieldBorder, width: 1),
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 4,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── Navy header bar ─────────────────────────────────
           Container(
             width: double.infinity,
             padding: EdgeInsets.symmetric(horizontal: padH, vertical: padV),
@@ -1961,64 +2106,165 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
                 topRight: Radius.circular(radius),
               ),
             ),
-            child: Text('SUB-CONTRACTOR',
-                style: GoogleFonts.poppins(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w700,
-                    fontSize: titleFs,
-                    letterSpacing: 0.8)),
+            child: Row(
+              children: [
+                Text('SUB-CONTRACTOR',
+                    style: GoogleFonts.poppins(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                        fontSize: titleFs,
+                        letterSpacing: 0.8)),
+                const Spacer(),
+                if (_selectedSubContractors.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${_selectedSubContractors.length} selected',
+                      style: GoogleFonts.poppins(
+                          color: Colors.white,
+                          fontSize: titleFs * 0.82,
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ),
+              ],
+            ),
           ),
+
           Padding(
-            padding: EdgeInsets.symmetric(
-                horizontal: padH, vertical: aw * 0.030),
-            child: _subcontractorNames.isEmpty
-                ? Text(
+            padding: EdgeInsets.fromLTRB(padH, padV, padH, padV),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── No sub-contractors on this project at all ──
+                if (_subcontractorNames.isEmpty)
+                  Text(
                     'No sub-contractors added to this project.',
                     style: GoogleFonts.poppins(
                         color: Colors.grey[500], fontSize: valueFs),
                   )
-                : DropdownButtonFormField<String>(
-                    key: ValueKey(_subContractor),
-                    initialValue:
-                        _subContractor.isEmpty ? null : _subContractor,
-                    hint: Text('Select sub-contractor…',
+                else ...[
+
+                  // ── Dropdown — edit mode, un-selected names only ──
+                  if (canAddMore) ...[
+                    Text(
+                      'ADD SUB-CONTRACTOR',
+                      style: GoogleFonts.poppins(
+                          fontSize: labelFs,
+                          fontWeight: FontWeight.w600,
+                          color: _navy.withValues(alpha: 0.7),
+                          letterSpacing: 0.4),
+                    ),
+                    const SizedBox(height: 6),
+                    DropdownButtonFormField<String>(
+                      // key forces rebuild → hint reappears after each pick
+                      key: ValueKey(_selectedSubContractors.length),
+                      initialValue: null,
+                      hint: Text('Select sub-contractor…',
+                          style: GoogleFonts.poppins(
+                              color: Colors.grey[400], fontSize: valueFs)),
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        contentPadding: EdgeInsets.symmetric(
+                            horizontal: aw * 0.030,
+                            vertical: aw * 0.025),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(aw * 0.018),
+                          borderSide:
+                              BorderSide(color: _fieldBorder, width: 1),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(aw * 0.018),
+                          borderSide:
+                              BorderSide(color: _fieldBorder, width: 1),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(aw * 0.018),
+                          borderSide:
+                              const BorderSide(color: _navy, width: 1.5),
+                        ),
+                      ),
+                      style: GoogleFonts.poppins(
+                          fontSize: valueFs, color: Colors.black87),
+                      items: available
+                          .map((n) => DropdownMenuItem(
+                              value: n,
+                              child: Text(n,
+                                  style: GoogleFonts.poppins(
+                                      fontSize: valueFs))))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        widget.logger.i(
+                            '📋 DailyForm: subContractor added → "$v"');
+                        setState(() => _selectedSubContractors.add(v));
+                        _saveDraftToCache();
+                      },
+                    ),
+                    if (_selectedSubContractors.isNotEmpty)
+                      Padding(
+                        padding: EdgeInsets.symmetric(vertical: padV * 0.8),
+                        child: Divider(
+                            color: _fieldBorder,
+                            thickness: 0.8,
+                            height: 1),
+                      ),
+                  ],
+
+                  // ── Selected list (uses pre-built rows) ────────
+                  if (_selectedSubContractors.isNotEmpty) ...[
+                    if (!canAddMore && !_isReadOnly)
+                      Padding(
+                        padding: EdgeInsets.only(bottom: padV * 0.6),
+                        child: Text(
+                          'All sub-contractors have been selected.',
+                          style: GoogleFonts.poppins(
+                              color: Colors.green[700],
+                              fontSize: labelFs,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    if (!_isReadOnly || _selectedSubContractors.isNotEmpty)
+                      Text(
+                        _isReadOnly
+                            ? 'SUB-CONTRACTORS'
+                            : 'SELECTED SUB-CONTRACTORS',
                         style: GoogleFonts.poppins(
-                            color: Colors.grey[400], fontSize: valueFs)),
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      contentPadding: EdgeInsets.symmetric(
-                          horizontal: aw * 0.030, vertical: aw * 0.025),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(aw * 0.018),
-                        borderSide:
-                            BorderSide(color: _fieldBorder, width: 1),
+                            fontSize: labelFs,
+                            fontWeight: FontWeight.w600,
+                            color: _navy.withValues(alpha: 0.7),
+                            letterSpacing: 0.4),
                       ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(aw * 0.018),
-                        borderSide:
-                            BorderSide(color: _fieldBorder, width: 1),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(aw * 0.018),
-                        borderSide:
-                            const BorderSide(color: _navy, width: 1.5),
+                    const SizedBox(height: 8),
+                    // Rows were pre-built above — safe on Flutter Web
+                    ...selectedRows,
+                  ],
+
+                  // ── Empty state (edit mode, nothing selected) ──
+                  if (_selectedSubContractors.isEmpty && !_isReadOnly)
+                    Padding(
+                      padding: EdgeInsets.only(top: padV * 0.5),
+                      child: Text(
+                        'No sub-contractor selected yet.',
+                        style: GoogleFonts.poppins(
+                            color: Colors.grey[400], fontSize: valueFs),
                       ),
                     ),
-                    style: GoogleFonts.poppins(
-                        fontSize: valueFs, color: Colors.black87),
-                    items: _subcontractorNames
-                        .map((n) => DropdownMenuItem(
-                            value: n,
-                            child: Text(n,
-                                style:
-                                    GoogleFonts.poppins(fontSize: valueFs))))
-                        .toList(),
-                    onChanged: _isReadOnly ? null : (v) {
-                      widget.logger.i('📋 DailyForm: subContractor selected → "$v"');
-                      setState(() => _subContractor = v ?? '');
-                      _saveDraftToCache();
-                    },
-                  ),
+
+                  // ── Read-only empty state ──────────────────────
+                  if (_selectedSubContractors.isEmpty && _isReadOnly)
+                    Text(
+                      '—',
+                      style: GoogleFonts.poppins(
+                          color: Colors.grey[400], fontSize: valueFs),
+                    ),
+                ],
+              ],
+            ),
           ),
         ],
       ),
