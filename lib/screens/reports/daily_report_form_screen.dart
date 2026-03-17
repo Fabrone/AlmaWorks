@@ -1183,7 +1183,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
             pw.SizedBox(height: 8),
 
             // ══ CONTENT SECTIONS ═════════════════════════════════
-            ...richSectionWidgets('VISITORS', _visitorsCtrl),
+            ...richSectionWidgets('MAIN CONTRACTOR/VISITORS', _visitorsCtrl),
             ...plainSectionWidgets(
                 'SUB-CONTRACTOR', report.subContractor),
             ...richSectionWidgets(
@@ -1348,7 +1348,7 @@ class _DailyReportFormScreenState extends State<DailyReportFormScreen> {
 
                         // ── VISITORS ─────────────────────────────
                         _buildRichSection(
-                          title: 'VISITORS',
+                          title: 'MAIN CONTRACTOR/VISITORS',
                           fieldKey: 'visitors',
                           hint: 'Enter visitor names…',
                           controller: _visitorsCtrl,

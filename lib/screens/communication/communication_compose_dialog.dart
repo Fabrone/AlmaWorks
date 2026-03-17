@@ -6,13 +6,28 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:google_fonts/google_fonts.dart';
+import 'package:logger/logger.dart';
 import 'package:uuid/uuid.dart';
 
 import 'communication_models.dart';
 import 'communication_notification_service.dart';
 import 'communication_service.dart';
 
-// ─── Recipient chip field ─────────────────────────────────────────────────────
+// ─── Module-level logger (mirrors the pattern used in BaseLayout) ─────────────
+final _log = Logger(
+  printer: PrettyPrinter(
+    methodCount: 1,
+    errorMethodCount: 5,
+    lineLength: 100,
+    colors: true,
+    printEmojis: true,
+    dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart,
+  ),
+);
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RECIPIENT CHIP FIELD
+// ══════════════════════════════════════════════════════════════════════════════
 class _RecipientField extends StatefulWidget {
   final String label;
   final List<MessageParticipant> selected;
@@ -33,26 +48,65 @@ class _RecipientField extends StatefulWidget {
 class _RecipientFieldState extends State<_RecipientField> {
   final TextEditingController _ctrl = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  // _showDropdown removed — overlay presence itself tracks visibility
   List<MessageParticipant> _filtered = [];
   OverlayEntry? _overlayEntry;
   final LayerLink _layerLink = LayerLink();
 
+  // ── Guard flag ──────────────────────────────────────────────────────────────
+  // onTapDown on an overlay item sets this to true BEFORE the TextField's
+  // focus-lost event fires. The focus listener checks this flag and skips
+  // _hideOverlay() while a selection gesture is in progress. Without this
+  // guard the overlay is removed before onTap can deliver the selection.
+  bool _isSelectingFromOverlay = false;
+
   @override
   void initState() {
     super.initState();
+    _log.i('📬 RecipientField[${widget.label}]: initState');
     _ctrl.addListener(_onTextChanged);
-    _focusNode.addListener(() {
-      if (!_focusNode.hasFocus) _hideOverlay();
-    });
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  void _onFocusChanged() {
+    _log.d(
+      '🔍 RecipientField[${widget.label}]: '
+      'hasFocus=${_focusNode.hasFocus} '
+      'isSelecting=$_isSelectingFromOverlay',
+    );
+    if (!_focusNode.hasFocus) {
+      // Flutter delivers focus-loss events synchronously, several milliseconds
+      // BEFORE the gesture recognizer on the overlay item fires onTapDown.
+      // Hiding immediately tears the overlay down before the tap can land,
+      // which cancels the gesture. Deferring by 250 ms gives onTapDown and
+      // onTap time to run first; the guard flag is then checked here to
+      // decide whether to actually dismiss the overlay.
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (!mounted) return;
+        if (!_isSelectingFromOverlay) {
+          _log.d('🔍 RecipientField[${widget.label}]: focus lost → hiding overlay');
+          _hideOverlay();
+        } else {
+          _log.d(
+            '🔍 RecipientField[${widget.label}]: focus lost but selection '
+            'in progress → overlay kept alive',
+          );
+        }
+      });
+    }
   }
 
   void _onTextChanged() {
     final query = _ctrl.text.trim().toLowerCase();
+    _log.d(
+      '⌨️ RecipientField[${widget.label}]: query="$query" '
+      'suggestions=${widget.suggestions.length}',
+    );
+
     if (query.isEmpty) {
       _hideOverlay();
       return;
     }
+
     final selectedUids = widget.selected.map((p) => p.uid).toSet();
     _filtered = widget.suggestions
         .where((p) =>
@@ -61,6 +115,12 @@ class _RecipientFieldState extends State<_RecipientField> {
                 p.username.toLowerCase().contains(query)))
         .take(8)
         .toList();
+
+    _log.i(
+      '🔎 RecipientField[${widget.label}]: '
+      '${_filtered.length} match(es) for "$query" → '
+      '${_filtered.map((p) => p.email).join(', ')}',
+    );
 
     if (_filtered.isEmpty) {
       _hideOverlay();
@@ -73,11 +133,18 @@ class _RecipientFieldState extends State<_RecipientField> {
     _hideOverlay();
     _overlayEntry = _buildOverlay();
     Overlay.of(context).insert(_overlayEntry!);
+    _log.d(
+      '📋 RecipientField[${widget.label}]: '
+      'overlay shown (${_filtered.length} items)',
+    );
   }
 
   void _hideOverlay() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
+    if (_overlayEntry != null) {
+      _overlayEntry!.remove();
+      _overlayEntry = null;
+      _log.d('📋 RecipientField[${widget.label}]: overlay hidden');
+    }
   }
 
   OverlayEntry _buildOverlay() {
@@ -102,25 +169,54 @@ class _RecipientFieldState extends State<_RecipientField> {
                 itemCount: _filtered.length,
                 itemBuilder: (_, i) {
                   final p = _filtered[i];
-                  return ListTile(
-                    dense: true,
-                    leading: CircleAvatar(
-                      radius: 16,
-                      backgroundColor: const Color(0xFF0A2E5A),
-                      child: Text(
-                        p.username.isNotEmpty
-                            ? p.username[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 13),
+                  return GestureDetector(
+                    // onTapDown fires BEFORE TextField loses focus.
+                    // Raising the flag here ensures _onFocusChanged()
+                    // does NOT call _hideOverlay().
+                    onTapDown: (_) {
+                      _log.d(
+                        '👆 RecipientField[${widget.label}]: '
+                        'onTapDown "${p.email}" — guard raised',
+                      );
+                      _isSelectingFromOverlay = true;
+                    },
+                    // onTap fires after focus changes; overlay is still
+                    // alive because the guard was set in onTapDown.
+                    onTap: () {
+                      _log.i(
+                        '✅ RecipientField[${widget.label}]: '
+                        'selected "${p.email}" uid=${p.uid}',
+                      );
+                      _isSelectingFromOverlay = false;
+                      _selectParticipant(p);
+                    },
+                    // Reset guard if gesture is interrupted (scroll, etc.)
+                    onTapCancel: () {
+                      _log.d(
+                        '⚠️ RecipientField[${widget.label}]: '
+                        'tap cancelled on "${p.email}" — guard reset',
+                      );
+                      _isSelectingFromOverlay = false;
+                    },
+                    child: ListTile(
+                      dense: true,
+                      leading: CircleAvatar(
+                        radius: 16,
+                        backgroundColor: const Color(0xFF0A2E5A),
+                        child: Text(
+                          p.username.isNotEmpty
+                              ? p.username[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 13),
+                        ),
                       ),
+                      title: Text(p.username,
+                          style: GoogleFonts.poppins(fontSize: 13)),
+                      subtitle: Text(p.email,
+                          style: GoogleFonts.poppins(
+                              fontSize: 11, color: Colors.grey[600])),
                     ),
-                    title: Text(p.username,
-                        style: GoogleFonts.poppins(fontSize: 13)),
-                    subtitle: Text(p.email,
-                        style: GoogleFonts.poppins(
-                            fontSize: 11, color: Colors.grey[600])),
-                    onTap: () => _selectParticipant(p),
                   );
                 },
               ),
@@ -135,17 +231,29 @@ class _RecipientFieldState extends State<_RecipientField> {
     _hideOverlay();
     _ctrl.clear();
     final updated = [...widget.selected, p];
+    _log.i(
+      '📌 RecipientField[${widget.label}]: notifying parent — '
+      '${updated.length} recipient(s): '
+      '${updated.map((x) => x.email).join(', ')}',
+    );
     widget.onChanged(updated);
   }
 
   void _removeParticipant(MessageParticipant p) {
     final updated = widget.selected.where((x) => x.uid != p.uid).toList();
+    _log.i(
+      '🗑️ RecipientField[${widget.label}]: removed "${p.email}" — '
+      '${updated.length} remaining',
+    );
     widget.onChanged(updated);
   }
 
   @override
   void dispose() {
+    _log.i('📬 RecipientField[${widget.label}]: dispose');
     _hideOverlay();
+    _ctrl.removeListener(_onTextChanged);
+    _focusNode.removeListener(_onFocusChanged);
     _ctrl.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -158,8 +266,8 @@ class _RecipientFieldState extends State<_RecipientField> {
       child: Container(
         constraints: const BoxConstraints(minHeight: 48),
         decoration: BoxDecoration(
-          border: Border(
-              bottom: BorderSide(color: Colors.grey.shade300)),
+          border:
+              Border(bottom: BorderSide(color: Colors.grey.shade300)),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         child: Row(
@@ -186,10 +294,8 @@ class _RecipientFieldState extends State<_RecipientField> {
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   ...widget.selected.map((p) => Chip(
-                        label: Text(
-                          p.email,
-                          style: GoogleFonts.poppins(fontSize: 12),
-                        ),
+                        label: Text(p.email,
+                            style: GoogleFonts.poppins(fontSize: 12)),
                         backgroundColor: const Color(0xFF0A2E5A)
                             .withValues(alpha: 0.08),
                         deleteIcon: const Icon(Icons.close, size: 14),
@@ -197,8 +303,7 @@ class _RecipientFieldState extends State<_RecipientField> {
                         materialTapTargetSize:
                             MaterialTapTargetSize.shrinkWrap,
                         visualDensity: VisualDensity.compact,
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
                       )),
                   SizedBox(
                     width: 200,
@@ -229,14 +334,15 @@ class _RecipientFieldState extends State<_RecipientField> {
   }
 }
 
-// ─── Main Compose Dialog ───────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  COMPOSE DIALOG
+// ══════════════════════════════════════════════════════════════════════════════
 class CommunicationComposeDialog extends StatefulWidget {
   final String projectId;
   final CommunicationService service;
   final MessageParticipant currentUser;
   final List<MessageParticipant> projectUsers;
 
-  /// Pre-filled fields for Reply / Forward
   final List<MessageParticipant>? initialTo;
   final List<MessageParticipant>? initialCc;
   final String? initialSubject;
@@ -278,11 +384,8 @@ class _CommunicationComposeDialogState
 
   List<MessageParticipant> _toList = [];
   List<MessageParticipant> _ccList = [];
-
-  // _showCc removed — it was unused; _showCcField is the active flag
   bool _showCcField = false;
 
-  // final: the list itself is never reassigned, only its contents are read
   final List<MessageAttachment> _attachments = [];
   final List<_PendingAttachment> _pendingAttachments = [];
 
@@ -291,6 +394,7 @@ class _CommunicationComposeDialogState
   @override
   void initState() {
     super.initState();
+
     _toList = List<MessageParticipant>.from(widget.initialTo ?? []);
     _ccList = List<MessageParticipant>.from(widget.initialCc ?? []);
     _showCcField = _ccList.isNotEmpty;
@@ -299,7 +403,6 @@ class _CommunicationComposeDialogState
       _subjectCtrl.text = widget.initialSubject!;
     }
 
-    // Initialise Quill — attempt to decode a pre-filled bodyDelta
     if (widget.initialBodyDelta != null &&
         widget.initialBodyDelta!.isNotEmpty) {
       try {
@@ -319,11 +422,38 @@ class _CommunicationComposeDialogState
     } else {
       _quillCtrl = quill.QuillController.basic();
     }
+
+    _log.i(
+      '📝 ComposeDialog: initState — '
+      'type=${widget.messageType.value} '
+      'projectId=${widget.projectId} '
+      'projectUsers=${widget.projectUsers.length} '
+      'initialTo=${_toList.map((p) => p.email).join(', ')} '
+      'initialCc=${_ccList.map((p) => p.email).join(', ')}',
+    );
   }
 
-  // ─── Body serialisation ──────────────────────────────────────────────────
+  // ── Recipient callbacks ───────────────────────────────────────────────────────
+  void _onToChanged(List<MessageParticipant> updated) {
+    _log.i(
+      '📨 ComposeDialog: To updated — '
+      '${updated.length} recipient(s): '
+      '${updated.map((p) => p.email).join(', ')}',
+    );
+    setState(() => _toList = updated);
+    _log.d('📨 ComposeDialog: _toList after setState = ${_toList.length}');
+  }
 
-  /// Serialise the Quill document to a JSON array string for Firestore.
+  void _onCcChanged(List<MessageParticipant> updated) {
+    _log.i(
+      '📨 ComposeDialog: Cc updated — '
+      '${updated.length} recipient(s): '
+      '${updated.map((p) => p.email).join(', ')}',
+    );
+    setState(() => _ccList = updated);
+  }
+
+  // ── Serialisation ─────────────────────────────────────────────────────────────
   String _buildDeltaJson() {
     try {
       return jsonEncode(_quillCtrl.document.toDelta().toJson());
@@ -332,12 +462,11 @@ class _CommunicationComposeDialogState
     }
   }
 
-  String _buildPlainText() =>
-      _quillCtrl.document.toPlainText().trim();
+  String _buildPlainText() => _quillCtrl.document.toPlainText().trim();
 
-  // ─── Attachment picking ──────────────────────────────────────────────────
-
+  // ── Attachment picking ────────────────────────────────────────────────────────
   Future<void> _pickAttachment() async {
+    _log.i('📎 ComposeDialog: opening file picker');
     final result = await FilePicker.platform.pickFiles(
       allowMultiple: true,
       type: FileType.custom,
@@ -347,10 +476,17 @@ class _CommunicationComposeDialogState
       ],
       withData: true,
     );
-    if (result == null) return;
-
+    if (result == null) {
+      _log.i('📎 ComposeDialog: file picker cancelled');
+      return;
+    }
+    _log.i('📎 ComposeDialog: ${result.files.length} file(s) picked');
     for (final file in result.files) {
-      if (file.bytes == null) continue;
+      if (file.bytes == null) {
+        _log.w('📎 ComposeDialog: skipping "${file.name}" — no bytes');
+        continue;
+      }
+      _log.i('📎 ComposeDialog: queuing "${file.name}" (${file.bytes!.length} bytes)');
       setState(() {
         _pendingAttachments.add(_PendingAttachment(
           id: _uuid.v4(),
@@ -392,38 +528,60 @@ class _CommunicationComposeDialogState
     }
   }
 
-  // ─── Send ────────────────────────────────────────────────────────────────
-
+  // ── Send ──────────────────────────────────────────────────────────────────────
   Future<void> _send() async {
+    _log.i(
+      '🚀 ComposeDialog._send: called — '
+      '_toList=${_toList.length} '
+      'emails=${_toList.map((p) => p.email).join(', ')} '
+      'subject="${_subjectCtrl.text.trim()}" '
+      'pendingAttachments=${_pendingAttachments.length}',
+    );
+
     if (_toList.isEmpty) {
+      _log.w('🚀 ComposeDialog._send: BLOCKED — _toList is empty');
       _snack('Please add at least one recipient in the To field.');
       return;
     }
     if (_subjectCtrl.text.trim().isEmpty) {
+      _log.w('🚀 ComposeDialog._send: BLOCKED — subject is empty');
       _snack('Please enter a subject.');
       return;
     }
 
+    _log.i(
+      '🚀 ComposeDialog._send: validation passed — '
+      'proceeding to send to ${_toList.map((p) => p.email).join(', ')}',
+    );
     setState(() => _isSending = true);
 
     try {
-      // Upload pending attachments first
       final List<MessageAttachment> uploaded = [];
       for (final pending in _pendingAttachments) {
+        _log.i('⬆️ ComposeDialog: uploading "${pending.name}"');
         final att = await widget.service.uploadAttachment(
           bytes: pending.bytes,
           fileName: pending.name,
           mimeType: pending.mimeType,
           projectId: widget.projectId,
         );
-        if (att != null) uploaded.add(att);
+        if (att != null) {
+          uploaded.add(att);
+          _log.i('⬆️ ComposeDialog: "${pending.name}" → ${att.url}');
+        } else {
+          _log.w('⬆️ ComposeDialog: upload failed for "${pending.name}"');
+        }
       }
-      // Merge with any pre-existing attachments (e.g. forwarded)
       uploaded.addAll(_attachments);
 
       final bodyDelta = _buildDeltaJson();
       final bodyPlain = _buildPlainText();
+      final preview = bodyPlain.length > 80
+          ? '${bodyPlain.substring(0, 80)}…'
+          : bodyPlain;
+      _log.d('🚀 ComposeDialog._send: bodyPreview="$preview"');
 
+      _log.i('🚀 ComposeDialog._send: calling CommunicationService.sendMessage');
       final messageId = await widget.service.sendMessage(
         projectId: widget.projectId,
         from: widget.currentUser,
@@ -439,7 +597,7 @@ class _CommunicationComposeDialogState
       );
 
       if (messageId != null) {
-        // Enqueue push notifications for all recipients
+        _log.i('✅ ComposeDialog._send: Firestore write succeeded — id=$messageId');
         final msg = CommunicationMessage(
           id: messageId,
           projectId: widget.projectId,
@@ -459,29 +617,31 @@ class _CommunicationComposeDialogState
         );
         await CommunicationNotificationService()
             .enqueueNotificationsForMessage(msg);
+        _log.i('🔔 ComposeDialog._send: notifications enqueued');
 
         if (mounted) {
           Navigator.of(context).pop();
           widget.onSent?.call();
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:
-                Text('Message sent!', style: GoogleFonts.poppins()),
+            content: Text('Message sent!', style: GoogleFonts.poppins()),
             backgroundColor: const Color(0xFF0A2E5A),
           ));
         }
       } else {
+        _log.e('❌ ComposeDialog._send: sendMessage returned null — Firestore write may have failed');
         _snack('Failed to send. Please try again.');
       }
-    } catch (e) {
+    } catch (e, stack) {
+      _log.e('❌ ComposeDialog._send: exception', error: e, stackTrace: stack);
       _snack('Error: $e');
     } finally {
       if (mounted) setState(() => _isSending = false);
     }
   }
 
-  // ─── Save Draft ──────────────────────────────────────────────────────────
-
+  // ── Save Draft ────────────────────────────────────────────────────────────────
   Future<void> _saveDraftAndClose() async {
+    _log.i('💾 ComposeDialog: saving draft');
     final draft = DraftMessage(
       id: _uuid.v4(),
       projectId: widget.projectId,
@@ -493,39 +653,41 @@ class _CommunicationComposeDialogState
       savedAt: DateTime.now(),
     );
     await widget.service.saveDraft(draft);
+    _log.i('💾 ComposeDialog: draft saved id=${draft.id}');
     if (mounted) {
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content:
-            Text('Draft saved.', style: GoogleFonts.poppins()),
+        content: Text('Draft saved.', style: GoogleFonts.poppins()),
         backgroundColor: Colors.grey[700],
       ));
     }
   }
 
-  // ─── Discard ─────────────────────────────────────────────────────────────
-
+  // ── Discard ───────────────────────────────────────────────────────────────────
   void _discard() {
+    _log.i('🗑️ ComposeDialog: discard tapped');
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Discard message?', style: GoogleFonts.poppins()),
-        content: Text(
-          'This message will not be saved.',
-          style: GoogleFonts.poppins(),
-        ),
+        content:
+            Text('This message will not be saved.', style: GoogleFonts.poppins()),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              _log.i('🗑️ ComposeDialog: discard cancelled');
+              Navigator.pop(context);
+            },
             child: Text('Cancel', style: GoogleFonts.poppins()),
           ),
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // close confirmation
-              Navigator.pop(context); // close compose dialog
+              _log.i('🗑️ ComposeDialog: discard confirmed');
+              Navigator.pop(context);
+              Navigator.pop(context);
             },
-            child: Text('Discard',
-                style: GoogleFonts.poppins(color: Colors.red)),
+            child:
+                Text('Discard', style: GoogleFonts.poppins(color: Colors.red)),
           ),
         ],
       ),
@@ -533,12 +695,13 @@ class _CommunicationComposeDialogState
   }
 
   void _snack(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg, style: GoogleFonts.poppins())));
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg, style: GoogleFonts.poppins())));
   }
 
   @override
   void dispose() {
+    _log.i('📝 ComposeDialog: dispose');
     _subjectCtrl.dispose();
     _quillCtrl.dispose();
     _quillFocus.dispose();
@@ -546,8 +709,7 @@ class _CommunicationComposeDialogState
     super.dispose();
   }
 
-  // ─── Build ───────────────────────────────────────────────────────────────
-
+  // ── Build ─────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
@@ -556,8 +718,7 @@ class _CommunicationComposeDialogState
 
     return Dialog(
       backgroundColor: Colors.white,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       insetPadding: isMobile
           ? const EdgeInsets.all(8)
           : const EdgeInsets.symmetric(horizontal: 60, vertical: 40),
@@ -583,8 +744,7 @@ class _CommunicationComposeDialogState
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: const BoxDecoration(
         color: Color(0xFF0A2E5A),
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(12)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
       child: Row(
         children: [
@@ -592,15 +752,13 @@ class _CommunicationComposeDialogState
             child: Text(
               _composeTitle(),
               style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 15),
             ),
           ),
           IconButton(
-            icon:
-                const Icon(Icons.close, color: Colors.white, size: 20),
+            icon: const Icon(Icons.close, color: Colors.white, size: 20),
             onPressed: _discard,
             tooltip: 'Discard',
           ),
@@ -627,25 +785,23 @@ class _CommunicationComposeDialogState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── To ─────────────────────────────────────────────────────────
           _RecipientField(
             label: 'To',
             selected: _toList,
             suggestions: widget.projectUsers,
-            onChanged: (v) => setState(() => _toList = v),
+            onChanged: _onToChanged,
           ),
-
-          // ── Cc toggle / field ───────────────────────────────────────────
           if (!_showCcField)
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
-                onPressed: () => setState(() => _showCcField = true),
-                child: Text(
-                  'Cc',
-                  style: GoogleFonts.poppins(
-                      color: Colors.grey[600], fontSize: 13),
-                ),
+                onPressed: () {
+                  _log.i('📝 ComposeDialog: Cc field shown');
+                  setState(() => _showCcField = true);
+                },
+                child: Text('Cc',
+                    style: GoogleFonts.poppins(
+                        color: Colors.grey[600], fontSize: 13)),
               ),
             )
           else
@@ -653,28 +809,22 @@ class _CommunicationComposeDialogState
               label: 'Cc',
               selected: _ccList,
               suggestions: widget.projectUsers,
-              onChanged: (v) => setState(() => _ccList = v),
+              onChanged: _onCcChanged,
             ),
-
-          // ── Subject ────────────────────────────────────────────────────
           Container(
             decoration: BoxDecoration(
                 border: Border(
-                    bottom:
-                        BorderSide(color: Colors.grey.shade300))),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    bottom: BorderSide(color: Colors.grey.shade300))),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Row(
               children: [
                 SizedBox(
                   width: 60,
-                  child: Text(
-                    'Subject',
-                    style: GoogleFonts.poppins(
-                        fontSize: 13,
-                        color: Colors.grey[600],
-                        fontWeight: FontWeight.w500),
-                  ),
+                  child: Text('Subject',
+                      style: GoogleFonts.poppins(
+                          fontSize: 13,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500)),
                 ),
                 Expanded(
                   child: TextField(
@@ -694,18 +844,12 @@ class _CommunicationComposeDialogState
               ],
             ),
           ),
-
-          // ── Quill toolbar ──────────────────────────────────────────────
           Container(
             decoration: BoxDecoration(
                 border: Border(
-                    bottom:
-                        BorderSide(color: Colors.grey.shade200))),
+                    bottom: BorderSide(color: Colors.grey.shade200))),
             child: quill.QuillSimpleToolbar(
               controller: _quillCtrl,
-              // multiRowsToolbar removed — not a valid parameter in this
-              // version of flutter_quill. Toolbar rows are controlled by
-              // the available width automatically.
               config: const quill.QuillSimpleToolbarConfig(
                 showFontFamily: false,
                 showFontSize: false,
@@ -718,12 +862,10 @@ class _CommunicationComposeDialogState
               ),
             ),
           ),
-
-          // ── Quill editor ───────────────────────────────────────────────
           Container(
             constraints: const BoxConstraints(minHeight: 220),
-            padding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 12),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: quill.QuillEditor(
               controller: _quillCtrl,
               focusNode: _quillFocus,
@@ -746,10 +888,7 @@ class _CommunicationComposeDialogState
               ),
             ),
           ),
-
-          // ── Pending attachment chips ───────────────────────────────────
           if (_pendingAttachments.isNotEmpty) _buildAttachmentPreview(),
-
           const SizedBox(height: 8),
         ],
       ),
@@ -758,30 +897,25 @@ class _CommunicationComposeDialogState
 
   Widget _buildAttachmentPreview() {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
           color: Colors.grey[50],
-          border: Border(
-              top: BorderSide(color: Colors.grey.shade200))),
+          border: Border(top: BorderSide(color: Colors.grey.shade200))),
       child: Wrap(
         spacing: 8,
         runSpacing: 6,
         children: _pendingAttachments.map((pa) {
           return Chip(
-            avatar: Icon(
-              _iconForMime(pa.mimeType),
-              size: 16,
-              color: const Color(0xFF0A2E5A),
-            ),
-            label: Text(
-              pa.name,
-              style: GoogleFonts.poppins(fontSize: 11),
-              overflow: TextOverflow.ellipsis,
-            ),
+            avatar: Icon(_iconForMime(pa.mimeType),
+                size: 16, color: const Color(0xFF0A2E5A)),
+            label: Text(pa.name,
+                style: GoogleFonts.poppins(fontSize: 11),
+                overflow: TextOverflow.ellipsis),
             deleteIcon: const Icon(Icons.close, size: 14),
-            onDeleted: () =>
-                setState(() => _pendingAttachments.remove(pa)),
+            onDeleted: () {
+              _log.i('📎 ComposeDialog: removed attachment "${pa.name}"');
+              setState(() => _pendingAttachments.remove(pa));
+            },
             backgroundColor: Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(6),
@@ -807,17 +941,13 @@ class _CommunicationComposeDialogState
     return Icons.attach_file;
   }
 
-  // ─── Bottom toolbar ──────────────────────────────────────────────────────
   Widget _buildToolbar() {
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: Colors.grey.shade200)),
-      ),
+          border: Border(top: BorderSide(color: Colors.grey.shade200))),
       child: Row(
         children: [
-          // SEND
           ElevatedButton.icon(
             onPressed: _isSending ? null : _send,
             icon: _isSending
@@ -835,31 +965,24 @@ class _CommunicationComposeDialogState
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF0A2E5A),
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 20, vertical: 10),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8)),
             ),
           ),
           const SizedBox(width: 8),
-
-          // ATTACH
           _ToolbarAction(
             icon: Icons.attach_file,
             tooltip: 'Attach files',
             onTap: _pickAttachment,
           ),
-
           const Spacer(),
-
-          // SAVE DRAFT
           _ToolbarAction(
             icon: Icons.save_outlined,
             tooltip: 'Save draft',
             onTap: _saveDraftAndClose,
           ),
-
-          // DISCARD
           _ToolbarAction(
             icon: Icons.delete_outline,
             tooltip: 'Discard',
@@ -872,7 +995,9 @@ class _CommunicationComposeDialogState
   }
 }
 
-// ─── Toolbar icon button ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  TOOLBAR ICON BUTTON
+// ══════════════════════════════════════════════════════════════════════════════
 class _ToolbarAction extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -902,7 +1027,9 @@ class _ToolbarAction extends StatelessWidget {
   }
 }
 
-// ─── Pending attachment (local, before upload) ────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  PENDING ATTACHMENT  (local, before upload)
+// ══════════════════════════════════════════════════════════════════════════════
 class _PendingAttachment {
   final String id;
   final String name;
