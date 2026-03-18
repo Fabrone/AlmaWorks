@@ -11,6 +11,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' as quill;
 import 'package:google_fonts/google_fonts.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:logger/logger.dart';
@@ -67,15 +69,32 @@ class MonthlyTableData {
 class SigneeData {
   String name;
   String organisation;
+  /// In-memory PNG bytes — captured from the draw pad or an uploaded image.
+  /// Uploaded to Firebase Storage on save; do NOT store directly in Firestore.
   Uint8List? signatureBytes;
+  /// Firebase Storage download URL of the uploaded signature PNG.
+  /// Persisted in Firestore so the signature survives reload.
+  String? signatureUrl;
 
-  SigneeData({this.name = '', this.organisation = '', this.signatureBytes});
+  SigneeData({
+    this.name = '',
+    this.organisation = '',
+    this.signatureBytes,
+    this.signatureUrl,
+  });
 
   Map<String, dynamic> toMap() => {
         'name': name,
         'organisation': organisation,
-        // signature is not persisted to Firestore (too large) — stored locally
+        // signatureBytes intentionally omitted (too large for Firestore)
+        'signatureUrl': signatureUrl, // Firebase Storage URL — persisted
       };
+
+  factory SigneeData.fromMap(Map<String, dynamic> m) => SigneeData(
+        name: m['name'] as String? ?? '',
+        organisation: m['organisation'] as String? ?? '',
+        signatureUrl: m['signatureUrl'] as String?,
+      );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -197,6 +216,11 @@ class MonthlyReportData {
         sectionDJson: m['sectionDJson'] ?? '',
         sectionDTables: _parseTables(m['sectionDTables']),
         sectionDImageUrls: List<String>.from(m['sectionDImageUrls'] ?? []),
+        signees: (m['signees'] as List<dynamic>?)
+                ?.map((e) =>
+                    SigneeData.fromMap(Map<String, dynamic>.from(e as Map)))
+                .toList() ??
+            [SigneeData(), SigneeData()],
         isDraft: m['isDraft'] ?? true,
       );
 }
@@ -277,8 +301,18 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   final _signee1OrgCtrl = TextEditingController();
   final _signee2NameCtrl = TextEditingController();
   final _signee2OrgCtrl = TextEditingController();
+  /// In-memory bytes from the draw pad for each signee.
   Uint8List? _signee1Bytes;
   Uint8List? _signee2Bytes;
+  /// Bytes picked via image picker (alternative to drawing).
+  Uint8List? _signee1PickedBytes;
+  Uint8List? _signee2PickedBytes;
+  /// Firebase Storage URLs loaded from a saved report.
+  String? _signee1SigUrl;
+  String? _signee2SigUrl;
+  /// Active input mode per signee:  0 = Draw · 1 = Photo · 2 = From PDF
+  int _signee1Mode = 0;
+  int _signee2Mode = 0;
 
   // ── Loading flags ──────────────────────────────────────────────
   bool _isSaving = false;
@@ -342,6 +376,17 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     _sectionBCtrl = _quillFromJson('sectionB', r.sectionBJson);
     _sectionCCtrl = _quillFromJson('sectionC', r.sectionCJson);
     _sectionDCtrl = _quillFromJson('sectionD', r.sectionDJson);
+    // Signees — name, organisation, and persisted signature URL
+    if (r.signees.isNotEmpty) {
+      _signee1NameCtrl.text = r.signees[0].name;
+      _signee1OrgCtrl.text  = r.signees[0].organisation;
+      _signee1SigUrl        = r.signees[0].signatureUrl;
+    }
+    if (r.signees.length > 1) {
+      _signee2NameCtrl.text = r.signees[1].name;
+      _signee2OrgCtrl.text  = r.signees[1].organisation;
+      _signee2SigUrl        = r.signees[1].signatureUrl;
+    }
   }
 
   quill.QuillController _quillFromJson(String key, String json) {
@@ -408,6 +453,9 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         'signee1Org': _signee1OrgCtrl.text,
         'signee2Name': _signee2NameCtrl.text,
         'signee2Org': _signee2OrgCtrl.text,
+        // Persist signature URLs so draft restoration shows existing sigs
+        if (_signee1SigUrl != null) 'signee1SigUrl': _signee1SigUrl,
+        if (_signee2SigUrl != null) 'signee2SigUrl': _signee2SigUrl,
       };
       await prefs.setString(_cacheKey, jsonEncode(data));
     } catch (e) {
@@ -468,6 +516,9 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
         _signee1OrgCtrl.text = data['signee1Org'] ?? '';
         _signee2NameCtrl.text = data['signee2Name'] ?? '';
         _signee2OrgCtrl.text = data['signee2Org'] ?? '';
+        // Restore persisted signature URLs
+        _signee1SigUrl = data['signee1SigUrl'] as String?;
+        _signee2SigUrl = data['signee2SigUrl'] as String?;
       });
       widget.logger.i('📋 MonthlyForm: draft restored from cache');
     } catch (e, st) {
@@ -525,6 +576,305 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     );
     if (picked == null) return;
     setState(() => _monthEnd = picked);
+    _saveDraftToCache();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // SIGNATURE CROP / PHOTO / PDF HELPERS
+  // ─────────────────────────────────────────────────────────────
+
+  /// Writes [bytes] to a temp PNG file, launches [ImageCropper],
+  /// reads the cropped result back, cleans up temp files, and returns
+  /// the cropped bytes.  Returns null if the user cancels or on error.
+  Future<Uint8List?> _cropImage(Uint8List bytes) async {
+    // On web ImageCropper works differently — it doesn't need a real file path.
+    // We handle web by writing to a data URL workaround path.
+    String sourcePath;
+    File? tempFile;
+
+    if (!kIsWeb) {
+      final dir = await getTemporaryDirectory();
+      tempFile = File(
+          '${dir.path}/sig_crop_${DateTime.now().millisecondsSinceEpoch}.png');
+      await tempFile.writeAsBytes(bytes);
+      sourcePath = tempFile.path;
+    } else {
+      // On web ImageCropper accepts a blob/object URL; we pass a placeholder
+      // and rely on the web UI settings uri parameter being set.
+      sourcePath = '';
+    }
+
+    try {
+      final cropped = await ImageCropper().cropImage(
+        sourcePath: sourcePath,
+        uiSettings: [
+          AndroidUiSettings(
+            toolbarTitle: 'Crop Signature',
+            toolbarColor: _navy,
+            toolbarWidgetColor: Colors.white,
+            statusBarColor: _navy,
+            backgroundColor: Colors.black,
+            activeControlsWidgetColor: _navy,
+            lockAspectRatio: false,
+            hideBottomControls: false,
+          ),
+          IOSUiSettings(
+            title: 'Crop Signature',
+            doneButtonTitle: 'Use',
+            cancelButtonTitle: 'Cancel',
+            resetAspectRatioEnabled: true,
+            aspectRatioPickerButtonHidden: false,
+          ),
+          if (kIsWeb)
+            WebUiSettings(
+              context: context,
+              presentStyle: WebPresentStyle.dialog,
+              size: const CropperSize(width: 520, height: 520),
+            ),
+        ],
+      );
+
+      if (cropped == null) return null;
+      final result = await cropped.readAsBytes();
+      return result;
+    } catch (e) {
+      widget.logger.w('⚠️ MonthlyForm: image crop failed – $e');
+      return null;
+    } finally {
+      // Clean up temp file on non-web
+      try {
+        await tempFile?.delete();
+      } catch (_) {}
+    }
+  }
+
+  /// Pick a photo (gallery or camera) then launch the cropper.
+  Future<void> _pickAndCropPhoto(int signeeIndex) async {
+    // Source selection bottom sheet
+    if (!mounted) return;
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              decoration: BoxDecoration(
+                  color: Colors.grey[300],
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
+              child: Text('Select Signature Photo',
+                  style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      color: _navy)),
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded, color: _navy),
+              title: Text('Choose from Gallery',
+                  style: GoogleFonts.poppins(fontSize: 13)),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded, color: _navy),
+              title: Text('Take a Photo',
+                  style: GoogleFonts.poppins(fontSize: 13)),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (source == null || !mounted) return;
+
+    try {
+      final xfile = await ImagePicker()
+          .pickImage(source: source, imageQuality: 90, maxWidth: 1800);
+      if (xfile == null) return;
+      final raw = await xfile.readAsBytes();
+      final cropped = await _cropImage(raw);
+      if (cropped == null || !mounted) return;
+      setState(() {
+        if (signeeIndex == 1) {
+          _signee1PickedBytes = cropped;
+          _signee1Bytes = null;
+        } else {
+          _signee2PickedBytes = cropped;
+          _signee2Bytes = null;
+        }
+      });
+      _saveDraftToCache();
+    } catch (e) {
+      widget.logger.w('⚠️ MonthlyForm: pick+crop photo failed – $e');
+    }
+  }
+
+  /// Pick a PDF file, render each page via Printing.raster(), let the user
+  /// choose a page (if multi-page), then launch the cropper on that page.
+  Future<void> _pickFromPdf(int signeeIndex) async {
+    // Step 1 — pick PDF file
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true, // returns bytes directly (needed for web too)
+    );
+    if (result == null || result.files.isEmpty) return;
+    final pdfBytes = result.files.first.bytes;
+    if (pdfBytes == null || !mounted) return;
+
+    // Step 2 — rasterise pages (using the already-imported printing package)
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Rendering PDF pages…',
+            style: GoogleFonts.poppins()),
+        duration: const Duration(seconds: 2),
+        backgroundColor: _navy,
+      ));
+    }
+
+    final List<Uint8List> pageImages = [];
+    try {
+      await for (final page in Printing.raster(pdfBytes, dpi: 150)) {
+        pageImages.add(await page.toPng());
+        // Cap at 10 pages to keep the picker fast
+        if (pageImages.length >= 10) break;
+      }
+    } catch (e) {
+      widget.logger.w('⚠️ MonthlyForm: PDF raster failed – $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not read PDF: $e',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red[700],
+        ));
+      }
+      return;
+    }
+
+    if (pageImages.isEmpty || !mounted) return;
+
+    // Step 3 — page selector (skip dialog if only one page)
+    Uint8List chosenPage;
+    if (pageImages.length == 1) {
+      chosenPage = pageImages.first;
+    } else {
+      final chosen = await showDialog<Uint8List>(
+        context: context,
+        builder: (ctx) => Dialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+          child: ConstrainedBox(
+            constraints:
+                const BoxConstraints(maxWidth: 480, maxHeight: 540),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Header
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 13),
+                  decoration: const BoxDecoration(
+                    color: _navy,
+                    borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(14)),
+                  ),
+                  child: Row(children: [
+                    const Icon(Icons.picture_as_pdf_rounded,
+                        color: Colors.white, size: 18),
+                    const SizedBox(width: 10),
+                    Text('Select a Page',
+                        style: GoogleFonts.poppins(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14)),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: () => Navigator.pop(ctx),
+                      child: const Icon(Icons.close_rounded,
+                          color: Colors.white70, size: 20),
+                    ),
+                  ]),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+                  child: Text(
+                    'Tap the page that contains the signature',
+                    style: GoogleFonts.poppins(
+                        fontSize: 12, color: Colors.grey[600]),
+                  ),
+                ),
+                // Page thumbnail grid
+                Flexible(
+                  child: GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                    gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 0.75,
+                    ),
+                    itemCount: pageImages.length,
+                    itemBuilder: (_, i) => GestureDetector(
+                      onTap: () =>
+                          Navigator.pop(ctx, pageImages[i]),
+                      child: Column(children: [
+                        Expanded(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                    color: _navy.withValues(alpha: 0.3),
+                                    width: 1),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Image.memory(pageImages[i],
+                                  fit: BoxFit.cover),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text('Page ${i + 1}',
+                            style: GoogleFonts.poppins(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: _navy)),
+                      ]),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      if (chosen == null || !mounted) return;
+      chosenPage = chosen;
+    }
+
+    // Step 4 — crop the chosen page
+    final cropped = await _cropImage(chosenPage);
+    if (cropped == null || !mounted) return;
+
+    setState(() {
+      if (signeeIndex == 1) {
+        _signee1PickedBytes = cropped;
+        _signee1Bytes = null;
+      } else {
+        _signee2PickedBytes = cropped;
+        _signee2Bytes = null;
+      }
+    });
     _saveDraftToCache();
   }
 
@@ -615,12 +965,52 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   // ─────────────────────────────────────────────────────────────
   // SAVE
   // ─────────────────────────────────────────────────────────────
+  /// Uploads a signature PNG to Firebase Storage and returns the download URL.
+  /// Accepts either draw-pad bytes or image-picker bytes, whichever is set.
+  Future<String?> _uploadSignature(
+      int signeeIndex, Uint8List? drawBytes, Uint8List? pickedBytes) async {
+    final bytes = drawBytes ?? pickedBytes;
+    if (bytes == null) return null;
+    try {
+      final ref = FirebaseStorage.instance
+          .ref()
+          .child(widget.project.id)
+          .child('Reports')
+          .child('Monthly')
+          .child('signatures')
+          .child('${_reportId}_signee${signeeIndex + 1}.png');
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/png'));
+      final url = await ref.getDownloadURL();
+      widget.logger.i('📋 MonthlyForm: signature[$signeeIndex] uploaded → $url');
+      return url;
+    } catch (e) {
+      widget.logger.w('⚠️ MonthlyForm: signature[$signeeIndex] upload failed – $e');
+      return null;
+    }
+  }
+
   Future<void> _saveReport({bool silent = false}) async {
     if (_isSaving) return;
     if (!(_formKey.currentState?.validate() ?? true)) return;
     setState(() => _isSaving = true);
     try {
       final allUrls = await _uploadSectionImages();
+
+      // ── Upload signatures if new bytes are available ──────────
+      // Only re-upload when the user has drawn or picked a NEW signature
+      // this session; otherwise keep the existing URL as-is.
+      final sig1Url = (_signee1Bytes != null || _signee1PickedBytes != null)
+          ? await _uploadSignature(0, _signee1Bytes, _signee1PickedBytes)
+          : _signee1SigUrl;
+      final sig2Url = (_signee2Bytes != null || _signee2PickedBytes != null)
+          ? await _uploadSignature(1, _signee2Bytes, _signee2PickedBytes)
+          : _signee2SigUrl;
+
+      // Persist URLs back to state so a subsequent save doesn't re-upload
+      setState(() {
+        if (sig1Url != null) _signee1SigUrl = sig1Url;
+        if (sig2Url != null) _signee2SigUrl = sig2Url;
+      });
       final report = MonthlyReportData(
         id: _reportId,
         projectId: widget.project.id,
@@ -650,11 +1040,13 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
           SigneeData(
               name: _signee1NameCtrl.text,
               organisation: _signee1OrgCtrl.text,
-              signatureBytes: _signee1Bytes),
+              signatureBytes: _signee1Bytes ?? _signee1PickedBytes,
+              signatureUrl: sig1Url),
           SigneeData(
               name: _signee2NameCtrl.text,
               organisation: _signee2OrgCtrl.text,
-              signatureBytes: _signee2Bytes),
+              signatureBytes: _signee2Bytes ?? _signee2PickedBytes,
+              signatureUrl: sig2Url),
         ],
         isDraft: false,
       );
@@ -815,6 +1207,29 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
       final bImgs = await loadImgs(_sectionBLocalImages, _sectionBSavedUrls);
       final cImgs = await loadImgs(_sectionCLocalImages, _sectionCSavedUrls);
       final dImgs = await loadImgs(_sectionDLocalImages, _sectionDSavedUrls);
+
+      // ── Resolve signature bytes for PDF ──────────────────────
+      // Priority: in-session drawn/picked bytes → stored Firebase URL
+      Future<Uint8List?> resolveSigBytes(
+          Uint8List? drawn, Uint8List? picked, String? url) async {
+        if (drawn != null) return drawn;
+        if (picked != null) return picked;
+        if (url != null && url.isNotEmpty) {
+          try {
+            return await FirebaseStorage.instance
+                .refFromURL(url)
+                .getData(2 * 1024 * 1024); // 2 MB cap for signatures
+          } catch (e) {
+            widget.logger.w('⚠️ MonthlyForm: sig fetch from URL failed – $e');
+          }
+        }
+        return null;
+      }
+
+      final sig1Bytes = await resolveSigBytes(
+          _signee1Bytes, _signee1PickedBytes, _signee1SigUrl);
+      final sig2Bytes = await resolveSigBytes(
+          _signee2Bytes, _signee2PickedBytes, _signee2SigUrl);
 
       // ── Helper: section bar ──────────────────────────────────
       // Identical structure to weekly sectionBar — plain Container + Text,
@@ -1334,10 +1749,10 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 signeeBlock('SIGNEE 1', _signee1NameCtrl.text,
-                    _signee1OrgCtrl.text, _signee1Bytes),
+                    _signee1OrgCtrl.text, sig1Bytes),
                 pw.SizedBox(width: 8),
                 signeeBlock('SIGNEE 2', _signee2NameCtrl.text,
-                    _signee2OrgCtrl.text, _signee2Bytes),
+                    _signee2OrgCtrl.text, sig2Bytes),
               ],
             ),
           ],
@@ -2520,8 +2935,16 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
     int index,
     TextEditingController nameCtrl,
     TextEditingController orgCtrl,
-    Function(Uint8List?) onSignature,
+    Function(Uint8List?) onDrawSignature,
   ) {
+    final int mode   = index == 1 ? _signee1Mode : _signee2Mode;
+    final Uint8List? pickedBytes  = index == 1 ? _signee1PickedBytes : _signee2PickedBytes;
+    final String?    sigUrl       = index == 1 ? _signee1SigUrl      : _signee2SigUrl;
+    final Uint8List? drawnBytes   = index == 1 ? _signee1Bytes       : _signee2Bytes;
+    final bool hasSig = drawnBytes != null ||
+        pickedBytes != null ||
+        (sigUrl != null && sigUrl.isNotEmpty);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -2532,25 +2955,43 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Signee number badge
+          // ── Signee badge + Signed status ────────────────────────
           Row(children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
               decoration: BoxDecoration(
-                color: _navy,
-                borderRadius: BorderRadius.circular(20),
-              ),
+                  color: _navy, borderRadius: BorderRadius.circular(20)),
               child: Text('Signee $index',
                   style: GoogleFonts.poppins(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
                       fontSize: 11)),
             ),
+            const Spacer(),
+            if (hasSig)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.green[50],
+                  border: Border.all(color: Colors.green[300]!),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.check_circle_rounded,
+                      size: 12, color: Colors.green[700]),
+                  const SizedBox(width: 4),
+                  Text('Signed',
+                      style: GoogleFonts.poppins(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.green[700])),
+                ]),
+              ),
           ]),
           const SizedBox(height: 10),
 
-          // Name field
+          // ── Name ────────────────────────────────────────────────
           _signeeTextField(
               ctrl: nameCtrl,
               label: 'Name',
@@ -2558,27 +2999,372 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               icon: Icons.person_outline_rounded),
           const SizedBox(height: 8),
 
-          // Organisation field
+          // ── Organisation ────────────────────────────────────────
           _signeeTextField(
               ctrl: orgCtrl,
               label: 'Organisation',
               hint: 'Company / organisation…',
               icon: Icons.business_outlined),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
-          // Signature pad — hidden in read-only mode
-          if (!_isReadOnly) ...[
+          // ── Signature label ─────────────────────────────────────
           Text('Signature',
               style: GoogleFonts.poppins(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
                   color: _navy.withValues(alpha: 0.8))),
           const SizedBox(height: 6),
-          _SignaturePadWidget(
-            onSignatureChanged: onSignature,
-          ),
+
+          if (_isReadOnly) ...[
+            // ── Read-only: show stored signature ──────────────────
+            _buildSignatureDisplay(drawnBytes, pickedBytes, sigUrl),
+          ] else ...[
+            // ── Edit mode: 3-tab mode selector ────────────────────
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                _sigModeTab(
+                    label: 'Draw',
+                    icon: Icons.draw_rounded,
+                    active: mode == 0,
+                    onTap: () => setState(() {
+                          if (index == 1) {
+                            _signee1Mode = 0;
+                          } else {
+                            _signee2Mode = 0;
+                          }
+                        })),
+                const SizedBox(width: 6),
+                _sigModeTab(
+                    label: 'Photo',
+                    icon: Icons.photo_camera_rounded,
+                    active: mode == 1,
+                    onTap: () => setState(() {
+                          if (index == 1) {
+                            _signee1Mode = 1;
+                          } else {
+                            _signee2Mode = 1;
+                          }
+                        })),
+                const SizedBox(width: 6),
+                _sigModeTab(
+                    label: 'From PDF',
+                    icon: Icons.picture_as_pdf_rounded,
+                    active: mode == 2,
+                    onTap: () => setState(() {
+                          if (index == 1) {
+                            _signee1Mode = 2;
+                          } else {
+                            _signee2Mode = 2;
+                          }
+                        })),
+              ]),
+            ),
+            const SizedBox(height: 10),
+
+            // ── Mode content ──────────────────────────────────────
+            if (mode == 0)
+              // Draw pad
+              _SignaturePadWidget(onSignatureChanged: onDrawSignature)
+            else if (mode == 1)
+              // Photo + crop
+              _buildPhotoSignatureArea(index, pickedBytes, drawnBytes, sigUrl)
+            else
+              // PDF extraction + crop
+              _buildPdfSignatureArea(index, pickedBytes, drawnBytes, sigUrl),
           ],
         ],
+      ),
+    );
+  }
+
+  /// Small pill-style tab for switching between Draw and Upload modes.
+  Widget _sigModeTab({
+    required String label,
+    required IconData icon,
+    required bool active,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: active ? _navy : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: active ? _navy : _fieldBorder, width: 1.2),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 13, color: active ? Colors.white : _navy),
+          const SizedBox(width: 5),
+          Text(label,
+              style: GoogleFonts.poppins(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: active ? Colors.white : _navy)),
+        ]),
+      ),
+    );
+  }
+
+  /// Photo mode: shows picked/drawn/URL preview with a Pick & Crop button.
+  Widget _buildPhotoSignatureArea(int signeeIndex,
+      Uint8List? pickedBytes, Uint8List? drawnBytes, String? storedUrl) {
+    final Uint8List? localBytes = pickedBytes ?? drawnBytes;
+    final bool hasUrl = storedUrl != null && storedUrl.isNotEmpty;
+    final bool hasImage = localBytes != null || hasUrl;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sigPreviewBox(localBytes, storedUrl),
+        const SizedBox(height: 6),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => _pickAndCropPhoto(signeeIndex),
+              icon: const Icon(Icons.photo_camera_rounded, size: 14),
+              label: Text(
+                hasImage ? 'Replace & Crop' : 'Pick Photo & Crop',
+                style: GoogleFonts.poppins(fontSize: 11),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _navy,
+                side: const BorderSide(color: _navy, width: 1.2),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(7)),
+              ),
+            ),
+          ),
+          if (hasImage) ...[
+            const SizedBox(width: 8),
+            _sigClearButton(signeeIndex),
+          ],
+        ]),
+      ],
+    );
+  }
+
+  /// PDF mode: shows current preview and a Pick PDF button.
+  Widget _buildPdfSignatureArea(int signeeIndex,
+      Uint8List? pickedBytes, Uint8List? drawnBytes, String? storedUrl) {
+    final Uint8List? localBytes = pickedBytes ?? drawnBytes;
+    final bool hasUrl = storedUrl != null && storedUrl.isNotEmpty;
+    final bool hasImage = localBytes != null || hasUrl;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Instruction strip
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: const Color(0xFFE8EEF6),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(children: [
+            Icon(Icons.info_outline_rounded,
+                size: 13, color: _navy.withValues(alpha: 0.7)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                'Pick a PDF → select the page → drag to crop the signature area',
+                style: GoogleFonts.poppins(
+                    fontSize: 10,
+                    color: _navy.withValues(alpha: 0.75)),
+              ),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 8),
+        _sigPreviewBox(localBytes, storedUrl),
+        const SizedBox(height: 6),
+        Row(children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              onPressed: () => _pickFromPdf(signeeIndex),
+              icon: const Icon(Icons.picture_as_pdf_rounded, size: 14),
+              label: Text(
+                hasImage ? 'Replace from PDF' : 'Pick PDF & Crop',
+                style: GoogleFonts.poppins(
+                    fontWeight: FontWeight.w600, fontSize: 11),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _navy,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 9),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(7)),
+                elevation: 1,
+              ),
+            ),
+          ),
+          if (hasImage) ...[
+            const SizedBox(width: 8),
+            _sigClearButton(signeeIndex),
+          ],
+        ]),
+      ],
+    );
+  }
+
+  /// Shared preview box used by both Photo and PDF modes.
+  Widget _sigPreviewBox(Uint8List? localBytes, String? storedUrl) {
+    final bool hasUrl = storedUrl != null && storedUrl.isNotEmpty;
+    final bool hasImage = localBytes != null || hasUrl;
+
+    return Container(
+      height: 120,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: hasImage
+              ? _navy.withValues(alpha: 0.45)
+              : _fieldBorder,
+          width: hasImage ? 1.5 : 1.0,
+        ),
+      ),
+      child: hasImage
+          ? ClipRRect(
+              borderRadius: BorderRadius.circular(7),
+              child: localBytes != null
+                  ? Image.memory(localBytes, fit: BoxFit.contain)
+                  : Image.network(storedUrl!,
+                      fit: BoxFit.contain,
+                      loadingBuilder: (_, child, prog) =>
+                          prog == null
+                              ? child
+                              : const Center(
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2)),
+                      errorBuilder: (_, __, ___) => Center(
+                        child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image_rounded,
+                                  color: Colors.grey[400], size: 18),
+                              const SizedBox(width: 6),
+                              Text('Could not load signature',
+                                  style: GoogleFonts.poppins(
+                                      color: Colors.grey[400],
+                                      fontSize: 11)),
+                            ]),
+                      )),
+            )
+          : Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.crop_free_rounded,
+                      color: Colors.grey[300], size: 28),
+                  const SizedBox(height: 6),
+                  Text('No signature yet',
+                      style: GoogleFonts.poppins(
+                          color: Colors.grey[400], fontSize: 12)),
+                ],
+              ),
+            ),
+    );
+  }
+
+  /// Shared Clear button for Photo and PDF modes.
+  Widget _sigClearButton(int signeeIndex) {
+    return TextButton.icon(
+      onPressed: () {
+        setState(() {
+          if (signeeIndex == 1) {
+            _signee1PickedBytes = null;
+            _signee1SigUrl = null;
+          } else {
+            _signee2PickedBytes = null;
+            _signee2SigUrl = null;
+          }
+        });
+        _saveDraftToCache();
+      },
+      icon: Icon(Icons.delete_outline_rounded,
+          size: 14, color: Colors.red[400]),
+      label: Text('Clear',
+          style: GoogleFonts.poppins(
+              fontSize: 11,
+              color: Colors.red[400],
+              fontWeight: FontWeight.w600)),
+      style: TextButton.styleFrom(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        minimumSize: Size.zero,
+      ),
+    );
+  }
+
+  /// Read-only signature display — shows draw bytes, picked bytes,
+  /// or fetches the stored Firebase Storage URL image inline.
+  Widget _buildSignatureDisplay(
+      Uint8List? drawnBytes, Uint8List? pickedBytes, String? url) {
+    final Uint8List? localBytes = drawnBytes ?? pickedBytes;
+    final bool hasUrl = url != null && url.isNotEmpty;
+    final bool hasAny = localBytes != null || hasUrl;
+
+    if (!hasAny) {
+      return Container(
+        height: 80,
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: _fieldBorder),
+        ),
+        child: Center(
+          child: Text('No signature provided',
+              style: GoogleFonts.poppins(
+                  color: Colors.grey[400], fontSize: 12)),
+        ),
+      );
+    }
+
+    return Container(
+      height: 100,
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: _navy.withValues(alpha: 0.3), width: 1.2),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(7),
+        child: localBytes != null
+            ? Image.memory(localBytes, fit: BoxFit.contain)
+            : Image.network(
+                url!,
+                fit: BoxFit.contain,
+                loadingBuilder: (_, child, progress) => progress == null
+                    ? child
+                    : const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                errorBuilder: (_, __, ___) => Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.broken_image_rounded,
+                          color: Colors.grey[400], size: 18),
+                      const SizedBox(width: 6),
+                      Text('Could not load signature',
+                          style: GoogleFonts.poppins(
+                              color: Colors.grey[400], fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ),
       ),
     );
   }

@@ -470,10 +470,12 @@ class _ReportsScreenState extends State<ReportsScreen>
     final formDateRaw   = data['date'];
     final weekStartRaw  = data['weekStart'];
     final weekEndRaw    = data['weekEnd'];
+    final monthStartRaw = data['monthStart'];
 
-    final DateTime? formDate  = formDateRaw  is Timestamp ? formDateRaw.toDate()  : null;
-    final DateTime? weekStart = weekStartRaw is Timestamp ? weekStartRaw.toDate() : null;
-    final DateTime? weekEnd   = weekEndRaw   is Timestamp ? weekEndRaw.toDate()   : null;
+    final DateTime? formDate   = formDateRaw   is Timestamp ? formDateRaw.toDate()   : null;
+    final DateTime? weekStart  = weekStartRaw  is Timestamp ? weekStartRaw.toDate()  : null;
+    final DateTime? weekEnd    = weekEndRaw    is Timestamp ? weekEndRaw.toDate()     : null;
+    final DateTime? monthStart = monthStartRaw is Timestamp ? monthStartRaw.toDate() : null;
 
     // savedAt is always needed for the "Saved:" subtitle line.
     final DateTime savedAt = data['savedAt'] != null
@@ -494,6 +496,10 @@ class _ReportsScreenState extends State<ReportsScreen>
           : '';
       displayName =
           '$type Report – ${DateFormat('dd MMM yyyy').format(weekStart)}$endPart';
+    } else if (monthStart != null) {
+      // Monthly (stores monthStart — show as full month name + year)
+      displayName =
+          '$type Report – ${DateFormat('MMMM yyyy').format(monthStart)}';
     } else {
       // Fallback for any legacy doc that lacks both 'date' and 'weekStart':
       // use the stored name, or derive from savedAt as a last resort.
