@@ -583,27 +583,11 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   // SIGNATURE CROP / PHOTO / PDF HELPERS
   // ─────────────────────────────────────────────────────────────
 
-  /// Writes [bytes] to a temp PNG file, launches [ImageCropper],
-  /// reads the cropped result back, cleans up temp files, and returns
-  /// the cropped bytes.  Returns null if the user cancels or on error.
-  Future<Uint8List?> _cropImage(Uint8List bytes) async {
-    // On web ImageCropper works differently — it doesn't need a real file path.
-    // We handle web by writing to a data URL workaround path.
-    String sourcePath;
-    File? tempFile;
-
-    if (!kIsWeb) {
-      final dir = await getTemporaryDirectory();
-      tempFile = File(
-          '${dir.path}/sig_crop_${DateTime.now().millisecondsSinceEpoch}.png');
-      await tempFile.writeAsBytes(bytes);
-      sourcePath = tempFile.path;
-    } else {
-      // On web ImageCropper accepts a blob/object URL; we pass a placeholder
-      // and rely on the web UI settings uri parameter being set.
-      sourcePath = '';
-    }
-
+  /// Launches [ImageCropper] on a file at [sourcePath], returns cropped
+  /// bytes or null if the user cancels.
+  /// [sourcePath] must be a real file path — on web pass '' and the web
+  /// settings handle the blob URL internally.
+  Future<Uint8List?> _cropFromPath(String sourcePath) async {
     try {
       final cropped = await ImageCropper().cropImage(
         sourcePath: sourcePath,
@@ -612,11 +596,17 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             toolbarTitle: 'Crop Signature',
             toolbarColor: _navy,
             toolbarWidgetColor: Colors.white,
-            statusBarColor: _navy,
+            statusBarLight: false,
             backgroundColor: Colors.black,
             activeControlsWidgetColor: _navy,
             lockAspectRatio: false,
             hideBottomControls: false,
+            aspectRatioPresets: [
+              CropAspectRatioPreset.original,
+              CropAspectRatioPreset.ratio16x9,
+              CropAspectRatioPreset.ratio4x3,
+              CropAspectRatioPreset.square,
+            ],
           ),
           IOSUiSettings(
             title: 'Crop Signature',
@@ -624,6 +614,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             cancelButtonTitle: 'Cancel',
             resetAspectRatioEnabled: true,
             aspectRatioPickerButtonHidden: false,
+            minimumAspectRatio: 0.2,
           ),
           if (kIsWeb)
             WebUiSettings(
@@ -633,24 +624,40 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
             ),
         ],
       );
-
       if (cropped == null) return null;
-      final result = await cropped.readAsBytes();
-      return result;
+      return await cropped.readAsBytes();
     } catch (e) {
       widget.logger.w('⚠️ MonthlyForm: image crop failed – $e');
       return null;
+    }
+  }
+
+  /// Writes [bytes] to a uniquely-named temp PNG, crops it, deletes the
+  /// temp file, returns cropped bytes.  Used for PDF pages (raw bytes only).
+  Future<Uint8List?> _cropImage(Uint8List bytes) async {
+    if (kIsWeb) {
+      // On web there is no real file system — cropFromPath with empty
+      // string uses the WebUiSettings blob-URL approach.
+      return _cropFromPath('');
+    }
+    File? tmp;
+    try {
+      final dir = await getTemporaryDirectory();
+      tmp = File(
+          '${dir.path}/sig_tmp_${DateTime.now().millisecondsSinceEpoch}.png');
+      await tmp.writeAsBytes(bytes);
+      return await _cropFromPath(tmp.path);
+    } catch (e) {
+      widget.logger.w('⚠️ MonthlyForm: _cropImage write failed – $e');
+      return null;
     } finally {
-      // Clean up temp file on non-web
-      try {
-        await tempFile?.delete();
-      } catch (_) {}
+      try { await tmp?.delete(); } catch (_) {}
     }
   }
 
   /// Pick a photo (gallery or camera) then launch the cropper.
+  /// Passes xfile.path directly — no unnecessary bytes read/write.
   Future<void> _pickAndCropPhoto(int signeeIndex) async {
-    // Source selection bottom sheet
     if (!mounted) return;
     final source = await showModalBottomSheet<ImageSource>(
       context: context,
@@ -697,10 +704,19 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
 
     try {
       final xfile = await ImagePicker()
-          .pickImage(source: source, imageQuality: 90, maxWidth: 1800);
-      if (xfile == null) return;
-      final raw = await xfile.readAsBytes();
-      final cropped = await _cropImage(raw);
+          .pickImage(source: source, imageQuality: 92, maxWidth: 2000);
+      if (xfile == null || !mounted) return;
+
+      // Pass file path directly — no bytes read needed before cropping
+      final Uint8List? cropped;
+      if (kIsWeb) {
+        // Web: ImagePicker gives no real path; read bytes and use blob path
+        final raw = await xfile.readAsBytes();
+        cropped = await _cropImage(raw);
+      } else {
+        cropped = await _cropFromPath(xfile.path);
+      }
+
       if (cropped == null || !mounted) return;
       setState(() {
         if (signeeIndex == 1) {
@@ -714,56 +730,79 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
       _saveDraftToCache();
     } catch (e) {
       widget.logger.w('⚠️ MonthlyForm: pick+crop photo failed – $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not process photo: $e',
+              style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red[700],
+        ));
+      }
     }
   }
 
-  /// Pick a PDF file, render each page via Printing.raster(), let the user
-  /// choose a page (if multi-page), then launch the cropper on that page.
+  /// Pick a PDF, render pages via Printing.raster(), select page, crop.
+  /// Handles both bytes (web/some Android) and path (mobile) from FilePicker.
   Future<void> _pickFromPdf(int signeeIndex) async {
-    // Step 1 — pick PDF file
+    // ── Step 1: pick PDF ────────────────────────────────────────
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf'],
-      withData: true, // returns bytes directly (needed for web too)
+      withData: true,      // populated on web + some mobile configs
+      withReadStream: false,
     );
-    if (result == null || result.files.isEmpty) return;
-    final pdfBytes = result.files.first.bytes;
-    if (pdfBytes == null || !mounted) return;
+    if (result == null || result.files.isEmpty || !mounted) return;
+    final picked = result.files.first;
 
-    // Step 2 — rasterise pages (using the already-imported printing package)
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Rendering PDF pages…',
-            style: GoogleFonts.poppins()),
-        duration: const Duration(seconds: 2),
-        backgroundColor: _navy,
-      ));
+    // ── Step 2: resolve bytes (bytes OR path fallback) ──────────
+    Uint8List? pdfBytes = picked.bytes;
+    if (pdfBytes == null && picked.path != null && !kIsWeb) {
+      try {
+        pdfBytes = await File(picked.path!).readAsBytes();
+      } catch (e) {
+        widget.logger.w('⚠️ MonthlyForm: PDF read from path failed – $e');
+      }
     }
+    if (pdfBytes == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Could not read the selected PDF file.',
+            style: GoogleFonts.poppins()),
+        backgroundColor: Colors.red[700],
+      ));
+      return;
+    }
+
+    // ── Step 3: show loading + rasterise pages ──────────────────
+    if (mounted) setState(() => _isGeneratingPdf = true);
 
     final List<Uint8List> pageImages = [];
     try {
-      await for (final page in Printing.raster(pdfBytes, dpi: 150)) {
+      await for (final page
+          in Printing.raster(pdfBytes, dpi: 180)) {
         pageImages.add(await page.toPng());
-        // Cap at 10 pages to keep the picker fast
         if (pageImages.length >= 10) break;
       }
     } catch (e) {
       widget.logger.w('⚠️ MonthlyForm: PDF raster failed – $e');
       if (mounted) {
+        setState(() => _isGeneratingPdf = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not read PDF: $e',
+          content: Text('Could not render PDF: $e',
               style: GoogleFonts.poppins()),
           backgroundColor: Colors.red[700],
         ));
       }
       return;
+    } finally {
+      if (mounted) setState(() => _isGeneratingPdf = false);
     }
 
     if (pageImages.isEmpty || !mounted) return;
 
-    // Step 3 — page selector (skip dialog if only one page)
+    // ── Step 4: page selector — single-page skips the dialog ────
     Uint8List chosenPage;
     if (pageImages.length == 1) {
+      // Single-page PDF: go straight to cropper
       chosenPage = pageImages.first;
     } else {
       final chosen = await showDialog<Uint8List>(
@@ -773,11 +812,10 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
               borderRadius: BorderRadius.circular(14)),
           child: ConstrainedBox(
             constraints:
-                const BoxConstraints(maxWidth: 480, maxHeight: 540),
+                const BoxConstraints(maxWidth: 480, maxHeight: 560),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Header
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
@@ -812,7 +850,6 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                         fontSize: 12, color: Colors.grey[600]),
                   ),
                 ),
-                // Page thumbnail grid
                 Flexible(
                   child: GridView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -821,7 +858,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                       crossAxisCount: 2,
                       crossAxisSpacing: 10,
                       mainAxisSpacing: 10,
-                      childAspectRatio: 0.75,
+                      childAspectRatio: 0.72,
                     ),
                     itemCount: pageImages.length,
                     itemBuilder: (_, i) => GestureDetector(
@@ -834,7 +871,8 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
                             child: Container(
                               decoration: BoxDecoration(
                                 border: Border.all(
-                                    color: _navy.withValues(alpha: 0.3),
+                                    color:
+                                        _navy.withValues(alpha: 0.3),
                                     width: 1),
                                 borderRadius: BorderRadius.circular(6),
                               ),
@@ -862,7 +900,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
       chosenPage = chosen;
     }
 
-    // Step 4 — crop the chosen page
+    // ── Step 5: crop ─────────────────────────────────────────────
     final cropped = await _cropImage(chosenPage);
     if (cropped == null || !mounted) return;
 
@@ -4638,40 +4676,79 @@ class _InsertTableDialogState extends State<_InsertTableDialog> {
 
 // ══════════════════════════════════════════════════════════════════
 // SIGNATURE PAD WIDGET
-// Canvas-based handwriting capture with clear functionality
+// Canvas-based handwriting capture with clear functionality.
+// Uses a ChangeNotifier repaint model so pointer-move events only
+// repaint the CustomPaint — no full widget-tree rebuild per point.
 // ══════════════════════════════════════════════════════════════════
+
+// ── Stroke point: position + normalised pressure (0.0–1.0) ─────
+class _StrokePoint {
+  final Offset position;
+  final double pressure;
+  const _StrokePoint(this.position, this.pressure);
+}
+
+// ── Stroke model / repaint notifier ────────────────────────────
+// Holds the strokes list and notifies the CustomPainter directly
+// so pointer-move events never trigger a setState / widget rebuild.
+class _StrokeModel extends ChangeNotifier {
+  final List<List<_StrokePoint>> strokes = [];
+  List<_StrokePoint>? current;
+
+  void startStroke(_StrokePoint p) {
+    final s = [p];
+    current = s;
+    strokes.add(s);
+    notifyListeners();
+  }
+
+  void addPoint(_StrokePoint p) {
+    current?.add(p);
+    notifyListeners(); // only repaints the CustomPaint, not the widget tree
+  }
+
+  void endStroke() {
+    current = null;
+    // No notifyListeners needed — caller handles post-processing
+  }
+
+  void clear() {
+    strokes.clear();
+    current = null;
+    notifyListeners();
+  }
+
+  bool get isEmpty => strokes.isEmpty;
+}
+
 class _SignaturePadWidget extends StatefulWidget {
   final Function(Uint8List?)? onSignatureChanged;
-
   const _SignaturePadWidget({this.onSignatureChanged});
 
   @override
   State<_SignaturePadWidget> createState() => _SignaturePadWidgetState();
 }
 
-// ─── Stroke point: position + normalised pressure (0.0–1.0) ─────
-class _StrokePoint {
-  final Offset position;
-  final double pressure; // 1.0 for mouse/touch (no pressure data)
-
-  const _StrokePoint(this.position, this.pressure);
-}
-
 class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
   static const _navy = Color(0xFF0A2E5A);
+  static const _inkColor = Color(0xFF0A2E5A);
 
-  final List<List<_StrokePoint>> _strokes = [];
-  List<_StrokePoint>? _current;
+  final _model = _StrokeModel();
   final _repaintKey = GlobalKey();
-  bool _hasSignature = false;
 
-  // ── Input type label (shown in status row) ─────────────────────
+  // UI-only state — only these trigger setState
+  bool _hasSignature = false;
   String _inputLabel = '';
 
-  void clear() {
+  @override
+  void dispose() {
+    _model.dispose();
+    super.dispose();
+  }
+
+  void _doReset() {
+    _model.clear();
     setState(() {
-      _strokes.clear();
-      _current = null;
       _hasSignature = false;
       _inputLabel = '';
     });
@@ -4683,7 +4760,7 @@ class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
       final boundary = _repaintKey.currentContext?.findRenderObject()
           as RenderRepaintBoundary?;
       if (boundary == null) return null;
-      final image = await boundary.toImage(pixelRatio: 2.5);
+      final image = await boundary.toImage(pixelRatio: 3.0);
       final byteData =
           await image.toByteData(format: ui.ImageByteFormat.png);
       return byteData?.buffer.asUint8List();
@@ -4692,7 +4769,6 @@ class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
     }
   }
 
-  // ── Map PointerDeviceKind to a human-readable label ────────────
   String _kindLabel(PointerDeviceKind kind) {
     switch (kind) {
       case PointerDeviceKind.stylus:
@@ -4705,45 +4781,38 @@ class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
     }
   }
 
-  // ── Whether this pointer kind supports pressure ────────────────
   bool _hasPressure(PointerDeviceKind kind) =>
       kind == PointerDeviceKind.stylus ||
       kind == PointerDeviceKind.invertedStylus;
 
-  // ── Pointer down ───────────────────────────────────────────────
   void _onDown(PointerDownEvent e) {
     final pressure =
         _hasPressure(e.kind) ? e.pressure.clamp(0.0, 1.0) : 1.0;
-    final stroke = [_StrokePoint(e.localPosition, pressure)];
-    setState(() {
-      _current = stroke;
-      _strokes.add(stroke);
-      _inputLabel = _kindLabel(e.kind);
-    });
-  }
-
-  // ── Pointer move ───────────────────────────────────────────────
-  void _onMove(PointerMoveEvent e) {
-    if (_current == null) return;
-    final pressure =
-        _hasPressure(e.kind) ? e.pressure.clamp(0.0, 1.0) : 1.0;
-    setState(() {
-      _current!.add(_StrokePoint(e.localPosition, pressure));
-      _hasSignature = true;
-    });
-  }
-
-  // ── Pointer up / cancel ────────────────────────────────────────
-  void _onUp(PointerUpEvent e) async {
-    _current = null;
-    if (_hasSignature) {
-      final bytes = await _toImageBytes();
-      widget.onSignatureChanged?.call(bytes);
+    _model.startStroke(_StrokePoint(e.localPosition, pressure));
+    // setState only for the label badge — not called on every move
+    if (_kindLabel(e.kind) != _inputLabel) {
+      setState(() => _inputLabel = _kindLabel(e.kind));
     }
   }
 
+  void _onMove(PointerMoveEvent e) {
+    // ← no setState here — model notifier repaints only the CustomPaint
+    final pressure =
+        _hasPressure(e.kind) ? e.pressure.clamp(0.0, 1.0) : 1.0;
+    _model.addPoint(_StrokePoint(e.localPosition, pressure));
+  }
+
+  void _onUp(PointerUpEvent e) async {
+    _model.endStroke();
+    if (!_hasSignature) {
+      setState(() => _hasSignature = true);
+    }
+    final bytes = await _toImageBytes();
+    widget.onSignatureChanged?.call(bytes);
+  }
+
   void _onCancel(PointerCancelEvent e) {
-    setState(() => _current = null);
+    _model.endStroke();
   }
 
   @override
@@ -4752,82 +4821,87 @@ class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── Canvas ───────────────────────────────────────────────
-        RepaintBoundary(
-          key: _repaintKey,
-          child: Listener(
-            // Listener fires on raw pointer events — no gesture
-            // arena, zero latency, works for touch / stylus / mouse.
-            onPointerDown: _onDown,
-            onPointerMove: _onMove,
-            onPointerUp: _onUp,
-            onPointerCancel: _onCancel,
-            // Consume events so scroll views don't steal them
-            behavior: HitTestBehavior.opaque,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              height: 130,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _hasSignature
-                      ? _navy.withValues(alpha: 0.45)
-                      : const Color(0xFFB0BEC5),
-                  width: _hasSignature ? 1.5 : 1.0,
+        // ScrollConfiguration disables scroll physics inside the pad
+        // so the parent ScrollView never steals pointer events while
+        // the user is signing.
+        ScrollConfiguration(
+          behavior:
+              ScrollConfiguration.of(context).copyWith(scrollbars: false),
+          child: RepaintBoundary(
+            key: _repaintKey,
+            child: Listener(
+              onPointerDown: _onDown,
+              onPointerMove: _onMove,
+              onPointerUp: _onUp,
+              onPointerCancel: _onCancel,
+              behavior: HitTestBehavior.opaque,
+              child: Container(
+                height: 160, // taller for comfortable signing
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _hasSignature
+                        ? _navy.withValues(alpha: 0.5)
+                        : const Color(0xFFB0BEC5),
+                    width: _hasSignature ? 1.5 : 1.0,
+                  ),
+                  boxShadow: _hasSignature
+                      ? [
+                          BoxShadow(
+                              color: _navy.withValues(alpha: 0.06),
+                              blurRadius: 6,
+                              offset: const Offset(0, 2))
+                        ]
+                      : null,
                 ),
-                boxShadow: _hasSignature
-                    ? [
-                        BoxShadow(
-                            color: _navy.withValues(alpha: 0.06),
-                            blurRadius: 6,
-                            offset: const Offset(0, 2))
-                      ]
-                    : null,
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(7),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // Subtle ruled-line background
-                    CustomPaint(painter: _SignatureRuledPainter()),
-
-                    // Signature ink
-                    CustomPaint(
-                      painter: _SignaturePainter(_strokes),
-                    ),
-
-                    // Placeholder when empty
-                    if (!_hasSignature)
-                      Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.draw_outlined,
-                                color: Colors.grey[300], size: 26),
-                            const SizedBox(height: 5),
-                            Text('Sign here',
-                                style: GoogleFonts.poppins(
-                                    color: Colors.grey[350],
-                                    fontSize: 12)),
-                            const SizedBox(height: 2),
-                            Text(
-                                'Finger • Stylus • Mouse — all supported',
-                                style: GoogleFonts.poppins(
-                                    color: Colors.grey[350],
-                                    fontSize: 9.5)),
-                          ],
-                        ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(7),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Ruled-line background (static — never repaints)
+                      const RepaintBoundary(
+                        child: CustomPaint(
+                            painter: _SignatureRuledPainter()),
                       ),
-                  ],
+                      // Ink strokes — repaints via _model notifier only
+                      CustomPaint(
+                        painter:
+                            _SignatureInkPainter(_model, _inkColor),
+                      ),
+                      // Placeholder hint
+                      if (!_hasSignature)
+                        Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.draw_outlined,
+                                  color: Colors.grey[300], size: 28),
+                              const SizedBox(height: 5),
+                              Text('Sign here',
+                                  style: GoogleFonts.poppins(
+                                      color: Colors.grey[350],
+                                      fontSize: 12)),
+                              const SizedBox(height: 2),
+                              Text(
+                                  'Finger · Stylus · Mouse — all supported',
+                                  style: GoogleFonts.poppins(
+                                      color: Colors.grey[350],
+                                      fontSize: 9.5)),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
         ),
 
-        // ── Status row ──────────────────────────────────────────
+        // ── Status row ───────────────────────────────────────────
         const SizedBox(height: 5),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -4865,7 +4939,7 @@ class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
             ]),
             if (_hasSignature)
               TextButton.icon(
-                onPressed: clear,
+                onPressed: _doReset,
                 icon: Icon(Icons.refresh_rounded,
                     size: 13, color: Colors.red[400]),
                 label: Text('Clear',
@@ -4887,76 +4961,83 @@ class _SignaturePadWidgetState extends State<_SignaturePadWidget> {
   }
 }
 
-// ── Ruled background painter (subtle horizontal guide lines) ─────
+// ── Ruled background painter ────────────────────────────────────
 class _SignatureRuledPainter extends CustomPainter {
+  const _SignatureRuledPainter();
+
   @override
   void paint(Canvas canvas, Size size) {
-    final linePaint = Paint()
+    final guide = Paint()
       ..color = const Color(0xFFF0F4F8)
       ..strokeWidth = 0.7;
-    // Draw three evenly-spaced guide lines
-    for (final y in [size.height * 0.35, size.height * 0.65, size.height * 0.88]) {
-      canvas.drawLine(
-          Offset(12, y), Offset(size.width - 12, y), linePaint);
+    for (final y in [
+      size.height * 0.30,
+      size.height * 0.55,
+      size.height * 0.80,
+    ]) {
+      canvas.drawLine(Offset(12, y), Offset(size.width - 12, y), guide);
     }
-    // Baseline in slightly darker blue-grey
-    final baseline = Paint()
-      ..color = const Color(0xFFCFD8DC)
-      ..strokeWidth = 0.8;
     canvas.drawLine(
-        Offset(12, size.height * 0.75),
-        Offset(size.width - 12, size.height * 0.75),
-        baseline);
+      Offset(12, size.height * 0.72),
+      Offset(size.width - 12, size.height * 0.72),
+      Paint()
+        ..color = const Color(0xFFCFD8DC)
+        ..strokeWidth = 0.9,
+    );
   }
 
   @override
   bool shouldRepaint(_SignatureRuledPainter _) => false;
 }
 
-// ── Signature ink painter — pressure-aware variable-width strokes ─
-class _SignaturePainter extends CustomPainter {
-  final List<List<_StrokePoint>> strokes;
+// ── Ink painter — subscribes to _StrokeModel via repaint notifier
+class _SignatureInkPainter extends CustomPainter {
+  final _StrokeModel model;
+  final Color inkColor;
 
-  const _SignaturePainter(this.strokes);
+  // Cached Paint objects — created once, reused every paint call
+  late final Paint _strokePaint = Paint()
+    ..color = inkColor
+    ..strokeCap = StrokeCap.round
+    ..strokeJoin = StrokeJoin.round
+    ..style = PaintingStyle.stroke;
 
-  // Base stroke width; scaled by pressure for stylus input.
-  static const _baseWidth = 2.0;
-  static const _maxWidth = 3.6;
+  late final Paint _dotPaint = Paint()
+    ..color = inkColor
+    ..style = PaintingStyle.fill;
+
+  _SignatureInkPainter(this.model, this.inkColor)
+      : super(repaint: model); // ← subscribes: notifyListeners → repaint
+
+  static const _baseWidth = 1.8;
+  static const _maxWidth  = 3.2;
 
   @override
   void paint(Canvas canvas, Size size) {
-    for (final stroke in strokes) {
+    for (final stroke in model.strokes) {
       if (stroke.isEmpty) continue;
 
       if (stroke.length == 1) {
-        // Single tap — draw a dot
         final p = stroke.first;
-        final r = _baseWidth * p.pressure;
+        _dotPaint.color = inkColor;
         canvas.drawCircle(
           p.position,
-          r.clamp(1.0, 3.0),
-          Paint()
-            ..color = const Color(0xFF0A2E5A)
-            ..style = PaintingStyle.fill,
+          (_baseWidth * (0.6 + p.pressure * 0.4)).clamp(1.0, 2.5),
+          _dotPaint,
         );
         continue;
       }
 
-      // Variable-width Bézier path using quadratic curves through
-      // midpoints. Stroke width is interpolated between consecutive
-      // points so pen pressure produces natural-looking thin-to-thick
-      // transitions.
+      // Build a single continuous path per stroke using midpoint
+      // Bézier curves — far smoother than segment-by-segment drawing.
+      final path = Path();
+      path.moveTo(stroke[0].position.dx, stroke[0].position.dy);
+
       for (int i = 0; i < stroke.length - 1; i++) {
         final p0 = stroke[i];
         final p1 = stroke[i + 1];
 
-        // Midpoint Bézier: control = p1, endpoint = midpoint(p1, p2)
-        final Offset start = i == 0
-            ? p0.position
-            : Offset(
-                (stroke[i - 1].position.dx + p0.position.dx) / 2,
-                (stroke[i - 1].position.dy + p0.position.dy) / 2,
-              );
+        final Offset ctrl = p0.position;
         final Offset end = i == stroke.length - 2
             ? p1.position
             : Offset(
@@ -4964,30 +5045,33 @@ class _SignaturePainter extends CustomPainter {
                 (p0.position.dy + p1.position.dy) / 2,
               );
 
-        final avgPressure = (p0.pressure + p1.pressure) / 2;
-        final strokeWidth =
-            (_baseWidth + (_maxWidth - _baseWidth) * avgPressure)
-                .clamp(_baseWidth, _maxWidth);
+        // Variable width per segment via separate drawPath calls
+        final w = (_baseWidth +
+                (_maxWidth - _baseWidth) *
+                    ((p0.pressure + p1.pressure) / 2))
+            .clamp(_baseWidth, _maxWidth);
 
-        final segPath = Path()..moveTo(start.dx, start.dy);
-        segPath.quadraticBezierTo(
-            p0.position.dx, p0.position.dy, end.dx, end.dy);
+        final seg = Path()
+          ..moveTo(i == 0
+                  ? stroke[0].position.dx
+                  : (stroke[i - 1].position.dx + p0.position.dx) / 2,
+              i == 0
+                  ? stroke[0].position.dy
+                  : (stroke[i - 1].position.dy + p0.position.dy) / 2)
+          ..quadraticBezierTo(
+              ctrl.dx, ctrl.dy, end.dx, end.dy);
 
-        canvas.drawPath(
-          segPath,
-          Paint()
-            ..color = const Color(0xFF0A2E5A)
-            ..strokeWidth = strokeWidth
-            ..strokeCap = StrokeCap.round
-            ..strokeJoin = StrokeJoin.round
-            ..style = PaintingStyle.stroke,
-        );
+        _strokePaint
+          ..color = inkColor
+          ..strokeWidth = w;
+        canvas.drawPath(seg, _strokePaint);
       }
     }
   }
 
   @override
-  bool shouldRepaint(_SignaturePainter old) => old.strokes != strokes;
+  bool shouldRepaint(_SignatureInkPainter old) =>
+      old.model != model || old.inkColor != inkColor;
 }
 // ══════════════════════════════════════════════════════════════════
 //  MONTHLY FORM IMAGE HELPERS
