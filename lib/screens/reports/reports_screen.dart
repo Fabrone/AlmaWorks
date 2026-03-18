@@ -464,14 +464,16 @@ class _ReportsScreenState extends State<ReportsScreen>
   Widget _buildFormReportItem(
       String docId, Map<String, dynamic> data, String type) {
     // ── Derive the bold title from the date filled in the form ──
-    // Every form report stores the user-selected date in the 'date'
-    // Timestamp field (set in DailyReportData.toMap / _buildReportData).
-    // Using this means both old and new records always show the correct
-    // work day in the title, regardless of what is stored in 'name'.
-    final formDateRaw = data['date'];
-    final DateTime? formDate = formDateRaw is Timestamp
-        ? formDateRaw.toDate()
-        : null;
+    // Daily forms store 'date'; Weekly forms store 'weekStart'+'weekEnd'.
+    // Using these raw Timestamp fields means both old and new records
+    // always display the correct work period — no database edits needed.
+    final formDateRaw   = data['date'];
+    final weekStartRaw  = data['weekStart'];
+    final weekEndRaw    = data['weekEnd'];
+
+    final DateTime? formDate  = formDateRaw  is Timestamp ? formDateRaw.toDate()  : null;
+    final DateTime? weekStart = weekStartRaw is Timestamp ? weekStartRaw.toDate() : null;
+    final DateTime? weekEnd   = weekEndRaw   is Timestamp ? weekEndRaw.toDate()   : null;
 
     // savedAt is always needed for the "Saved:" subtitle line.
     final DateTime savedAt = data['savedAt'] != null
@@ -482,11 +484,18 @@ class _ReportsScreenState extends State<ReportsScreen>
 
     final String displayName;
     if (formDate != null) {
-      // Preferred path: title built from the actual form date field.
-      // Applies to every record — old and new — so no database edits needed.
-      displayName = '$type Report – ${DateFormat('dd MMM yyyy').format(formDate)}';
+      // Daily (and any form that stores a single 'date' field)
+      displayName =
+          '$type Report – ${DateFormat('dd MMM yyyy').format(formDate)}';
+    } else if (weekStart != null) {
+      // Weekly (stores weekStart + weekEnd instead of a single date)
+      final endPart = weekEnd != null
+          ? ' → ${DateFormat('dd MMM yyyy').format(weekEnd)}'
+          : '';
+      displayName =
+          '$type Report – ${DateFormat('dd MMM yyyy').format(weekStart)}$endPart';
     } else {
-      // Fallback for any legacy doc that somehow lacks a 'date' field:
+      // Fallback for any legacy doc that lacks both 'date' and 'weekStart':
       // use the stored name, or derive from savedAt as a last resort.
       final storedName = data['name'] as String?;
       displayName = storedName != null && storedName.isNotEmpty
