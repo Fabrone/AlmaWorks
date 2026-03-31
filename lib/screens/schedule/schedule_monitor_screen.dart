@@ -254,7 +254,10 @@ class ScheduleMonitorScreen extends StatefulWidget {
   State<ScheduleMonitorScreen> createState() => _ScheduleMonitorScreenState();
 }
 
-class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with SingleTickerProviderStateMixin {
+class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late NotificationService _notificationService;
@@ -268,6 +271,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
   StreamSubscription<int>? _unreadCountSubscription;
 
   Timer? _refreshTimer;
+  Timer? _realtimeStatusTimer; // FIX: saved reference so dispose() can cancel it
 
   @override
   void initState() {
@@ -563,8 +567,10 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
   }
 
   void _startRealtimeStatusUpdater() {
-    // Update statuses every minute to catch date changes
-    Timer.periodic(const Duration(minutes: 1), (timer) async {
+    // Update statuses every minute to catch date changes.
+    // FIX: Store the timer so dispose() can cancel it immediately, preventing
+    // a stale Firestore write on the tick after the widget is unmounted.
+    _realtimeStatusTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
       if (!mounted) {
         timer.cancel();
         return;
@@ -662,6 +668,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
     widget.logger.d('🧹 Disposing ScheduleMonitorScreen');
     
     _refreshTimer?.cancel();
+    _realtimeStatusTimer?.cancel(); // FIX: cancel the realtime status updater
     _unreadCountSubscription?.cancel(); // FIXED: Cancel subscription
     _animationController.dispose();
     _searchController.dispose();
@@ -955,6 +962,7 @@ class _ScheduleMonitorScreenState extends State<ScheduleMonitorScreen> with Sing
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
     final Color overdueColor = Colors.red.shade700;
     final Color ongoingColor = Colors.blue.shade600;
     final Color startingSoonColor = Colors.orange.shade700;

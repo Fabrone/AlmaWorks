@@ -26,7 +26,10 @@ class MSProjectGanttScreen extends StatefulWidget {
   State<MSProjectGanttScreen> createState() => _MSProjectGanttScreenState();
 }
 
-class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
+class _MSProjectGanttScreenState extends State<MSProjectGanttScreen>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   final Map<String, List<GanttRowData>> _cachedProjects = {};
   bool _isOfflineMode = false;
   final ScrollController _horizontalScrollController = ScrollController();
@@ -2345,13 +2348,32 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
   }
 
   void _sortRowsByHierarchy() {
-    List<GanttRowData> sortedRows = [];
     Map<String, GanttRowData> rowMap = {};
 
     for (int i = 0; i < _rows.length; i++) {
       final row = _editedRows[i] ?? _rows[i];
       rowMap[row.id] = row;
     }
+
+    // FIX #1 (Critical): Rebuild childIds from parentId relationships before
+    // sorting. When rows are loaded from Firestore via fromFirebaseMap, only
+    // parentId is restored on each child row — the parent's childIds list is
+    // left empty. Without this step, addRowAndChildren() traverses an empty
+    // childIds list and all child rows are silently dropped, producing the
+    // "18 documents → 1 sorted row" behaviour seen in the logs.
+    for (final row in rowMap.values) {
+      row.childIds.clear();
+    }
+    for (final row in rowMap.values) {
+      if (row.parentId != null) {
+        final parent = rowMap[row.parentId!];
+        if (parent != null && !parent.childIds.contains(row.id)) {
+          parent.childIds.add(row.id);
+        }
+      }
+    }
+
+    List<GanttRowData> sortedRows = [];
 
     void addRowAndChildren(GanttRowData row) {
       sortedRows.add(row);
@@ -2381,9 +2403,13 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
       addRowAndChildren(topRow);
     }
 
-    setState(() {
-      _rows = sortedRows;
-    });
+    // FIX #2: Do NOT call setState() here. This method is invoked from both
+    // the Firestore stream listener and _loadTasksFromFirebase. Calling
+    // setState() internally caused a premature rebuild with only the partially
+    // sorted rows (before padding and reconciliation), then a second rebuild
+    // from the caller's own setState() — a double-rebuild race. Callers now
+    // own the single setState() that wraps all mutations.
+    _rows = sortedRows;
     widget.logger.d('📅 Sorted rows by hierarchy, total rows: ${_rows.length}');
   }
 
@@ -2525,6 +2551,7 @@ class _MSProjectGanttScreenState extends State<MSProjectGanttScreen> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required by AutomaticKeepAliveClientMixin
     if (_isLoading || _projectStartDate == null || _projectEndDate == null) {
       return Center(child: CircularProgressIndicator());
     }
@@ -4668,55 +4695,60 @@ class GanttRowPainter extends CustomPainter {
     }
   }
 
-  // UPDATED METHOD: Draw actual dates bar with overlap handling - now draws full light bar first, then dark overlap, then dotted outline for whole
+  // Draw actual dates bar with overlap handling.
   void _drawActualGanttBar(Canvas canvas, Size size) {
-    // Use scheduled dates as fallback if actual start/end missing
-    final actualStart = row.actualStartDate ?? row.startDate!;
-    final actualEnd = row.actualEndDate ?? row.endDate!;
-    final scheduledStartOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
-    final scheduledEndOffset = row.endDate!.difference(projectStartDate).inDays * dayWidth + dayWidth; // End of last day
-    
-    final actualStartOffset = actualStart.difference(projectStartDate).inDays * dayWidth;
-    final actualDuration = actualEnd.difference(actualStart).inDays + 1;
-    final actualBarWidth = actualDuration * dayWidth;
-    final actualEndOffset = actualStartOffset + actualBarWidth;
+    // Resolve actual start/end. Use scheduled dates as fallback ONLY when
+    // they are non-null — never force-unwrap them with !
+    final actualStart = row.actualStartDate ?? row.startDate;
+    final actualEnd   = row.actualEndDate   ?? row.endDate;
+
+    // Nothing to draw if we cannot resolve at least a start and an end.
+    if (actualStart == null || actualEnd == null) return;
 
     // Only proceed if valid range
     if (actualStart.isAfter(actualEnd)) return;
 
-    // Bar styling (light tint of scheduled color for tasks: green.shade100)
-    final barHeight = rowHeight * 0.6;
-    final barTop = (rowHeight - barHeight) / 2;
-    final lightColor = Colors.green.shade100; // Light tint
-    final darkColor = Colors.green.shade900;  // Darker shade for overlap (changed from shade800 to shade900 for more distinctness)
-    final dottedBorderPaint = Paint()
-      ..color = Colors.green.shade800
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..strokeCap = StrokeCap.round;
+    final actualStartOffset = actualStart.difference(projectStartDate).inDays * dayWidth;
+    final actualDuration    = actualEnd.difference(actualStart).inDays + 1;
+    final actualBarWidth    = actualDuration * dayWidth;
+    final actualEndOffset   = actualStartOffset + actualBarWidth;
 
-    // 1. Draw full actual bar with light color (no insets to avoid gaps)
+    // Bar styling
+    final barHeight = rowHeight * 0.6;
+    final barTop    = (rowHeight - barHeight) / 2;
+    final lightColor = Colors.green.shade100;
+    final darkColor  = Colors.green.shade900;
+    final dottedBorderPaint = Paint()
+      ..color       = Colors.green.shade800
+      ..style       = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..strokeCap   = StrokeCap.round;
+
+    // 1. Draw full actual bar with light colour
     final fullActualRect = RRect.fromRectAndRadius(
       Rect.fromLTWH(actualStartOffset, barTop, actualBarWidth, barHeight),
       Radius.circular(2),
     );
-    final lightPaint = Paint()..color = lightColor..style = PaintingStyle.fill;
-    canvas.drawRRect(fullActualRect, lightPaint);
+    canvas.drawRRect(fullActualRect, Paint()..color = lightColor..style = PaintingStyle.fill);
 
-    // 2. Overwrite overlap section with dark color (no insets)
-    final overlapStart = math.max(actualStartOffset, scheduledStartOffset);
-    final overlapEnd = math.min(actualEndOffset, scheduledEndOffset);
-    if (overlapStart < overlapEnd) {
-      final overlapWidth = overlapEnd - overlapStart;
-      final overlapRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(overlapStart, barTop, overlapWidth, barHeight),
-        Radius.circular(2),
-      );
-      final darkPaint = Paint()..color = darkColor..style = PaintingStyle.fill;
-      canvas.drawRRect(overlapRect, darkPaint);
+    // 2. Overwrite overlap with scheduled bar using dark colour — only when
+    //    scheduled dates are present. Without them there is nothing to overlap.
+    if (row.startDate != null && row.endDate != null) {
+      final scheduledStartOffset = row.startDate!.difference(projectStartDate).inDays * dayWidth;
+      final scheduledEndOffset   = row.endDate!.difference(projectStartDate).inDays * dayWidth + dayWidth;
+
+      final overlapStart = math.max(actualStartOffset, scheduledStartOffset);
+      final overlapEnd   = math.min(actualEndOffset,   scheduledEndOffset);
+      if (overlapStart < overlapEnd) {
+        final overlapRect = RRect.fromRectAndRadius(
+          Rect.fromLTWH(overlapStart, barTop, overlapEnd - overlapStart, barHeight),
+          Radius.circular(2),
+        );
+        canvas.drawRRect(overlapRect, Paint()..color = darkColor..style = PaintingStyle.fill);
+      }
     }
 
-    // 3. Draw dotted outline for the full actual bar
+    // 3. Dotted outline over the full actual bar
     _drawDashedRRect(canvas, fullActualRect, dottedBorderPaint, [2, 2]);
   }
 
