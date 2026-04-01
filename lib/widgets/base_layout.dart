@@ -1,6 +1,6 @@
 import 'package:almaworks/models/project_model.dart';
 import 'package:almaworks/rbacsystem/client_request_service.dart';
-import 'package:almaworks/screens/communication/communication_screen.dart'; // ← ADDED
+import 'package:almaworks/screens/communication/communication_screen.dart';
 import 'package:almaworks/screens/financial_screen.dart';
 import 'package:almaworks/screens/photo_gallery_screen.dart';
 import 'package:almaworks/screens/photos_screen.dart';
@@ -11,6 +11,7 @@ import 'package:almaworks/screens/drawings_screen.dart';
 import 'package:almaworks/screens/quality_and_safety_screen.dart';
 import 'package:almaworks/screens/reports/reports_screen.dart';
 import 'package:almaworks/screens/schedule/schedule_screen.dart';
+import 'package:almaworks/screens/schedule/task_progress_monitor_screen.dart'; // ← ADDED
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:logger/logger.dart';
@@ -374,6 +375,21 @@ class _BaseLayoutState extends State<BaseLayout> {
                   isMobile: isMobile,
                   isClient: isClient,
                   onNavigate: () => ReportsScreen(
+                    project: widget.project!,
+                    logger: widget.logger,
+                  ),
+                ),
+
+              // ── Task Progress Monitor (Admin / MainAdmin only) ─────────────
+              if (!isClient)
+                _buildProtectedMenuItem(
+                  context: context,
+                  icon: Icons.track_changes_rounded,
+                  title: 'Task Progress',
+                  selectedItem: 'Task Progress',
+                  isMobile: isMobile,
+                  isClient: isClient,
+                  onNavigate: () => TaskProgressMonitorScreen(
                     project: widget.project!,
                     logger: widget.logger,
                   ),
