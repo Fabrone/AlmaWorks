@@ -304,7 +304,16 @@ class _TaskProgressMonitorScreenState
   // ── Scroll controllers ──────────────────────────────────────────
   final _hScrollHeader = ScrollController();
   final _hScrollData   = ScrollController();
+  final _vScrollData   = ScrollController();   // vertical data rows scroll
   bool _syncingH = false;
+
+  // ── Smart period auto-scroll ─────────────────────────────────────
+  // ID of the last row that drove an auto-scroll so we only animate when
+  // the topmost visible row actually changes – not on every scroll pixel.
+  String _lastAutoScrollRowId = '';
+  // When false the user has manually dragged the period; re-enabled whenever
+  // the topmost row changes (i.e. they scroll to a new task/phase).
+  bool _periodAutoScroll = true;
 
   // ── Formatters ──────────────────────────────────────────────────
   final _dfDisplay = DateFormat('d MMM yy');
@@ -318,6 +327,10 @@ class _TaskProgressMonitorScreenState
     super.initState();
     _hScrollHeader.addListener(_syncHeaderToData);
     _hScrollData.addListener(_syncDataToHeader);
+    // Smart period auto-scroll: re-enable auto-scroll whenever the user
+    // moves the period panel manually (they're taking control).
+    _hScrollData.addListener(_onHorizontalManualScroll);
+    _vScrollData.addListener(_onVerticalScroll);
     _loadFromFirestore();
   }
 
@@ -325,8 +338,11 @@ class _TaskProgressMonitorScreenState
   void dispose() {
     _hScrollHeader.removeListener(_syncHeaderToData);
     _hScrollData.removeListener(_syncDataToHeader);
+    _hScrollData.removeListener(_onHorizontalManualScroll);
+    _vScrollData.removeListener(_onVerticalScroll);
     _hScrollHeader.dispose();
     _hScrollData.dispose();
+    _vScrollData.dispose();
     for (final c in _nameCtrlMap.values) {
       c.dispose();
     }
@@ -348,8 +364,165 @@ class _TaskProgressMonitorScreenState
     _syncingH = false;
   }
 
+  // ── Smart period auto-scroll ──────────────────────────────────────
+  //
+  // When the user scrolls vertically to a new row we detect which task /
+  // phase is now at the top of the viewport and smoothly slide the period
+  // panel so that row's start date appears near the left edge.  The user
+  // can still drag the period panel freely at any time; doing so suspends
+  // auto-scroll until the next row boundary is crossed.
+  // ─────────────────────────────────────────────────────────────────
+
+  /// Called whenever the period panel is scrolled by the *user* (touch /
+  /// mouse drag).  We detect this by checking whether the scroll position
+  /// is currently being driven by the user (not our own [_smartScrollPeriod]
+  /// animation) using the [ScrollPosition.isScrollingNotifier].
+  void _onHorizontalManualScroll() {
+    if (!_hScrollData.hasClients) return;
+    // If the scroll activity is user-initiated (drag), pause auto-scroll.
+    // _syncingH writes are never user-initiated so we ignore those.
+    if (_syncingH) return;
+    final pos = _hScrollData.position;
+    // AxisDirection activity from user: velocity is non-zero OR it is being
+    // held (drag in progress).  We simply mark auto-scroll as paused here;
+    // it re-enables automatically the next time the topmost row changes.
+    if (pos.isScrollingNotifier.value) {
+      _periodAutoScroll = false;
+    }
+  }
+
+  /// Main listener on [_vScrollData].  Fires on every vertical scroll pixel
+  /// but only acts when the topmost row changes.
+  void _onVerticalScroll() {
+    if (!_vScrollData.hasClients) return;
+    final vOffset = _vScrollData.offset;
+
+    // ── 1. Identify the topmost fully-or-partially-visible row ──────
+    final topRow = _topmostRowAtOffset(vOffset);
+    if (topRow == null) return;
+
+    // ── 2. Re-enable auto-scroll when we cross a new row boundary ───
+    if (topRow.id != _lastAutoScrollRowId) {
+      _lastAutoScrollRowId = topRow.id;
+      _periodAutoScroll = true;   // crossing a boundary re-arms auto-scroll
+    } else {
+      // Same row, still scrolling within it – honour the user's manual choice.
+      if (!_periodAutoScroll) return;
+    }
+
+    // ── 3. Resolve the target date for this row ──────────────────────
+    final targetDate = _targetDateForRow(topRow);
+    if (targetDate == null) return;
+
+    // ── 4. Compute the horizontal pixel offset for that date ─────────
+    final targetH = _hOffsetForDate(targetDate);
+    if (targetH == null) return;
+
+    // ── 5. Only animate when we'd actually move a meaningful amount ──
+    final currentH = _hScrollData.hasClients ? _hScrollData.offset : 0.0;
+    if ((targetH - currentH).abs() < _kDayW) return;
+
+    _smartScrollPeriod(targetH);
+  }
+
+  /// Returns the [TaskProgressRowData] whose vertical span contains [vOffset].
+  TaskProgressRowData? _topmostRowAtOffset(double vOffset) {
+    double accumulated = 0;
+    for (final row in _rows) {
+      final h = _computeRowH(row, effectiveNameW: _nameColW);
+      if (accumulated + h > vOffset) return row;
+      accumulated += h;
+    }
+    return _rows.isNotEmpty ? _rows.last : null;
+  }
+
+  /// Returns the best "jump-to" date for [row]:
+  ///   • task   → task.startDate (falls back to parent phase start)
+  ///   • phase  → phase.startDate
+  ///   • category / project → start date of the first phase/task below it
+  DateTime? _targetDateForRow(TaskProgressRowData row) {
+    switch (row.type) {
+      case TaskRowType.task:
+        if (row.startDate != null) return row.startDate;
+        // Fall back to the parent phase start date.
+        if (row.parentPhaseId != null) {
+          for (final r in _rows) {
+            if (r.id == row.parentPhaseId) return r.startDate;
+          }
+        }
+        return null;
+
+      case TaskRowType.phase:
+        return row.startDate;
+
+      case TaskRowType.category:
+      case TaskRowType.project:
+        // Walk forward from this row to find the first dated phase or task.
+        final rowIdx = _rows.indexOf(row);
+        for (int i = rowIdx; i < _rows.length; i++) {
+          final r = _rows[i];
+          if (r.startDate != null &&
+              (r.type == TaskRowType.phase || r.type == TaskRowType.task)) {
+            return r.startDate;
+          }
+        }
+        return null;
+    }
+  }
+
+  /// Converts [date] to the corresponding x-offset in the scrollable period
+  /// panel (sum of preceding phase widths + day index × [_kDayW]).
+  /// Returns the offset of the closest day on or after [date], or `null` if
+  /// the date lies outside all phase columns.
+  double? _hOffsetForDate(DateTime date) {
+    final target = DateTime(date.year, date.month, date.day);
+    double offset = 0;
+    for (final pc in _phaseColumns) {
+      for (int i = 0; i < pc.days.length; i++) {
+        if (!pc.days[i].isBefore(target)) {
+          // Subtract one day-width so the target column isn't flush against
+          // the left edge – showing one day of context before it.
+          return (offset + i * _kDayW - _kDayW).clamp(0.0, double.infinity);
+        }
+      }
+      offset += pc.days.length * _kDayW;
+    }
+    // Date is beyond all columns → scroll to the very end.
+    return offset > 0 ? offset : null;
+  }
+
+  /// Smoothly scrolls both the period header and data panel to [hOffset].
+  /// Uses [animateTo] so the user can interrupt at any time by touching the
+  /// scroll view, which Flutter cancels the animation naturally.
+  void _smartScrollPeriod(double hOffset) {
+    if (!_hScrollData.hasClients) return;
+    final maxExtent = _hScrollData.position.maxScrollExtent;
+    final clamped   = hOffset.clamp(0.0, maxExtent);
+
+    // Animate both in parallel; the existing _syncDataToHeader listener will
+    // keep the sticky header in sync, but we animate it explicitly too for
+    // a perfectly smooth result.
+    _hScrollData.animateTo(
+      clamped,
+      duration: const Duration(milliseconds: 350),
+      curve: Curves.easeOutCubic,
+    );
+    if (_hScrollHeader.hasClients) {
+      final maxH = _hScrollHeader.position.maxScrollExtent;
+      _hScrollHeader.animateTo(
+        clamped.clamp(0.0, maxH),
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   // ── Phase cache ─────────────────────────────────────────────────
-  void _invalidatePhaseCache() => _cachedPhaseColumns = null;
+  void _invalidatePhaseCache() {
+    _cachedPhaseColumns    = null;
+    _lastAutoScrollRowId   = '';   // re-arm auto-scroll after data changes
+    _periodAutoScroll      = true;
+  }
 
   List<_PhaseColumnData> get _phaseColumns =>
       _cachedPhaseColumns ??= _buildPhaseColumns();
@@ -1587,6 +1760,7 @@ class _TaskProgressMonitorScreenState
                   // Use a ScrollController for vertical scroll
                   return SingleChildScrollView(
                     scrollDirection: Axis.vertical,
+                    controller: _vScrollData,
                     physics: const BouncingScrollPhysics(
                         parent: AlwaysScrollableScrollPhysics()),
                     child: Row(

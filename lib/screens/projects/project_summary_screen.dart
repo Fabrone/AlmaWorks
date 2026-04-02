@@ -8,6 +8,7 @@ import 'package:almaworks/widgets/dashboard_card.dart';
 import 'package:almaworks/widgets/todo_widget.dart';
 import 'package:almaworks/widgets/weather_widget.dart';
 import 'package:almaworks/widgets/base_layout.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:logger/logger.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -31,6 +32,80 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
   final NotificationService _notificationService = NotificationService(logger: Logger());
+
+  // ── Task Progress Monitor – real-time progress stream ────────────
+  // Listens to the same Firestore document that TaskProgressMonitorScreen
+  // writes, and recomputes project progress whenever the document changes.
+  late final Stream<double> _tpmProgressStream = FirebaseFirestore.instance
+      .collection('TaskProgressMonitor')
+      .doc(widget.project.id)
+      .snapshots()
+      .map(_computeProgressFromSnapshot);
+
+  /// Replicates the exact formula from TaskProgressMonitorScreen:
+  ///   progress = Σ checkedDays(task) / Σ expectedWorkDays(task)
+  /// where expectedWorkDays = Mon–Sat days between startDate and endDate
+  /// and   checkedDays      = dailyStatus entries whose value is 'D' (done)
+  ///                          or any legacy code that maps to done (S, O, C).
+  static double _computeProgressFromSnapshot(DocumentSnapshot snap) {
+    if (!snap.exists) return 0.0;
+
+    final data       = snap.data() as Map<String, dynamic>? ?? {};
+    final rawRows    = data['rows']         as List<dynamic>?       ?? [];
+    final rawStatus  = data['dailyStatuses'] as Map<String, dynamic>? ?? {};
+
+    // Build a flat map of taskId → checked-day count and expected-day count.
+    int totalExpected = 0;
+    int totalChecked  = 0;
+
+    for (final entry in rawRows) {
+      final m = Map<String, dynamic>.from(entry as Map);
+      if ((m['type'] as String?) != 'task') continue;
+
+      final id    = m['id'] as String? ?? '';
+      final start = (m['startDate'] as Timestamp?)?.toDate();
+      final end   = (m['endDate']   as Timestamp?)?.toDate();
+      if (start == null || end == null || id.isEmpty) continue;
+
+      // Count expected working days (Mon–Sat, no Sundays).
+      totalExpected += _countWorkDays(start, end);
+
+      // Count checked days: any key that starts with "{id}_" and maps to done.
+      final prefix = '${id}_';
+      for (final kv in rawStatus.entries) {
+        if (!kv.key.startsWith(prefix)) continue;
+        if (_isDone(kv.value as String?)) totalChecked++;
+      }
+    }
+
+    if (totalExpected == 0) return 0.0;
+    return (totalChecked / totalExpected).clamp(0.0, 1.0);
+  }
+
+  /// Mon–Sat working days between [start] and [end] inclusive.
+  static int _countWorkDays(DateTime start, DateTime end) {
+    int count = 0;
+    DateTime cur = DateTime(start.year, start.month, start.day);
+    final endN   = DateTime(end.year,   end.month,   end.day);
+    while (!cur.isAfter(endN)) {
+      if (cur.weekday != DateTime.sunday) count++;
+      cur = cur.add(const Duration(days: 1));
+    }
+    return count;
+  }
+
+  /// Returns true for any storage code that counts as "work done".
+  static bool _isDone(String? code) {
+    switch (code) {
+      case 'D': // current "done" code
+      case 'S': // legacy: started
+      case 'O': // legacy: ongoing
+      case 'C': // legacy: completed
+        return true;
+      default:
+        return false;
+    }
+  }
 
   @override
   void dispose() {
@@ -307,15 +382,51 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             ),
           ),
           const SizedBox(width: 12),
+          // ── Progress card – live from TaskProgressMonitor ─────────
           Expanded(
-            child: DashboardCard(
-              title: 'Progress',
-              value: '${widget.project.progress.toStringAsFixed(0)}%',
-              icon: Icons.trending_up,
-              color: widget.project.isActive ? Colors.blue : Colors.grey,
-              onTap: () {
-                widget.logger.i(
-                  '👆 ProjectSummaryScreen: Progress card tapped',
+            child: StreamBuilder<double>(
+              stream: _tpmProgressStream,
+              builder: (context, snapshot) {
+                // While waiting for the first snapshot show a subtle loader;
+                // on error fall back to the static project.progress value.
+                final double progress;
+                final bool isLive;
+                if (snapshot.hasError) {
+                  progress = widget.project.progress / 100.0;
+                  isLive   = false;
+                } else if (!snapshot.hasData) {
+                  // Show a placeholder card while the stream loads.
+                  return DashboardCard(
+                    title: 'Progress',
+                    value: '…',
+                    icon: Icons.trending_up,
+                    color: Colors.blue.withValues(alpha: 0.4),
+                    onTap: () {},
+                  );
+                } else {
+                  progress = snapshot.data!;
+                  isLive   = true;
+                }
+
+                final pct = (progress * 100).toStringAsFixed(0);
+                final cardColor = isLive
+                    ? (progress >= 1.0
+                        ? Colors.green
+                        : widget.project.isActive
+                            ? Colors.blue
+                            : Colors.grey)
+                    : Colors.grey;
+
+                return DashboardCard(
+                  title: isLive ? 'Progress (Live)' : 'Progress',
+                  value: '$pct%',
+                  icon: Icons.trending_up,
+                  color: cardColor,
+                  onTap: () {
+                    widget.logger.i(
+                      '👆 ProjectSummaryScreen: Progress card tapped — $pct% (live: $isLive)',
+                    );
+                  },
                 );
               },
             ),
