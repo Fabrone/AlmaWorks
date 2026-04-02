@@ -17,55 +17,67 @@ import 'package:uuid/uuid.dart';
 
 enum TaskRowType { project, category, phase, task }
 
-enum DayStatus { none, started, ongoing, completed, holiday }
+enum DayStatus { none, done, holiday, badWeather }
 
 extension DayStatusX on DayStatus {
   String get code {
     switch (this) {
-      case DayStatus.started:   return 'S';
-      case DayStatus.ongoing:   return 'O';
-      case DayStatus.completed: return 'C';
-      case DayStatus.holiday:   return 'H';
-      default:                  return '';
+      case DayStatus.done:       return '✓';
+      case DayStatus.holiday:    return 'H';
+      case DayStatus.badWeather: return 'W';
+      default:                   return '';
+    }
+  }
+
+  // Storage codes (single ASCII char, backward-compat)
+  String get storageCode {
+    switch (this) {
+      case DayStatus.done:       return 'D';
+      case DayStatus.holiday:    return 'H';
+      case DayStatus.badWeather: return 'W';
+      default:                   return '';
     }
   }
 
   String get label {
     switch (this) {
-      case DayStatus.started:   return 'Started';
-      case DayStatus.ongoing:   return 'Ongoing';
-      case DayStatus.completed: return 'Completed';
-      case DayStatus.holiday:   return 'Holiday';
-      default:                  return 'Not Set';
+      case DayStatus.done:       return 'Work Done ✓';
+      case DayStatus.holiday:    return 'Holiday (H)';
+      case DayStatus.badWeather: return 'Bad Weather (W)';
+      default:                   return 'Not Set';
     }
   }
 
   Color get color {
     switch (this) {
-      case DayStatus.started:   return const Color(0xFF1565C0);
-      case DayStatus.ongoing:   return const Color(0xFFE65100);
-      case DayStatus.completed: return const Color(0xFF2E7D32);
-      case DayStatus.holiday:   return const Color(0xFF6A1B9A);
-      default:                  return Colors.grey;
+      case DayStatus.done:       return const Color(0xFF2E7D32);
+      case DayStatus.holiday:    return const Color(0xFF6A1B9A);
+      case DayStatus.badWeather: return const Color(0xFF00838F);
+      default:                   return Colors.grey;
     }
   }
 
   Color get bgColor {
     switch (this) {
-      case DayStatus.started:   return const Color(0xFFE3F2FD);
-      case DayStatus.ongoing:   return const Color(0xFFFFF3E0);
-      case DayStatus.completed: return const Color(0xFFE8F5E9);
-      case DayStatus.holiday:   return const Color(0xFFF3E5F5);
-      default:                  return Colors.white;
+      case DayStatus.done:       return const Color(0xFFE8F5E9);
+      case DayStatus.holiday:    return const Color(0xFFF3E5F5);
+      case DayStatus.badWeather: return const Color(0xFFE0F7FA);
+      default:                   return Colors.white;
     }
   }
 
+  bool get countsAsWorked => this == DayStatus.done;
+
   static DayStatus fromCode(String? code) {
     switch (code) {
-      case 'S': return DayStatus.started;
-      case 'O': return DayStatus.ongoing;
-      case 'C': return DayStatus.completed;
+      // New codes
+      case 'D': return DayStatus.done;
       case 'H': return DayStatus.holiday;
+      case 'W': return DayStatus.badWeather;
+      // Legacy migration – treat old started/ongoing/completed as done
+      case 'S': return DayStatus.done;
+      case 'O': return DayStatus.done;
+      case 'C': return DayStatus.done;
       default:  return DayStatus.none;
     }
   }
@@ -349,7 +361,39 @@ class _TaskProgressMonitorScreenState
             r.startDate != null &&
             r.endDate != null)
         .map((phase) {
-          final days  = _workingDays(phase.startDate!, phase.endDate!);
+          // Find the latest date among all tasks in this phase (may exceed phase.endDate)
+          DateTime effectiveEnd = phase.endDate!;
+          for (final row in _rows) {
+            if (row.type == TaskRowType.task &&
+                row.parentPhaseId == phase.id &&
+                row.endDate != null &&
+                row.endDate!.isAfter(effectiveEnd)) {
+              effectiveEnd = row.endDate!;
+            }
+          }
+          // Also check if any done-marks exist past effectiveEnd for any task
+          final prefix = RegExp(r'^([^_]+)_(\d{8})$');
+          for (final entry in _dailyStatuses.entries) {
+            final m = prefix.firstMatch(entry.key);
+            if (m == null) continue;
+            final taskId  = m.group(1)!;
+            final dateStr = m.group(2)!;
+            final taskInPhase = _rows.any((r) =>
+                r.id == taskId &&
+                r.type == TaskRowType.task &&
+                r.parentPhaseId == phase.id);
+            if (!taskInPhase) continue;
+            try {
+              final d = DateTime(
+                int.parse(dateStr.substring(0, 4)),
+                int.parse(dateStr.substring(4, 6)),
+                int.parse(dateStr.substring(6, 8)),
+              );
+              if (d.isAfter(effectiveEnd)) effectiveEnd = d;
+            } catch (_) {}
+          }
+
+          final days  = _workingDays(phase.startDate!, effectiveEnd);
           final weeks = _groupWeeks(days);
           return _PhaseColumnData(phase: phase, days: days, weeks: weeks);
         })
@@ -684,10 +728,10 @@ class _TaskProgressMonitorScreenState
       if (status == DayStatus.none) {
         _dailyStatuses.remove(key);
       } else {
-        _dailyStatuses[key] = status.code;
+        _dailyStatuses[key] = status.storageCode;
       }
     });
-    _autosaveStatus(key, status == DayStatus.none ? null : status.code);
+    _autosaveStatus(key, status == DayStatus.none ? null : status.storageCode);
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -723,41 +767,89 @@ class _TaskProgressMonitorScreenState
   }
 
   // ─────────────────────────────────────────────────────────────────
-  // PROGRESS
+  // PROGRESS  –  day-count based (not task-completion based)
+  //
+  // Task %  = checkedDays / expectedWorkDays
+  //           where expectedWorkDays = working days (no Sundays) between
+  //           task.startDate and task.endDate (inclusive).
+  //           checkedDays = days marked [done] on or before today
+  //           (days past the planned endDate count too – shown in orange).
+  //
+  // Phase % = sum(checkedDays for all tasks in phase)
+  //         / sum(expectedWorkDays for all tasks in phase)
+  //
+  // Project % = same aggregation across all phases / all tasks.
   // ─────────────────────────────────────────────────────────────────
-  bool _isTaskDone(TaskProgressRowData task, DateTime phaseEnd) {
-    final checkDate = task.endDate != null && !task.endDate!.isAfter(phaseEnd)
-        ? task.endDate!
-        : phaseEnd;
-    final d = DateTime(checkDate.year, checkDate.month, checkDate.day);
-    return _getStatus(task.id, d) == DayStatus.completed;
+
+  /// Working days (Mon-Sat, no Sundays) between [start] and [end] inclusive.
+  int _countWorkDays(DateTime start, DateTime end) {
+    int count = 0;
+    DateTime cur = DateTime(start.year, start.month, start.day);
+    final endN   = DateTime(end.year,   end.month,   end.day);
+    while (!cur.isAfter(endN)) {
+      if (cur.weekday != DateTime.sunday) count++;
+      cur = cur.add(const Duration(days: 1));
+    }
+    return count;
   }
 
+  /// Count of [done] checkmarks for [task] across ALL dates (including past planned end).
+  int _checkedDaysForTask(TaskProgressRowData task) {
+    if (task.startDate == null) return 0;
+    int count = 0;
+    // Scan all keys that belong to this task
+    final prefix = '${task.id}_';
+    for (final entry in _dailyStatuses.entries) {
+      if (!entry.key.startsWith(prefix)) continue;
+      if (DayStatusX.fromCode(entry.value).countsAsWorked) count++;
+    }
+    return count;
+  }
+
+  /// Expected working days for a task (Mon-Sat, no Sundays).
+  int _expectedDaysForTask(TaskProgressRowData task) {
+    if (task.startDate == null || task.endDate == null) return 0;
+    return _countWorkDays(task.startDate!, task.endDate!);
+  }
+
+  /// 0.0–1.0 progress for a single task.
+  double _taskProgress(TaskProgressRowData task) {
+    final expected = _expectedDaysForTask(task);
+    if (expected == 0) return 0.0;
+    final checked  = _checkedDaysForTask(task);
+    return (checked / expected).clamp(0.0, 1.0);
+  }
+
+  /// 0.0–1.0 progress for a phase (weighted by expected work days).
   double _phaseProgress(TaskProgressRowData phase) {
     if (phase.startDate == null || phase.endDate == null) return 0.0;
     final tasks = _rows
         .where((r) => r.type == TaskRowType.task && r.parentPhaseId == phase.id)
         .toList();
     if (tasks.isEmpty) return 0.0;
-    final done = tasks.where((t) => _isTaskDone(t, phase.endDate!)).length;
-    return done / tasks.length;
+
+    int totalExpected = 0;
+    int totalChecked  = 0;
+    for (final t in tasks) {
+      totalExpected += _expectedDaysForTask(t);
+      totalChecked  += _checkedDaysForTask(t);
+    }
+    if (totalExpected == 0) return 0.0;
+    return (totalChecked / totalExpected).clamp(0.0, 1.0);
   }
 
+  /// 0.0–1.0 project-level progress (weighted by expected work days across all tasks).
   double get _projectProgress {
-    final phases = _rows.where((r) => r.type == TaskRowType.phase).toList();
-    if (phases.isEmpty) {
-      final tasks = _rows.where((r) => r.type == TaskRowType.task).toList();
-      if (tasks.isEmpty) return 0.0;
-      final done = tasks.where((t) {
-        if (t.endDate == null) return false;
-        return _getStatus(t.id,
-                DateTime(t.endDate!.year, t.endDate!.month, t.endDate!.day)) ==
-            DayStatus.completed;
-      }).length;
-      return done / tasks.length;
+    final allTasks = _rows.where((r) => r.type == TaskRowType.task).toList();
+    if (allTasks.isEmpty) return 0.0;
+    int totalExpected = 0;
+    int totalChecked  = 0;
+    for (final t in allTasks) {
+      totalExpected += _expectedDaysForTask(t);
+      totalChecked  += _checkedDaysForTask(t);
     }
-    final total = phases.fold(0.0, (s, p) => s + _phaseProgress(p));
-    return total / phases.length;
+    if (totalExpected == 0) return 0.0;
+    return (totalChecked / totalExpected).clamp(0.0, 1.0);
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -773,50 +865,96 @@ class _TaskProgressMonitorScreenState
   }
 
   /// Computes the actual row height, expanding vertically when the task name
-  /// is too long to fit on a single line in the current name column width.
+  /// is too long to fit on a single line in the name column.
+  ///
+  /// [effectiveNameW] is the *actual* rendered name-cell width supplied by the
+  /// LayoutBuilder in [_buildTable].  When omitted the cached [_nameColW] is
+  /// used as a fallback, but callers should always supply the real width to
+  /// avoid the 1-frame stale-value race that causes bottom overflows.
+  ///
   /// Both the fixed panel and the period panel call this method so they always
   /// agree on height – no alignment drift.
-  double _computeRowH(TaskProgressRowData row) {
-    final base = _baseRowH(row.type);
-    final name = row.taskName.trim();
-    if (name.isEmpty) return base;
+  double _computeRowH(TaskProgressRowData row, {double? effectiveNameW}) {
+    final base  = _baseRowH(row.type);
+    // Prefer the caller-supplied width; fall back to the cached state value.
+    final colW  = effectiveNameW ?? _nameColW;
+    final name  = row.taskName.trim();
 
-    // Estimated pixel width occupied by the type badge + indent + padding.
+    if (name.isEmpty) {
+      // Even empty task rows need space for the progress badge + padding.
+      return row.type == TaskRowType.task ? base + 22.0 : base;
+    }
+
+    // ── Horizontal space consumed by badge chip + indent + cell padding ──
     const badgeWidths = {
       TaskRowType.task    : 0.0,
       TaskRowType.phase   : 30.0,
       TaskRowType.project : 38.0,
       TaskRowType.category: 38.0,
     };
-    final badgeW  = badgeWidths[row.type]!;
-    final indent  = row.indentLevel.clamp(0, 5) * 10.0;
-    final availW  = (_nameColW - indent - badgeW - 18.0).clamp(30.0, double.infinity);
+    final badgeW = badgeWidths[row.type]!;
+    final indent = row.indentLevel.clamp(0, 5) * 10.0;
+    // left: indent+6, right: 4  → 10px consumed; add 18px safety for sub-pixel
+    // differences, border widths, and the badge gap.
+    final availW = (colW - indent - badgeW - 28.0).clamp(30.0, double.infinity);
 
-    // Approximate character width for Poppins at 11 px ≈ 6.1 px/char.
-    final charsPerLine = (availW / 6.1).floor().clamp(5, 500);
-    final linesNeeded  = (name.length / charsPerLine).ceil().clamp(1, 5);
+    // Poppins 11 px – use a slightly conservative char-width (6.8 px) so we
+    // never undercount lines on narrow columns.
+    final charsPerLine = (availW / 6.8).floor().clamp(5, 500);
+    final linesNeeded  = (name.length / charsPerLine).ceil().clamp(1, 10);
 
-    if (linesNeeded <= 1) return base;
+    // 11 px font × 1.45 line-height = 15.95 px; add 2 px for EditableText
+    // baseline offset and font-metric headroom → 18 px per line.
+    const lineH = 18.0;
 
-    // ~17 px per extra line (1.55 × 11 px)
-    return base + (linesNeeded - 1) * 17.0;
+    // Badge section (task rows only):
+    //   4 px SizedBox gap + 3 px indicator track + ~13 px stat-text row
+    //   + 6 px headroom for font metrics & touch area = 26 px total.
+    const badgeH = 26.0;
+
+    // Actual vertical padding in the name cell:
+    //   top: 6 px; bottom: 8 px for tasks, 6 px for others.
+    final padV = row.type == TaskRowType.task ? 14.0 : 12.0;
+
+    final textH      = linesNeeded * lineH;
+    final extraBadge = row.type == TaskRowType.task ? badgeH : 0.0;
+
+    // +1 px so sub-pixel rounding never triggers a 0.5 px overflow.
+    final computed = padV + textH + extraBadge + 1.0;
+
+    return computed.clamp(base, double.infinity);
   }
 
   // ─────────────────────────────────────────────────────────────────
   // STATUS PICKER
   // ─────────────────────────────────────────────────────────────────
-  Future<void> _showStatusPicker(TaskProgressRowData row, DateTime day) async {
+  // ─────────────────────────────────────────────────────────────────
+  // STATUS PICKER  –  instant response: close sheet first, then apply
+  // ─────────────────────────────────────────────────────────────────
+  void _showStatusPicker(TaskProgressRowData row, DateTime day) {
     final current = _getStatus(row.id, day);
     if (!mounted) return;
 
-    final selected = await showModalBottomSheet<DayStatus>(
+    // Helper: dismiss the sheet and immediately apply status in the same frame.
+    // We pop first so Flutter can start the close animation while setState
+    // runs – the user sees the cell update with zero perceived lag.
+    void pick(BuildContext ctx, DayStatus s) {
+      Navigator.of(ctx).pop();        // start sheet close animation
+      _setStatus(row.id, day, s);     // update cell immediately
+    }
+
+    showModalBottomSheet<void>(
       context: context,
+      useRootNavigator: false,        // avoids extra navigator overhead
+      isDismissible: true,
+      enableDrag: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Drag handle
             Container(
               width: 38, height: 4,
               margin: const EdgeInsets.symmetric(vertical: 8),
@@ -825,7 +963,7 @@ class _TaskProgressMonitorScreenState
                   borderRadius: BorderRadius.circular(2)),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
               child: Text(
                 '${row.taskName.trim()}  ·  ${DateFormat('EEE d MMM yyyy').format(day)}',
                 style: GoogleFonts.poppins(
@@ -834,28 +972,81 @@ class _TaskProgressMonitorScreenState
               ),
             ),
             const Divider(height: 1),
-            ...DayStatus.values.map((s) => ListTile(
-                  dense: true,
-                  leading: _statusChip(s),
-                  title: Text(s.label,
-                      style: GoogleFonts.poppins(
-                          fontSize: 13,
-                          color: s == DayStatus.none
-                              ? Colors.grey[500]
-                              : Colors.black87)),
-                  trailing: s == current
-                      ? Icon(Icons.check_circle_rounded,
-                          color: Colors.green[700], size: 16)
-                      : null,
-                  onTap: () => Navigator.pop(ctx, s),
-                )),
+            // ── Clear ──────────────────────────────────────────────
+            _pickerTile(
+              ctx: ctx,
+              status: DayStatus.none,
+              current: current,
+              label: 'Clear / Not Set',
+              labelColor: Colors.grey[500]!,
+              onPick: pick,
+            ),
+            // ── Work Done ──────────────────────────────────────────
+            _pickerTile(
+              ctx: ctx,
+              status: DayStatus.done,
+              current: current,
+              label: DayStatus.done.label,
+              labelColor: Colors.black87,
+              onPick: pick,
+            ),
+            // ── Holiday ────────────────────────────────────────────
+            _pickerTile(
+              ctx: ctx,
+              status: DayStatus.holiday,
+              current: current,
+              label: DayStatus.holiday.label,
+              labelColor: Colors.black87,
+              onPick: pick,
+            ),
+            // ── Bad Weather ────────────────────────────────────────
+            _pickerTile(
+              ctx: ctx,
+              status: DayStatus.badWeather,
+              current: current,
+              label: DayStatus.badWeather.label,
+              labelColor: Colors.black87,
+              onPick: pick,
+            ),
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
+  }
 
-    if (selected != null) _setStatus(row.id, day, selected);
+  /// Single option tile in the status picker.
+  Widget _pickerTile({
+    required BuildContext ctx,
+    required DayStatus status,
+    required DayStatus current,
+    required String label,
+    required Color labelColor,
+    required void Function(BuildContext, DayStatus) onPick,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => onPick(ctx, status),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            children: [
+              _statusChip(status),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(label,
+                    style: GoogleFonts.poppins(
+                        fontSize: 13, color: labelColor)),
+              ),
+              if (status == current)
+                Icon(Icons.check_circle_rounded,
+                    color: Colors.green[700], size: 18),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _statusChip(DayStatus s) {
@@ -875,9 +1066,11 @@ class _TaskProgressMonitorScreenState
           border: Border.all(color: s.color.withValues(alpha: 0.5)),
           borderRadius: BorderRadius.circular(6)),
       child: Center(
-        child: Text(s.code,
-            style: GoogleFonts.poppins(
-                fontSize: 11, fontWeight: FontWeight.w800, color: s.color)),
+        child: s == DayStatus.done
+            ? Icon(Icons.check_rounded, size: 14, color: s.color)
+            : Text(s.code,
+                style: GoogleFonts.poppins(
+                    fontSize: 11, fontWeight: FontWeight.w800, color: s.color)),
       ),
     );
   }
@@ -1247,13 +1440,11 @@ class _TaskProgressMonitorScreenState
           onTap: _removeLastRow,
         ),
         const Spacer(),
-        _legendChip('S', DayStatus.started),
+        _legendChip(DayStatus.done),
         const SizedBox(width: 4),
-        _legendChip('O', DayStatus.ongoing),
+        _legendChip(DayStatus.holiday),
         const SizedBox(width: 4),
-        _legendChip('C', DayStatus.completed),
-        const SizedBox(width: 4),
-        _legendChip('H', DayStatus.holiday),
+        _legendChip(DayStatus.badWeather),
         const SizedBox(width: 8),
         SizedBox(
           height: 32,
@@ -1318,15 +1509,26 @@ class _TaskProgressMonitorScreenState
     );
   }
 
-  Widget _legendChip(String code, DayStatus s) => Container(
+  Widget _legendChip(DayStatus s) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
         decoration: BoxDecoration(
             color: s.bgColor,
             borderRadius: BorderRadius.circular(4),
             border: Border.all(color: s.color.withValues(alpha: 0.4))),
-        child: Text(code,
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          if (s == DayStatus.done)
+            Icon(Icons.check_rounded, size: 10, color: s.color)
+          else
+            Text(s.code,
+                style: GoogleFonts.poppins(
+                    fontSize: 9, fontWeight: FontWeight.w800, color: s.color)),
+          const SizedBox(width: 3),
+          Text(
+            s == DayStatus.done ? 'Done' : s == DayStatus.holiday ? 'Holiday' : 'Bad Weather',
             style: GoogleFonts.poppins(
-                fontSize: 9, fontWeight: FontWeight.w800, color: s.color)),
+                fontSize: 8, fontWeight: FontWeight.w600, color: s.color),
+          ),
+        ]),
       );
 
   // ═════════════════════════════════════════════════════════════════
@@ -1400,6 +1602,7 @@ class _TaskProgressMonitorScreenState
                                   e.value,
                                   rowNumber: e.key + 1,
                                   fixedW: fixedW,
+                                  effectiveNameW: effectiveNameColW,
                                 ),
                               ),
                             ).toList(),
@@ -1419,7 +1622,7 @@ class _TaskProgressMonitorScreenState
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: _rows.map((r) =>
-                                  RepaintBoundary(child: _buildPeriodRow(r)),
+                                  RepaintBoundary(child: _buildPeriodRow(r, effectiveNameW: effectiveNameColW)),
                                 ).toList(),
                               ),
                             ),
@@ -1563,6 +1766,12 @@ class _TaskProgressMonitorScreenState
                     children: pc.weeks.map((week) {
                       final weekW        = week.length * _kDayW;
                       final isLastWeek   = week == pc.weeks.last;
+                      // A week header is "overrun" if ALL its days are past the phase end
+                      final phaseEndDay  = DateTime(
+                          pc.phase.endDate!.year,
+                          pc.phase.endDate!.month,
+                          pc.phase.endDate!.day);
+                      final weekIsOverrun = week.first.isAfter(phaseEndDay);
                       return SizedBox(
                         width: weekW,
                         child: Column(
@@ -1572,40 +1781,61 @@ class _TaskProgressMonitorScreenState
                               height: 26,
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
-                                color: _navyLight,
+                                color: weekIsOverrun
+                                    ? const Color(0xFF7B3A10)
+                                    : _navyLight,
                                 border: Border(
                                   right: isLastWeek
-                                      ? const BorderSide(
+                                      ? BorderSide(
                                           color: Colors.white38,
                                           width: _weekBorderWidth)
-                                      : const BorderSide(
+                                      : BorderSide(
                                           color: _weekBorderColor,
                                           width: _weekBorderWidth),
                                 ),
                               ),
-                              child: Text(
-                                '${DateFormat('MMM d').format(week.first)} – '
-                                '${DateFormat('MMM d').format(week.last)}',
-                                style: GoogleFonts.poppins(
-                                    color: Colors.white70,
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.w600),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (weekIsOverrun) ...[
+                                      const Icon(Icons.warning_amber_rounded,
+                                          size: 8, color: Color(0xFFFFB74D)),
+                                      const SizedBox(width: 2),
+                                    ],
+                                    Text(
+                                      '${DateFormat('MMM d').format(week.first)} – '
+                                      '${DateFormat('MMM d').format(week.last)}',
+                                      style: GoogleFonts.poppins(
+                                          color: weekIsOverrun
+                                              ? const Color(0xFFFFB74D)
+                                              : Colors.white70,
+                                          fontSize: 8,
+                                          fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                             // Day name cells
                             Expanded(
                               child: Row(
                                 children: week.asMap().entries.map((de) {
-                                  final day          = de.value;
-                                  final isWeekEnd    = de.key == week.length - 1;
+                                  final day       = de.value;
+                                  final isWeekEnd = de.key == week.length - 1;
+                                  final dayIsOverrun = day.isAfter(phaseEndDay);
                                   return Container(
                                     width: _kDayW,
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFF0B3070),
+                                      color: dayIsOverrun
+                                          ? const Color(0xFF6D3010)
+                                          : const Color(0xFF0B3070),
                                       border: Border(
                                         right: isWeekEnd
-                                            ? const BorderSide(
+                                            ? BorderSide(
                                                 color: _weekBorderColor,
                                                 width: _weekBorderWidth)
                                             : const BorderSide(
@@ -1619,14 +1849,18 @@ class _TaskProgressMonitorScreenState
                                         Text(
                                           DateFormat('EEE').format(day).substring(0, 2),
                                           style: GoogleFonts.poppins(
-                                              color: Colors.white60,
+                                              color: dayIsOverrun
+                                                  ? const Color(0xFFFFB74D)
+                                                  : Colors.white60,
                                               fontSize: 7.5,
                                               fontWeight: FontWeight.w600),
                                         ),
                                         Text(
                                           DateFormat('d').format(day),
                                           style: GoogleFonts.poppins(
-                                              color: Colors.white,
+                                              color: dayIsOverrun
+                                                  ? const Color(0xFFFF9800)
+                                                  : Colors.white,
                                               fontSize: 9,
                                               fontWeight: FontWeight.w700),
                                         ),
@@ -1654,23 +1888,23 @@ class _TaskProgressMonitorScreenState
   // FIXED ROW (task name + dates – left sticky panel)
   // ─────────────────────────────────────────────────────────────────
   Widget _buildFixedRow(TaskProgressRowData row,
-      {required int rowNumber, required double fixedW}) {
-    final h              = _computeRowH(row);
+      {required int rowNumber, required double fixedW, double? effectiveNameW}) {
+    final h              = _computeRowH(row, effectiveNameW: effectiveNameW);
     final (bg, fg, accent) = _rowColors(row.type);
 
-    return Container(
+    // Use SizedBox(height: h) — a concrete finite height that Row(stretch)
+    // can work with. _computeRowH already accounts for text wrap + badge.
+    return SizedBox(
       width: fixedW,
-      // Use minHeight instead of fixed height so content is never clipped
-      constraints: BoxConstraints(minHeight: h),
-      clipBehavior: Clip.hardEdge,
-      decoration: BoxDecoration(
-        color: bg,
-        border: Border(
-          bottom: BorderSide(color: _fieldBorder.withValues(alpha: 0.5), width: 0.5),
-          right : BorderSide(color: _fieldBorder.withValues(alpha: 0.4), width: 0.7),
+      height: h,
+      child: Container(
+        decoration: BoxDecoration(
+          color: bg,
+          border: Border(
+            bottom: BorderSide(color: _fieldBorder.withValues(alpha: 0.5), width: 0.5),
+            right : BorderSide(color: _fieldBorder.withValues(alpha: 0.4), width: 0.7),
+          ),
         ),
-      ),
-      child: IntrinsicHeight(
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1695,7 +1929,7 @@ class _TaskProgressMonitorScreenState
                 ),
               ),
 
-            // Task name cell – Expanded absorbs sub-pixel rounding slack
+            // Task name cell
             Expanded(child: _buildNameCell(row, fg, accent)),
 
             // Start date
@@ -1724,14 +1958,16 @@ class _TaskProgressMonitorScreenState
   }
 
   // ─────────────────────────────────────────────────────────────────
-  // NAME CELL – wraps content fully; no single-line clipping
+  // NAME CELL – fully content-driven height, never clips
   // ─────────────────────────────────────────────────────────────────
   Widget _buildNameCell(
       TaskProgressRowData row, Color fg, Color accent) {
     final indent = (row.indentLevel.clamp(0, 5) * 10.0);
+    // Extra bottom padding for task rows to ensure badge never overflows
+    final bottomPad = row.type == TaskRowType.task ? 8.0 : 6.0;
 
     return Container(
-      padding: EdgeInsets.only(left: indent + 6, right: 4, top: 6, bottom: 6),
+      padding: EdgeInsets.only(left: indent + 6, right: 4, top: 6, bottom: bottomPad),
       decoration: BoxDecoration(
         border: Border(
             right: BorderSide(
@@ -1790,32 +2026,85 @@ class _TaskProgressMonitorScreenState
 
           // Editable task name – softWraps freely, no line limit
           Expanded(
-            child: TextField(
-              controller: _nameCtrl(row.id),
-              onChanged: (v) {
-                row.taskName = v;
-                // Re-check height if text changed significantly
-                // (Phase cache doesn't need invalidation for name changes)
-              },
-              maxLines: null, // allows wrapping
-              minLines: 1,
-              keyboardType: TextInputType.multiline,
-              style: GoogleFonts.poppins(
-                  fontSize: row.type == TaskRowType.task ? 11 : 11.5,
-                  fontWeight: row.type == TaskRowType.task
-                      ? FontWeight.w400
-                      : FontWeight.w700,
-                  color: fg,
-                  height: 1.45),
-              decoration: const InputDecoration(
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.zero,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: _nameCtrl(row.id),
+                  onChanged: (v) {
+                    row.taskName = v;
+                    // Trigger rebuild so _computeRowH re-evaluates
+                    setState(() {});
+                  },
+                  maxLines: null,
+                  minLines: 1,
+                  keyboardType: TextInputType.multiline,
+                  style: GoogleFonts.poppins(
+                      fontSize: row.type == TaskRowType.task ? 11 : 11.5,
+                      fontWeight: row.type == TaskRowType.task
+                          ? FontWeight.w400
+                          : FontWeight.w700,
+                      color: fg,
+                      height: 1.45),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                ),
+                // Per-task progress mini bar (tasks only)
+                if (row.type == TaskRowType.task) ...[
+                  const SizedBox(height: 4),
+                  _buildTaskProgressBadge(row),
+                ],
+              ],
             ),
           ),
         ],
       ),
+    );
+  }
+
+  /// Mini progress pill shown below a task name in the fixed panel.
+  Widget _buildTaskProgressBadge(TaskProgressRowData task) {
+    final expected = _expectedDaysForTask(task);
+    final checked  = _checkedDaysForTask(task);
+    final pct      = _taskProgress(task);   // uses _taskProgress so it's referenced
+    final isOver   = checked > expected && expected > 0;
+
+    final barColor = isOver
+        ? const Color(0xFFE65100)   // orange – overrun
+        : pct >= 1.0
+            ? const Color(0xFF2E7D32)  // green – complete
+            : const Color(0xFF1565C0); // blue – in progress
+
+    return Row(
+      children: [
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: LinearProgressIndicator(
+              value: pct,
+              minHeight: 3,
+              backgroundColor: const Color(0xFFE0E6EF),
+              valueColor: AlwaysStoppedAnimation(barColor),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            '$checked/$expected d · ${(pct * 100).toStringAsFixed(0)}%',
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            style: GoogleFonts.poppins(
+                fontSize: 8,
+                fontWeight: FontWeight.w600,
+                color: barColor),
+          ),
+        ),
+      ],
     );
   }
 
@@ -1825,14 +2114,14 @@ class _TaskProgressMonitorScreenState
       required Color fg,
       required Color accent}) {
     final date = isStart ? row.startDate : row.endDate;
-    final h    = _computeRowH(row);
     return GestureDetector(
       onTap: row.type == TaskRowType.task || row.type == TaskRowType.phase
           ? () => _pickDate(row, isStart: isStart)
           : null,
       child: Container(
         width: _kDateW,
-        constraints: BoxConstraints(minHeight: h),
+        // No height/minHeight needed – the parent Row(stretch)+SizedBox(height:h)
+        // already gives this cell a finite, exact height.
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 4),
         decoration: BoxDecoration(
@@ -1895,29 +2184,32 @@ class _TaskProgressMonitorScreenState
   // ─────────────────────────────────────────────────────────────────
   // PERIOD ROW (status cells – right scrollable panel)
   // ─────────────────────────────────────────────────────────────────
-  Widget _buildPeriodRow(TaskProgressRowData row) {
+  Widget _buildPeriodRow(TaskProgressRowData row, {double? effectiveNameW}) {
     final phaseData = _phaseColumns;
-    final h         = _computeRowH(row);
+    final h         = _computeRowH(row, effectiveNameW: effectiveNameW);
 
     if (phaseData.isEmpty) {
-      return Container(width: 320, height: h, color: _sectionBg);
+      return SizedBox(width: 320, height: h, child: ColoredBox(color: _sectionBg));
     }
 
     return SizedBox(
       height: h,
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: phaseData.map((pc) {
           final phaseW = pc.days.length * _kDayW;
 
           // Project / Category – greyed-out band
           if (row.type == TaskRowType.project ||
               row.type == TaskRowType.category) {
-            return Container(
+            return SizedBox(
               width: phaseW, height: h,
-              color: row.type == TaskRowType.project
-                  ? const Color(0xFFE8EEF6)
-                  : const Color(0xFFF0F4F9),
-              child: const Divider(height: 1, thickness: 0.3),
+              child: ColoredBox(
+                color: row.type == TaskRowType.project
+                    ? const Color(0xFFE8EEF6)
+                    : const Color(0xFFF0F4F9),
+                child: const Divider(height: 1, thickness: 0.3),
+              ),
             );
           }
 
@@ -1926,49 +2218,71 @@ class _TaskProgressMonitorScreenState
             if (row.id == pc.phase.id) {
               return _buildPhaseProgressRow(row, pc, phaseW, h);
             }
-            return Container(
+            return SizedBox(
               width: phaseW, height: h,
-              color: const Color(0xFFF5F7FA),
+              child: const ColoredBox(color: Color(0xFFF5F7FA)),
             );
           }
 
           // Task row – day cells only for its parent phase
           final inPhase = row.parentPhaseId == pc.phase.id;
           if (!inPhase) {
-            return Container(
+            return SizedBox(
               width: phaseW, height: h,
-              color: const Color(0xFFF9FAFB),
-              child: const Center(
-                child: Divider(
-                    color: Color(0xFFE0E4EA), thickness: 0.5, height: 1),
+              child: const ColoredBox(
+                color: Color(0xFFF9FAFB),
+                child: Center(
+                  child: Divider(
+                      color: Color(0xFFE0E4EA), thickness: 0.5, height: 1),
+                ),
               ),
             );
           }
 
-          // Build day cells for this phase
+          // Build day cells – each cell gets the exact height h
           return SizedBox(
-            width: phaseW, height: h,
+            width: phaseW,
+            height: h,
             child: Row(
+              // Use start alignment: each _buildDayCell sets its own height: h
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: pc.days.asMap().entries.map((de) {
-                final dayIdx   = de.key;
-                final day      = de.value;
-                final status   = _getStatus(row.id, day);
+                final dayIdx    = de.key;
+                final day       = de.value;
+                final status    = _getStatus(row.id, day);
                 final taskStart = row.startDate;
                 final taskEnd   = row.endDate;
-                final inRange   = taskStart == null || taskEnd == null
+
+                final inPlannedRange = taskStart == null || taskEnd == null
                     ? true
                     : !day.isBefore(DateTime(
                             taskStart.year, taskStart.month, taskStart.day)) &&
                       !day.isAfter(DateTime(
                             taskEnd.year, taskEnd.month, taskEnd.day));
 
-                // Determine if this day is the last in its week group
+                final isOverrun = taskStart != null && taskEnd != null &&
+                    day.isAfter(DateTime(taskEnd.year, taskEnd.month, taskEnd.day)) &&
+                    !day.isBefore(DateTime(
+                            taskStart.year, taskStart.month, taskStart.day));
+
+                final isActive    = inPlannedRange || isOverrun;
+                final isBeforeTask = taskStart != null &&
+                    day.isBefore(DateTime(
+                            taskStart.year, taskStart.month, taskStart.day));
+
                 final isWeekEnd = _isLastDayOfWeek(pc, dayIdx);
 
                 return GestureDetector(
-                  onTap: inRange ? () => _showStatusPicker(row, day) : null,
-                  child: _buildDayCell(status, inRange, h,
-                      isWeekEnd: isWeekEnd),
+                  onTap: isActive && !isBeforeTask
+                      ? () => _showStatusPicker(row, day)
+                      : null,
+                  child: _buildDayCell(
+                    status,
+                    isActive && !isBeforeTask,
+                    h,
+                    isWeekEnd: isWeekEnd,
+                    isOverrun: isOverrun,
+                  ),
                 );
               }).toList(),
             ),
@@ -1991,21 +2305,32 @@ class _TaskProgressMonitorScreenState
   }
 
   Widget _buildDayCell(DayStatus status, bool active, double h,
-      {bool isWeekEnd = false}) {
+      {bool isWeekEnd = false, bool isOverrun = false}) {
+    // Overrun done-marks are orange; in-range done is green
+    final effectiveColor = (isOverrun && status == DayStatus.done)
+        ? const Color(0xFFE65100)
+        : status.color;
+    final effectiveBg = (isOverrun && status == DayStatus.done)
+        ? const Color(0xFFFFF3E0)
+        : (active ? status.bgColor : const Color(0xFFF3F5F7));
+
     return Container(
       width: _kDayW,
       height: h,
       decoration: BoxDecoration(
-        color: active ? status.bgColor : const Color(0xFFF3F5F7),
+        color: effectiveBg,
         border: Border(
-          // Week boundary gets a thick, dark separator; normal gets light rule
           right: isWeekEnd
-              ? const BorderSide(
+              ? BorderSide(
                   color: _weekBorderColor, width: _weekBorderWidth)
               : BorderSide(
                   color: _fieldBorder.withValues(alpha: 0.35), width: 0.5),
           bottom: BorderSide(
               color: _fieldBorder.withValues(alpha: 0.25), width: 0.3),
+          // Light orange left border to hint overrun zone
+          left: isOverrun
+              ? const BorderSide(color: Color(0xFFFF9800), width: 0.8)
+              : BorderSide.none,
         ),
       ),
       child: active
@@ -2013,13 +2338,19 @@ class _TaskProgressMonitorScreenState
               child: status == DayStatus.none
                   ? Icon(Icons.add_rounded,
                       size: 11, color: Colors.grey[300])
-                  : Text(
-                      status.code,
-                      style: GoogleFonts.poppins(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                          color: status.color),
-                    ),
+                  : status == DayStatus.done
+                      ? Icon(
+                          Icons.check_rounded,
+                          size: 14,
+                          color: effectiveColor,
+                        )
+                      : Text(
+                          status.code,
+                          style: GoogleFonts.poppins(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              color: status.color),
+                        ),
             )
           : null,
     );
@@ -2028,6 +2359,14 @@ class _TaskProgressMonitorScreenState
   Widget _buildPhaseProgressRow(TaskProgressRowData row,
       _PhaseColumnData pc, double phaseW, double h) {
     final progress = _phaseProgress(row);
+
+    // Aggregate day counts for display
+    final tasks = _rows
+        .where((r) => r.type == TaskRowType.task && r.parentPhaseId == row.id)
+        .toList();
+    final totalExpected = tasks.fold(0, (s, t) => s + _expectedDaysForTask(t));
+    final totalChecked  = tasks.fold(0, (s, t) => s + _checkedDaysForTask(t));
+
     return Container(
       width: phaseW,
       height: h,
@@ -2039,7 +2378,7 @@ class _TaskProgressMonitorScreenState
         children: [
           Row(children: [
             Text(
-              '${pc.days.length} working days',
+              '$totalChecked / $totalExpected work days',
               style: GoogleFonts.poppins(
                   fontSize: 9, color: _navy.withValues(alpha: 0.6)),
             ),
@@ -2116,7 +2455,7 @@ class _TaskProgressMonitorScreenState
                       fontWeight: FontWeight.w600, fontSize: 12)),
               style: OutlinedButton.styleFrom(
                 foregroundColor: _navy,
-                side: const BorderSide(color: _navy),
+                side: BorderSide(color: _navy),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8)),
               ),
