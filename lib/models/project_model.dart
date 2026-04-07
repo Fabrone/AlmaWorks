@@ -45,6 +45,7 @@ class ProjectModel {
   final String name;
   final String description;
   final String location;
+  final String? contractNumber;
   final double? budget;
   final String? status; 
   final DateTime startDate;
@@ -59,6 +60,7 @@ class ProjectModel {
     required this.name,
     required this.description,
     required this.location,
+    this.contractNumber,
     this.budget,
     this.status,
     required this.startDate,
@@ -94,6 +96,7 @@ class ProjectModel {
       name: data['name'] ?? '',
       description: data['description'] ?? '',
       location: data['location'] ?? '',
+      contractNumber: data['contractNumber'] as String?,
       budget: data['budget']?.toDouble(),
       status: data['status'], // Can be null
       startDate: (data['startDate'] as Timestamp).toDate(),
@@ -110,6 +113,8 @@ class ProjectModel {
       'name': name,
       'description': description,
       'location': location,
+      if (contractNumber != null && contractNumber!.isNotEmpty)
+        'contractNumber': contractNumber,
       'budget': budget,
       'status': status,
       'startDate': Timestamp.fromDate(startDate),
@@ -125,6 +130,7 @@ class ProjectModel {
     String? name,
     String? description,
     String? location,
+    String? contractNumber,
     double? budget,
     String? status,
     DateTime? startDate,
@@ -138,6 +144,7 @@ class ProjectModel {
       name: name ?? this.name,
       description: description ?? this.description,
       location: location ?? this.location,
+      contractNumber: contractNumber ?? this.contractNumber,
       budget: budget ?? this.budget,
       status: status ?? this.status,
       startDate: startDate ?? this.startDate,

@@ -24,6 +24,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _locationController = TextEditingController();
+  final _contractNumberController = TextEditingController();
   final _budgetController = TextEditingController();
   final _projectManagerController = TextEditingController();
   
@@ -52,6 +53,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     _nameController.text = widget.project.name;
     _descriptionController.text = widget.project.description;
     _locationController.text = widget.project.location;
+    _contractNumberController.text = widget.project.contractNumber ?? '';
     _budgetController.text = widget.project.budget?.toString() ?? '';
     _projectManagerController.text = widget.project.projectManager;
     _selectedStatus = widget.project.status;
@@ -129,20 +131,32 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
+            const Text(
               'Basic Information',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
+            // Project Name — required
             TextFormField(
               controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Project Name *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.business),
+              decoration: InputDecoration(
+                label: RichText(
+                  text: const TextSpan(
+                    text: 'Project Name ',
+                    style: TextStyle(color: Colors.black87, fontSize: 16),
+                    children: [
+                      TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.business, color: Colors.indigo),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -152,28 +166,48 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               },
             ),
             const SizedBox(height: 16),
+            // Description — optional
             TextFormField(
               controller: _descriptionController,
               decoration: const InputDecoration(
-                labelText: 'Description *',
+                labelText: 'Description (Optional)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.description),
+                prefixIcon: Icon(Icons.description, color: Colors.teal),
               ),
               maxLines: 3,
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please enter a project description';
-                }
-                return null;
-              },
             ),
             const SizedBox(height: 16),
+            // Contract Number — optional
+            TextFormField(
+              controller: _contractNumberController,
+              decoration: const InputDecoration(
+                labelText: 'Contract Number (Optional)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.tag, color: Colors.orange),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Location — required
             TextFormField(
               controller: _locationController,
-              decoration: const InputDecoration(
-                labelText: 'Location *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.location_on),
+              decoration: InputDecoration(
+                label: RichText(
+                  text: const TextSpan(
+                    text: 'Location ',
+                    style: TextStyle(color: Colors.black87, fontSize: 16),
+                    children: [
+                      TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.location_on, color: Colors.red),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -209,7 +243,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Budget (USD)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.attach_money),
+                prefixIcon: Icon(Icons.attach_money, color: Colors.green),
                 prefixText: '\$ ',
               ),
               keyboardType: TextInputType.number,
@@ -223,7 +257,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Status (Optional)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.flag),
+                prefixIcon: Icon(Icons.flag, color: Color(0xFFFFB300)),
               ),
               items: const [
                 DropdownMenuItem<String?>(
@@ -252,7 +286,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Project Manager *',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person),
+                prefixIcon: Icon(Icons.person, color: Colors.blue),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -337,7 +371,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Role *',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.work),
+                prefixIcon: Icon(Icons.work, color: Colors.purple),
               ),
               items: const [
                 DropdownMenuItem<String>(
@@ -366,7 +400,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Team Member Name *',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person_add),
+                prefixIcon: Icon(Icons.person_add, color: Colors.teal),
               ),
               onFieldSubmitted: (_) => _addTeamMember(),
             ),
@@ -376,7 +410,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Category (Optional)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.category),
+                prefixIcon: Icon(Icons.category, color: Colors.orange),
               ),
             ),
             const SizedBox(height: 16),

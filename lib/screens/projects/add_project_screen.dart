@@ -19,6 +19,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _locationController = TextEditingController();
+  final _contractNumberController = TextEditingController();
   final _budgetController = TextEditingController();
   final _projectManagerController = TextEditingController();
   
@@ -28,7 +29,9 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
   final List<TeamMember> _teamMembers = [];
   final TextEditingController _teamMemberController = TextEditingController();
   final TextEditingController _categoryController = TextEditingController();
+  final TextEditingController _customRoleController = TextEditingController();
   String? _selectedRole;
+  bool _isDefiningCustomRole = false;
   
   late final ProjectService _projectService;
   late final Logger _logger;
@@ -114,16 +117,31 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               'Basic Information',
               style: TextStyle(
                 fontSize: isMobile ? 16 : 18,
-                fontWeight: FontWeight.bold
+                fontWeight: FontWeight.bold,
               ),
             ),
             SizedBox(height: isMobile ? 12 : 16),
+            // Project Name — required
             TextFormField(
               controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Project Name *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.business),
+              decoration: InputDecoration(
+                label: RichText(
+                  text: const TextSpan(
+                    text: 'Project Name ',
+                    style: TextStyle(color: Colors.black87, fontSize: 16),
+                    children: [
+                      TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.business, color: Colors.indigo),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -133,28 +151,48 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               },
             ),
             SizedBox(height: isMobile ? 12 : 16),
+            // Description — optional
             TextFormField(
               controller: _descriptionController,
               decoration: const InputDecoration(
-                labelText: 'Description *',
+                labelText: 'Description (Optional)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.description),
+                prefixIcon: Icon(Icons.description, color: Colors.teal),
               ),
               maxLines: 3,
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'Please enter a project description';
-                }
-                return null;
-              },
             ),
             SizedBox(height: isMobile ? 12 : 16),
+            // Contract Number — optional
+            TextFormField(
+              controller: _contractNumberController,
+              decoration: const InputDecoration(
+                labelText: 'Contract Number (Optional)',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.tag, color: Colors.orange),
+              ),
+            ),
+            SizedBox(height: isMobile ? 12 : 16),
+            // Location — required
             TextFormField(
               controller: _locationController,
-              decoration: const InputDecoration(
-                labelText: 'Location *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.location_on),
+              decoration: InputDecoration(
+                label: RichText(
+                  text: const TextSpan(
+                    text: 'Location ',
+                    style: TextStyle(color: Colors.black87, fontSize: 16),
+                    children: [
+                      TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.location_on, color: Colors.red),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -181,7 +219,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               'Project Details',
               style: TextStyle(
                 fontSize: isMobile ? 16 : 18,
-                fontWeight: FontWeight.bold
+                fontWeight: FontWeight.bold,
               ),
             ),
             SizedBox(height: isMobile ? 12 : 16),
@@ -190,7 +228,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Budget (USD)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.attach_money),
+                prefixIcon: Icon(Icons.attach_money, color: Colors.green),
                 prefixText: '\$ ',
               ),
               keyboardType: TextInputType.number,
@@ -204,7 +242,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Status (Optional)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.flag),
+                prefixIcon: Icon(Icons.flag, color: Color(0xFFFFB300)),
               ),
               items: const [
                 DropdownMenuItem<String?>(
@@ -228,12 +266,27 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               },
             ),
             SizedBox(height: isMobile ? 12 : 16),
+            // Project Manager — required
             TextFormField(
               controller: _projectManagerController,
-              decoration: const InputDecoration(
-                labelText: 'Project Manager *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person),
+              decoration: InputDecoration(
+                label: RichText(
+                  text: const TextSpan(
+                    text: 'Project Manager ',
+                    style: TextStyle(color: Colors.black87, fontSize: 16),
+                    children: [
+                      TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.person, color: Colors.blue),
               ),
               validator: (value) {
                 if (value == null || value.isEmpty) {
@@ -309,16 +362,31 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               'Team Members',
               style: TextStyle(
                 fontSize: isMobile ? 16 : 18,
-                fontWeight: FontWeight.bold
+                fontWeight: FontWeight.bold,
               ),
             ),
             SizedBox(height: isMobile ? 12 : 16),
+            // Role dropdown with Define New option
             DropdownButtonFormField<String>(
               initialValue: _selectedRole,
-              decoration: const InputDecoration(
-                labelText: 'Role *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.work),
+              decoration: InputDecoration(
+                label: RichText(
+                  text: const TextSpan(
+                    text: 'Role ',
+                    style: TextStyle(color: Colors.black87, fontSize: 16),
+                    children: [
+                      TextSpan(
+                        text: '*',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                border: const OutlineInputBorder(),
+                prefixIcon: const Icon(Icons.work, color: Colors.purple),
               ),
               items: const [
                 DropdownMenuItem<String>(
@@ -333,21 +401,59 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                   value: 'technician',
                   child: Text('Technician'),
                 ),
+                DropdownMenuItem<String>(
+                  value: 'manager',
+                  child: Text('Manager'),
+                ),
+                DropdownMenuItem<String>(
+                  value: '__define_new__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_circle_outline,
+                          size: 18, color: Colors.deepPurple),
+                      SizedBox(width: 8),
+                      Text(
+                        'Define New',
+                        style: TextStyle(
+                          color: Colors.deepPurple,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               onChanged: (value) {
                 setState(() {
                   _selectedRole = value;
+                  _isDefiningCustomRole = value == '__define_new__';
+                  if (!_isDefiningCustomRole) _customRoleController.clear();
                 });
                 _logger.d('📝 AddProjectScreen: Role selected: $_selectedRole');
               },
             ),
+            // Custom role text field — visible only when Define New is selected
+            if (_isDefiningCustomRole) ...[
+              SizedBox(height: isMobile ? 12 : 16),
+              TextFormField(
+                controller: _customRoleController,
+                decoration: const InputDecoration(
+                  labelText: 'Define Role Name *',
+                  hintText: 'e.g., Site Foreman, Safety Officer',
+                  border: OutlineInputBorder(),
+                  prefixIcon:
+                      Icon(Icons.edit_note, color: Colors.deepPurple),
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+            ],
             SizedBox(height: isMobile ? 12 : 16),
             TextFormField(
               controller: _teamMemberController,
               decoration: const InputDecoration(
-                labelText: 'Team Member Name *',
+                labelText: 'Team Member Name',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.person_add),
+                prefixIcon: Icon(Icons.person_add, color: Colors.teal),
               ),
               onFieldSubmitted: (_) => _addTeamMember(),
             ),
@@ -357,7 +463,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
               decoration: const InputDecoration(
                 labelText: 'Category (Optional)',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.category),
+                prefixIcon: Icon(Icons.category, color: Colors.orange),
               ),
             ),
             SizedBox(height: isMobile ? 12 : 16),
@@ -393,7 +499,8 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                         ),
                       ),
                     ),
-                    label: Text('${member.name} (${member.role.capitalize()}${member.category != null ? ' - ${member.category}' : ''})'),
+                    label: Text(
+                        '${member.name} (${member.role.capitalize()}${member.category != null ? ' - ${member.category}' : ''})'),
                     onDeleted: () => _removeTeamMember(member),
                     deleteIcon: const Icon(Icons.close, size: 18),
                   );
@@ -411,9 +518,7 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
                 child: Column(
                   children: [
                     Icon(Icons.people_outline,
-                       size: 48,
-                       color: Colors.grey[400]
-                    ),
+                        size: 48, color: Colors.grey[400]),
                     const SizedBox(height: 8),
                     Text(
                       'No team members added yet',
@@ -530,6 +635,20 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
       );
       return;
     }
+    // Resolve the actual role string
+    String resolvedRole;
+    if (_isDefiningCustomRole) {
+      final customRole = _customRoleController.text.trim();
+      if (customRole.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a custom role name')),
+        );
+        return;
+      }
+      resolvedRole = customRole;
+    } else {
+      resolvedRole = _selectedRole!;
+    }
     if (_teamMemberController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a team member name')),
@@ -548,9 +667,12 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
       return;
     }
     setState(() {
-      _teamMembers.add(TeamMember(name: name, role: _selectedRole!, category: category));
+      _teamMembers.add(TeamMember(name: name, role: resolvedRole, category: category));
       _teamMemberController.clear();
       _categoryController.clear();
+      _customRoleController.clear();
+      _selectedRole = null;
+      _isDefiningCustomRole = false;
     });
     _logger.i('👥 AddProjectScreen: Team member added. Total: ${_teamMembers.length}');
   }
@@ -577,6 +699,9 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
           name: _nameController.text.trim(),
           description: _descriptionController.text.trim(),
           location: _locationController.text.trim(),
+          contractNumber: _contractNumberController.text.trim().isNotEmpty
+              ? _contractNumberController.text.trim()
+              : null,
           budget: _budgetController.text.isNotEmpty
               ? double.tryParse(_budgetController.text.replaceAll(',', ''))
               : null,
@@ -640,10 +765,12 @@ class _AddProjectScreenState extends State<AddProjectScreen> {
     _nameController.dispose();
     _descriptionController.dispose();
     _locationController.dispose();
+    _contractNumberController.dispose();
     _budgetController.dispose();
     _projectManagerController.dispose();
     _teamMemberController.dispose();
     _categoryController.dispose();
+    _customRoleController.dispose();
     super.dispose();
   }
 }
