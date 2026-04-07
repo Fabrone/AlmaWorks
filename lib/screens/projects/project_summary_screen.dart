@@ -5,7 +5,6 @@ import 'package:almaworks/screens/projects/edit_project_screen.dart';
 import 'package:almaworks/screens/projects/projects_main_screen.dart';
 import 'package:almaworks/widgets/activity_feed.dart';
 import 'package:almaworks/widgets/dashboard_card.dart';
-import 'package:almaworks/widgets/todo_widget.dart';
 import 'package:almaworks/widgets/weather_widget.dart';
 import 'package:almaworks/widgets/base_layout.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -14,6 +13,7 @@ import 'package:logger/logger.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:almaworks/screens/schedule/notification_center_screen.dart';
 import 'package:almaworks/services/notification_service.dart';
+
 class ProjectSummaryScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
@@ -54,7 +54,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     final rawRows    = data['rows']         as List<dynamic>?       ?? [];
     final rawStatus  = data['dailyStatuses'] as Map<String, dynamic>? ?? {};
 
-    // Build a flat map of taskId → checked-day count and expected-day count.
     int totalExpected = 0;
     int totalChecked  = 0;
 
@@ -67,10 +66,8 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       final end   = (m['endDate']   as Timestamp?)?.toDate();
       if (start == null || end == null || id.isEmpty) continue;
 
-      // Count expected working days (Mon–Sat, no Sundays).
       totalExpected += _countWorkDays(start, end);
 
-      // Count checked days: any key that starts with "{id}_" and maps to done.
       final prefix = '${id}_';
       for (final kv in rawStatus.entries) {
         if (!kv.key.startsWith(prefix)) continue;
@@ -82,7 +79,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     return (totalChecked / totalExpected).clamp(0.0, 1.0);
   }
 
-  /// Mon–Sat working days between [start] and [end] inclusive.
   static int _countWorkDays(DateTime start, DateTime end) {
     int count = 0;
     DateTime cur = DateTime(start.year, start.month, start.day);
@@ -94,13 +90,12 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     return count;
   }
 
-  /// Returns true for any storage code that counts as "work done".
   static bool _isDone(String? code) {
     switch (code) {
-      case 'D': // current "done" code
-      case 'S': // legacy: started
-      case 'O': // legacy: ongoing
-      case 'C': // legacy: completed
+      case 'D':
+      case 'S':
+      case 'O':
+      case 'C':
         return true;
       default:
         return false;
@@ -126,7 +121,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       selectedMenuItem: 'Overview',
       onMenuItemSelected: _handleMenuNavigation,
       actions: [
-        // ✅ NEW: Notifications button with real project ID
         StreamBuilder<int>(
           stream: _notificationService.getUnreadCount(widget.project.id),
           builder: (context, snapshot) {
@@ -139,11 +133,11 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                     widget.logger.i('🔔 ProjectSummaryScreen: Notifications pressed for project: ${widget.project.id}');
                     Navigator.push(
                       context,
-                        MaterialPageRoute(
+                      MaterialPageRoute(
                         builder: (context) => NotificationCenterScreen(
                           projectId: widget.project.id,
                           notificationService: _notificationService,
-                          logger: widget.logger, // ← NOW matches the constructor
+                          logger: widget.logger,
                         ),
                       ),
                     );
@@ -171,7 +165,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             );
           },
         ),
-        // Existing edit button
         IconButton(
           icon: const Icon(Icons.edit),
           onPressed: () {
@@ -213,7 +206,6 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
         );
         break;
       case 'Overview':
-        // Already on overview screen
         break;
       case 'Documents':
         _navigateToDocuments();
@@ -302,8 +294,8 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
 
   Widget _buildProjectContent(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    final isTablet = screenWidth >= 600 && screenWidth < 1200;
+    final isMobile  = screenWidth < 600;
+    final isTablet  = screenWidth >= 600 && screenWidth < 1200;
     final isDesktop = screenWidth >= 1200;
 
     return Column(
@@ -382,20 +374,16 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          // ── Progress card – live from TaskProgressMonitor ─────────
           Expanded(
             child: StreamBuilder<double>(
               stream: _tpmProgressStream,
               builder: (context, snapshot) {
-                // While waiting for the first snapshot show a subtle loader;
-                // on error fall back to the static project.progress value.
                 final double progress;
                 final bool isLive;
                 if (snapshot.hasError) {
                   progress = widget.project.progress / 100.0;
                   isLive   = false;
                 } else if (!snapshot.hasData) {
-                  // Show a placeholder card while the stream loads.
                   return DashboardCard(
                     title: 'Progress',
                     value: '…',
@@ -658,7 +646,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
     bool isTablet,
     bool isDesktop,
   ) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth  = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     const double widgetHeight = 400.0;
@@ -667,31 +655,26 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
       '🏗️ ProjectSummaryScreen: Building content section, isMobile: $isMobile, availableWidth: $availableWidth',
     );
 
+    // ── Only ActivityFeed and WeatherWidget (TodoWidget removed) ───────────────
     final widgets = [
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: TodoWidget(
+        child: ActivityFeed(
           projectId: widget.project.id,
           project: widget.project,
           logger: widget.logger,
-          showAllProjects: false, projectIds: [],
+          showAllProjects: false,
+          projectIds: [],
         ),
       ),
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: ActivityFeed(
-          projectId: widget.project.id,  // <-- FIX: Added missing projectId
-          project: widget.project,        // <-- FIX: Added missing project
-          logger: widget.logger,          // <-- FIX: Added missing logger
-          showAllProjects: false, projectIds: [],
+        // Pass the project's saved location – WeatherWidget fetches live data for it
+        child: WeatherWidget(
+          projectLocation: widget.project.location,
         ),
-      ),
-      SizedBox(
-        width: availableWidth,
-        height: widgetHeight,
-        child: const WeatherWidget(),
       ),
     ];
 
@@ -705,9 +688,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
             child: PageView.builder(
               controller: _pageController,
               onPageChanged: (index) {
-                setState(() {
-                  _currentPage = index;
-                });
+                setState(() { _currentPage = index; });
               },
               itemCount: widgets.length,
               itemBuilder: (context, index) {
@@ -716,8 +697,7 @@ class _ProjectSummaryScreenState extends State<ProjectSummaryScreen> {
                   child: widgets[index],
                 );
               },
-              physics:
-                  const NeverScrollableScrollPhysics(), // Disables all swiping/flings
+              physics: const NeverScrollableScrollPhysics(),
               pageSnapping: false,
               scrollBehavior: const ScrollBehavior().copyWith(
                 scrollbars: false,

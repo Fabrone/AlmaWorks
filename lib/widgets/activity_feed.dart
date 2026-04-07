@@ -891,35 +891,6 @@ class _ActivityFeedState extends State<ActivityFeed> {
     );
   }
 
-  /*Widget _buildNoProjectState(bool isMobile) {
-    return Card(
-      elevation: 2,
-      child: Container(
-        width: double.infinity,
-        height: double.infinity,
-        padding: EdgeInsets.all(isMobile ? 12 : 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(isMobile),
-            const SizedBox(height: 12),
-            Expanded(
-              child: Center(
-                child: Text(
-                  'Select a project to view activities',
-                  style: TextStyle(
-                    color: Colors.grey[600],
-                    fontSize: isMobile ? 12 : 14,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }*/
-
   Widget _buildEmptyState(bool isMobile) {
     return Center(
       child: Column(

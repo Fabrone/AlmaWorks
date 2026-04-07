@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:almaworks/providers/selected_project_provider.dart';
 import 'package:almaworks/rbacsystem/auth_service.dart';
 import 'package:almaworks/rbacsystem/client_access_requests_screen.dart';
@@ -9,7 +10,6 @@ import 'package:almaworks/services/project_service.dart';
 import 'package:almaworks/widgets/activity_feed.dart';
 import 'package:almaworks/widgets/dashboard_card.dart';
 import 'package:almaworks/widgets/responsive_layout.dart';
-import 'package:almaworks/widgets/todo_widget.dart';
 import 'package:almaworks/widgets/weather_widget.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -451,24 +451,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                     ),
                   )
-                : const Icon(Icons.send, size: 20),
-            label: Text(
-              isSubmitting ? 'Sending Request...' : 'Request Project Access',
-              style: TextStyle(
-                fontSize: isMobile ? 16 : 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+                : const Icon(Icons.send),
+            label: Text(isSubmitting ? 'Sending...' : 'Request Access'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white,
-              foregroundColor: const Color(0xFF0A2E5A),
-              padding: EdgeInsets.symmetric(
-                vertical: isMobile ? 16 : 20,
-              ),
+              backgroundColor: const Color(0xFF0A2E5A),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              elevation: 3,
             ),
           ),
         ),
@@ -486,62 +477,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
           BoxShadow(
             color: Colors.black.withValues(alpha:0.1),
             blurRadius: 10,
-            offset: Offset(0, 5),
+            offset: const Offset(0, 5),
           ),
         ],
       ),
       child: Column(
         children: [
-          Icon(
-            Icons.hourglass_empty,
-            size: 64,
-            color: Colors.orange[700],
-          ),
+          const Icon(Icons.pending_actions, size: 48, color: Colors.orange),
           const SizedBox(height: 16),
           Text(
             'Request Pending',
             style: TextStyle(
               fontSize: isMobile ? 20 : 24,
               fontWeight: FontWeight.bold,
-              color: Colors.orange[900],
+              color: Colors.orange[700],
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            'Your access request has been sent to the administrators and is currently under review.',
+            'Your access request is being reviewed by our administrators. You\'ll receive access once approved.',
             style: TextStyle(
               fontSize: isMobile ? 14 : 16,
               color: Colors.grey[700],
               height: 1.5,
             ),
             textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.access_time,
-                  color: Colors.grey[600],
-                  size: 20,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'You will receive a notification once your request has been processed.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[700],
-                    ),
-                  ),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -551,72 +511,89 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Widget _buildStepItem(int step, String text, IconData icon) {
     return Row(
       children: [
-        Container(
-          width: 32,
-          height: 32,
-          decoration: BoxDecoration(
-            color: const Color(0xFF0A2E5A),
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Center(
-            child: Text(
-              '$step',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 14,
-              ),
-            ),
+        CircleAvatar(
+          radius: 16,
+          backgroundColor: const Color(0xFF0A2E5A),
+          child: Text(
+            '$step',
+            style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ),
         const SizedBox(width: 12),
-        Icon(icon, size: 20, color: const Color(0xFF0A2E5A)),
+        Icon(icon, size: 20, color: Colors.grey[600]),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             text,
-            style: TextStyle(
-              fontSize: 13,
-              color: Colors.grey[800],
-            ),
+            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
           ),
         ),
       ],
     );
   }
 
+  // ── Layout builders (unchanged) ─────────────────────────────────────────────
+
   Widget _buildMobileLayout(SelectedProjectProvider projectProvider) {
-    _logger.d('📱 DashboardScreen: Building mobile layout');
-    
     return Scaffold(
       key: _scaffoldKey,
-      appBar: _buildAppBar(projectProvider),
+      appBar: AppBar(
+        title: const Text('AlmaWorks', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFF0A2E5A),
+        iconTheme: const IconThemeData(color: Colors.white),
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        ),
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => AccountScreen(localeProvider: localeProvider)),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.only(right: 16.0),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: Colors.white,
+                child: Icon(Icons.person, size: 20, color: Color(0xFF0A2E5A)),
+              ),
+            ),
+          ),
+        ],
+      ),
       drawer: _buildDrawer(projectProvider),
       body: _getSelectedScreen(projectProvider),
     );
   }
 
   Widget _buildTabletLayout(SelectedProjectProvider projectProvider) {
-    _logger.d('📱 DashboardScreen: Building tablet layout');
-    
     return Scaffold(
-      appBar: _buildAppBar(projectProvider),
+      appBar: AppBar(
+        title: const Text('AlmaWorks', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFF0A2E5A),
+        automaticallyImplyLeading: false,
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => AccountScreen(localeProvider: localeProvider)),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.only(right: 16.0),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: Colors.white,
+                child: Icon(Icons.person, size: 20, color: Color(0xFF0A2E5A)),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Row(
         children: [
-          Container(
-            width: 280,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withValues(alpha:0.1),
-                  blurRadius: 4,
-                  offset: const Offset(2, 0),
-                ),
-              ],
-            ),
-            child: _buildSidebarContent(projectProvider),
-          ),
+          SizedBox(width: 280, child: _buildSideNav(projectProvider)),
+          const VerticalDivider(width: 1),
           Expanded(child: _getSelectedScreen(projectProvider)),
         ],
       ),
@@ -624,173 +601,114 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildDesktopLayout(SelectedProjectProvider projectProvider) {
-    _logger.d('🖥️ DashboardScreen: Building desktop layout');
-    
     return Scaffold(
-      appBar: _buildAppBar(projectProvider),
+      appBar: AppBar(
+        title: const Text('AlmaWorks', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: const Color(0xFF0A2E5A),
+        automaticallyImplyLeading: false,
+        actions: [
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (context) => AccountScreen(localeProvider: localeProvider)),
+            ),
+            child: const Padding(
+              padding: EdgeInsets.only(right: 16.0),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: Colors.white,
+                child: Icon(Icons.person, size: 20, color: Color(0xFF0A2E5A)),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Row(
         children: [
-          Container(
-            width: 300,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withValues(alpha:0.1),
-                  blurRadius: 4,
-                  offset: const Offset(2, 0),
-                ),
-              ],
-            ),
-            child: _buildSidebarContent(projectProvider),
-          ),
+          SizedBox(width: 300, child: _buildSideNav(projectProvider)),
+          const VerticalDivider(width: 1),
           Expanded(child: _getSelectedScreen(projectProvider)),
         ],
       ),
     );
   }
 
-  PreferredSizeWidget _buildAppBar(SelectedProjectProvider projectProvider) {
-    String title = 'AlmaWorks';
-    if (_selectedIndex == 0) {
-      title = 'AlmaWorks - Dashboard';
-    } else if (_selectedIndex == 1) {
-      title = 'Projects';
-    } else if (_selectedIndex == 2) {
-      title = 'Client Access Requests';
-    }
-
-    _logger.d('🏷️ DashboardScreen: Building app bar with title: $title');
-
-    return AppBar(
-      title: Text(
-        title,
-        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
-      ),
-      backgroundColor: const Color(0xFF0A2E5A),
-      actions: [
-        GestureDetector(
-          onTap: () {
-            _logger.i('👤 DashboardScreen: Account button pressed');
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => AccountScreen(localeProvider: localeProvider),
+  Widget _buildDrawer(SelectedProjectProvider projectProvider) {
+    return Drawer(
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: const BoxDecoration(color: Color(0xFF0A2E5A)),
+            child: const Align(
+              alignment: Alignment.bottomLeft,
+              child: Text(
+                'AlmaWorks',
+                style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
               ),
-            );
-          },
-          child: const Padding(
-            padding: EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(
-              radius: 16,
-              backgroundColor: Colors.white,
-              child: Icon(Icons.person, size: 20, color: Color(0xFF0A2E5A)),
             ),
           ),
-        ),
-      ],
+          _buildNavItems(projectProvider, padding: EdgeInsets.zero),
+        ],
+      ),
     );
   }
 
-  Widget _buildDrawer(SelectedProjectProvider projectProvider) {
-    _logger.d('📋 DashboardScreen: Building drawer');
-    
-    return Drawer(
-      child: _buildSidebarContent(projectProvider),
+  Widget _buildSideNav(SelectedProjectProvider projectProvider) {
+    return Container(
+      color: Colors.grey[50],
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            color: const Color(0xFF0A2E5A),
+            child: const Text(
+              'AlmaWorks',
+              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+          ),
+          Expanded(child: _buildNavItems(projectProvider)),
+        ],
+      ),
     );
   }
 
-  Widget _buildSidebarContent(SelectedProjectProvider projectProvider) {
-    _logger.d('📋 DashboardScreen: Building sidebar content');
-    
-    return Column(
+  Widget _buildNavItems(SelectedProjectProvider projectProvider, {EdgeInsets? padding}) {
+    return ListView(
+      padding: padding,
       children: [
-        Container(
-          height: 120,
-          width: double.infinity,
-          decoration: const BoxDecoration(
-            color: Color(0xFF0A2E5A),
-          ),
-          child: const Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text(
-                  'AlmaWorks',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: 16.0),
-                child: Text(
-                  'Site Management',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        ListTile(
+          leading: const Icon(Icons.dashboard),
+          title: const Text('Dashboard'),
+          selected: _selectedIndex == 0,
+          onTap: () {
+            _logger.i('🏠 DashboardScreen: Dashboard menu item tapped');
+            setState(() { _selectedIndex = 0; });
+            projectProvider.clearSelection();
+            if (Navigator.canPop(context)) Navigator.pop(context);
+          },
         ),
-        Expanded(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.dashboard),
-                title: const Text('Dashboard'),
-                selected: _selectedIndex == 0,
-                onTap: () {
-                  _logger.i('🏠 DashboardScreen: Dashboard menu item tapped');
-                  setState(() {
-                    _selectedIndex = 0;
-                  });
-                  projectProvider.clearSelection();
-                  if (Navigator.canPop(context)) {
-                    Navigator.pop(context);
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder),
-                title: const Text('Projects'),
-                selected: _selectedIndex == 1,
-                onTap: () {
-                  _logger.i('📁 DashboardScreen: Projects menu item tapped');
-                  setState(() {
-                    _selectedIndex = 1;
-                    _projectsInitialTab = 0;
-                  });
-                  if (Navigator.canPop(context)) {
-                    Navigator.pop(context);
-                  }
-                },
-              ),
-              if (_userRole == 'MainAdmin' || _userRole == 'Admin')
-                ListTile(
-                  leading: const Icon(Icons.supervised_user_circle),
-                  title: const Text('Client Access Requests'),
-                  selected: _selectedIndex == 2,
-                  onTap: () {
-                    _logger.i('👥 DashboardScreen: Client Access Requests tapped');
-                    setState(() {
-                      _selectedIndex = 2;
-                    });
-                    if (Navigator.canPop(context)) {
-                      Navigator.pop(context);
-                    }
-                  },
-                ),
-            ],
-          ),
+        ListTile(
+          leading: const Icon(Icons.folder),
+          title: const Text('Projects'),
+          selected: _selectedIndex == 1,
+          onTap: () {
+            _logger.i('📁 DashboardScreen: Projects menu item tapped');
+            setState(() { _selectedIndex = 1; _projectsInitialTab = 0; });
+            if (Navigator.canPop(context)) Navigator.pop(context);
+          },
         ),
+        if (_userRole == 'MainAdmin' || _userRole == 'Admin')
+          ListTile(
+            leading: const Icon(Icons.supervised_user_circle),
+            title: const Text('Client Access Requests'),
+            selected: _selectedIndex == 2,
+            onTap: () {
+              _logger.i('👥 DashboardScreen: Client Access Requests tapped');
+              setState(() { _selectedIndex = 2; });
+              if (Navigator.canPop(context)) Navigator.pop(context);
+            },
+          ),
       ],
     );
   }
@@ -854,23 +772,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             const Icon(Icons.error, size: 64, color: Colors.red),
             const SizedBox(height: 16),
-            Text(
-              title,
-              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-            ),
+            Text(title, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            Text(
-              error,
-              style: const TextStyle(color: Colors.grey),
-              textAlign: TextAlign.center,
-            ),
+            Text(error, style: const TextStyle(color: Colors.grey), textAlign: TextAlign.center),
             const SizedBox(height: 16),
             ElevatedButton(
               onPressed: () {
                 _logger.i('🔄 DashboardScreen: Retry button pressed');
-                setState(() {
-                  _selectedIndex = 0;
-                });
+                setState(() { _selectedIndex = 0; });
               },
               child: const Text('Go to Dashboard'),
             ),
@@ -887,7 +796,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-// Unified Dashboard for all users with role-based filtering
+// ─────────────────────────────────────────────────────────────────────────────
+// UnifiedDashboard  –  shown for all roles with role-based filtering
+// ─────────────────────────────────────────────────────────────────────────────
 class UnifiedDashboard extends StatefulWidget {
   final ProjectService projectService;
   final Logger logger;
@@ -912,8 +823,44 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
   final PageController _pageController = PageController();
   int _currentPage = 0;
 
+  // ── Project locations for WeatherWidget ─────────────────────────────────────
+  List<String> _projectLocations = [];
+  StreamSubscription<QuerySnapshot>? _locationsSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToProjectLocations();
+  }
+
+  /// Streams project documents from Firestore and extracts the 'location' field.
+  /// Clients only see locations for their granted projects.
+  void _subscribeToProjectLocations() {
+    final query = FirebaseFirestore.instance.collection('Projects');
+
+    _locationsSub = query.snapshots().listen((snapshot) {
+      final locations = <String>[];
+      for (final doc in snapshot.docs) {
+        // For clients, only include granted project locations
+        if (_isClient && !widget.grantedProjectIds.contains(doc.id)) continue;
+
+        final data = doc.data();
+        final loc  = data['location'] as String?;
+        if (loc != null && loc.trim().isNotEmpty) {
+          locations.add(loc.trim());
+        }
+      }
+      if (mounted) {
+        setState(() => _projectLocations = locations.toSet().toList());
+      }
+    }, onError: (e) {
+      widget.logger.e('❌ UnifiedDashboard: Error streaming project locations: $e');
+    });
+  }
+
   @override
   void dispose() {
+    _locationsSub?.cancel();
     _pageController.dispose();
     super.dispose();
   }
@@ -923,8 +870,8 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
   @override
   Widget build(BuildContext context) {
     final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-    final isTablet = screenWidth >= 600 && screenWidth < 1200;
+    final isMobile  = screenWidth < 600;
+    final isTablet  = screenWidth >= 600 && screenWidth < 1200;
     final isDesktop = screenWidth >= 1200;
 
     widget.logger.d('🗂️ UnifiedDashboard: Building dashboard, isClient: $_isClient, grantedProjects: ${widget.grantedProjectIds.length}');
@@ -937,10 +884,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
             padding: EdgeInsets.all(isMobile ? 12 : 16),
             child: Text(
               _isClient ? 'My Projects Overview' : 'General Overview',
-              style: const TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
           ),
           _buildMetricsGrid(context),
@@ -1049,36 +993,31 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
   }
 
   Widget _buildContentSection(BuildContext context, bool isMobile, bool isTablet, bool isDesktop) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth  = MediaQuery.of(context).size.width;
     final sidebarWidth = isMobile ? 0 : (isTablet ? 280 : 300);
     final availableWidth = screenWidth - sidebarWidth - (isMobile ? 24 : 32);
     const double widgetHeight = 400.0;
 
-    widget.logger.d('🗳️ Dashboard: Building content section, isClient: $_isClient, projectIds: ${widget.grantedProjectIds}');
+    widget.logger.d('🗳️ Dashboard: Building content section, isClient: $_isClient, projectLocations: ${_projectLocations.length}');
 
+    // ── Only ActivityFeed and WeatherWidget (TodoWidget removed) ───────────────
     final widgets = [
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: TodoWidget(
-          showAllProjects: true, // Always true for unified interface
-          logger: widget.logger,
-          projectIds: _isClient ? widget.grantedProjectIds : [], // Filter by IDs
-        ),
-      ),
-      SizedBox(
-        width: availableWidth,
-        height: widgetHeight,
         child: ActivityFeed(
-          showAllProjects: true, // Always true for unified interface
+          showAllProjects: true,
           logger: widget.logger,
-          projectIds: _isClient ? widget.grantedProjectIds : [], // Filter by IDs
+          projectIds: _isClient ? widget.grantedProjectIds : [],
         ),
       ),
       SizedBox(
         width: availableWidth,
         height: widgetHeight,
-        child: const WeatherWidget(),
+        // Pass all project locations so WeatherWidget fetches each site's weather
+        child: WeatherWidget(
+          projectLocations: _projectLocations,
+        ),
       ),
     ];
 
@@ -1092,9 +1031,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
             child: PageView.builder(
               controller: _pageController,
               onPageChanged: (index) {
-                setState(() {
-                  _currentPage = index;
-                });
+                setState(() { _currentPage = index; });
               },
               itemCount: widgets.length,
               itemBuilder: (context, index) {
@@ -1119,11 +1056,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                     },
                     mini: true,
                     backgroundColor: const Color(0xFF0A2E5A),
-                    child: const Icon(
-                      Icons.arrow_left,
-                      color: Colors.white,
-                      size: 30,
-                    ),
+                    child: const Icon(Icons.arrow_left, color: Colors.white, size: 30),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -1139,11 +1072,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                     },
                     mini: true,
                     backgroundColor: const Color(0xFF0A2E5A),
-                    child: const Icon(
-                      Icons.arrow_right,
-                      color: Colors.white,
-                      size: 30,
-                    ),
+                    child: const Icon(Icons.arrow_right, color: Colors.white, size: 30),
                   )
                 : const SizedBox.shrink(),
           ),
@@ -1161,7 +1090,7 @@ class _UnifiedDashboardState extends State<UnifiedDashboard> {
                     shape: BoxShape.circle,
                     color: _currentPage == index
                         ? const Color(0xFF0A2E5A)
-                        : Colors.grey.withValues(alpha:0.4),
+                        : Colors.grey.withValues(alpha: 0.4),
                   ),
                 ),
               ),
