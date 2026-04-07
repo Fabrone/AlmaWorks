@@ -19,11 +19,13 @@ import 'package:almaworks/helpers/download_helper.dart';
 class GeneralScheduleScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
+  final bool isClient;
 
   const GeneralScheduleScreen({
     super.key,
     required this.project,
     required this.logger,
+    this.isClient = false,
   });
 
   @override
@@ -96,13 +98,14 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    'Tap the upload button to add into schedule',
-                    style: GoogleFonts.poppins(
-                      fontSize: 14,
-                      color: Colors.grey[500],
+                  if (!widget.isClient)
+                    Text(
+                      'Tap the upload button to add into schedule',
+                      style: GoogleFonts.poppins(
+                        fontSize: 14,
+                        color: Colors.grey[500],
+                      ),
                     ),
-                  ),
                 ],
               ),
             );
@@ -118,21 +121,23 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
           );
         },
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isUploading ? null : _uploadScheduleDocument,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-        child: _isUploading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Icon(Icons.upload_file),
-      ),
+      floatingActionButton: widget.isClient
+          ? null
+          : FloatingActionButton(
+              onPressed: _isUploading ? null : _uploadScheduleDocument,
+              backgroundColor: const Color(0xFF0A2E5A),
+              foregroundColor: Colors.white,
+              child: _isUploading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.upload_file),
+            ),
     );
   }
 
@@ -191,16 +196,17 @@ class _GeneralScheduleScreenState extends State<GeneralScheduleScreen> {
                 ],
               ),
             ),
-            PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete, size: 16, color: Colors.red[600]),
-                  const SizedBox(width: 8),
-                  const Text('Delete', style: TextStyle(color: Colors.red)),
-                ],
+            if (!widget.isClient)
+              PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete, size: 16, color: Colors.red[600]),
+                    const SizedBox(width: 8),
+                    const Text('Delete', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
               ),
-            ),
           ],
         ),
       ),

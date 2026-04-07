@@ -190,6 +190,7 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                             ? GeneralScheduleScreen(
                                 project: widget.project,
                                 logger: widget.logger,
+                                isClient: true,
                               )
                             : TabBarView(
                                 controller: _tabController,
@@ -197,6 +198,7 @@ class _ScheduleScreenState extends State<ScheduleScreen>
                                   GeneralScheduleScreen(
                                     project: widget.project,
                                     logger: widget.logger,
+                                    isClient: false,
                                   ),
                                   DynamicScheduleScreen(
                                     project: widget.project,

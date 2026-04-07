@@ -427,19 +427,20 @@ class _BaseLayoutState extends State<BaseLayout> {
                   ),
                 ),
 
-              // ── Financials ────────────────────────────────────────────────
-              _buildProtectedMenuItem(
-                context: context,
-                icon: Icons.account_balance,
-                title: 'Financials',
-                selectedItem: 'Financials',
-                isMobile: isMobile,
-                isClient: isClient,
-                onNavigate: () => FinancialScreen(
-                  project: widget.project!,
-                  logger: widget.logger,
+              // ── Financials (Admin / MainAdmin only) ───────────────────────
+              if (!isClient)
+                _buildProtectedMenuItem(
+                  context: context,
+                  icon: Icons.account_balance,
+                  title: 'Financials',
+                  selectedItem: 'Financials',
+                  isMobile: isMobile,
+                  isClient: isClient,
+                  onNavigate: () => FinancialScreen(
+                    project: widget.project!,
+                    logger: widget.logger,
+                  ),
                 ),
-              ),
 
               // ── Communication (all roles) ─────────────────────────────────
               // Communication is intentionally available to ALL roles —
