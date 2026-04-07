@@ -574,18 +574,37 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  if (project.isActive) ...[
-                    Icon(Icons.trending_up, size: 14, color: Colors.blue),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${project.progress.toStringAsFixed(0)}%',
-                      style: const TextStyle(
-                        color: Colors.blue,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
+                  // ── Live progress from TaskProgressMonitor ──────────
+                  StreamBuilder<double>(
+                    stream: FirebaseFirestore.instance
+                        .collection('TaskProgressMonitor')
+                        .doc(project.id)
+                        .snapshots()
+                        .map(_computeProgressFromSnapshot),
+                    builder: (context, snapshot) {
+                      if (!project.isActive) return const SizedBox.shrink();
+                      // Fallback to static value while the stream loads or on error.
+                      final double raw = snapshot.hasData
+                          ? snapshot.data!
+                          : project.progress / 100.0;
+                      final String pct = (raw * 100).toStringAsFixed(0);
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.trending_up, size: 14, color: Colors.blue),
+                          const SizedBox(width: 4),
+                          Text(
+                            '$pct%',
+                            style: const TextStyle(
+                              color: Colors.blue,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
                 ],
               ),
             ],
@@ -807,6 +826,67 @@ class _ProjectsMainScreenState extends State<ProjectsMainScreen>
         return 'Completed';
       default:
         return 'Untracked';
+    }
+  }
+
+  // ── TaskProgressMonitor helpers (mirrors ProjectSummaryScreen) ──────────────
+
+  /// Replicates the exact formula from TaskProgressMonitorScreen:
+  ///   progress = Σ checkedDays(task) / Σ expectedWorkDays(task)
+  static double _computeProgressFromSnapshot(DocumentSnapshot snap) {
+    if (!snap.exists) return 0.0;
+
+    final data      = snap.data() as Map<String, dynamic>? ?? {};
+    final rawRows   = data['rows']          as List<dynamic>?        ?? [];
+    final rawStatus = data['dailyStatuses'] as Map<String, dynamic>? ?? {};
+
+    int totalExpected = 0;
+    int totalChecked  = 0;
+
+    for (final entry in rawRows) {
+      final m = Map<String, dynamic>.from(entry as Map);
+      if ((m['type'] as String?) != 'task') continue;
+
+      final id    = m['id']         as String?    ?? '';
+      final start = (m['startDate'] as Timestamp?)?.toDate();
+      final end   = (m['endDate']   as Timestamp?)?.toDate();
+      if (start == null || end == null || id.isEmpty) continue;
+
+      totalExpected += _countWorkDays(start, end);
+
+      final prefix = '${id}_';
+      for (final kv in rawStatus.entries) {
+        if (!kv.key.startsWith(prefix)) continue;
+        if (_isDone(kv.value as String?)) totalChecked++;
+      }
+    }
+
+    if (totalExpected == 0) return 0.0;
+    return (totalChecked / totalExpected).clamp(0.0, 1.0);
+  }
+
+  /// Mon–Sat working days between [start] and [end] inclusive.
+  static int _countWorkDays(DateTime start, DateTime end) {
+    int count = 0;
+    DateTime cur = DateTime(start.year, start.month, start.day);
+    final endN   = DateTime(end.year,   end.month,   end.day);
+    while (!cur.isAfter(endN)) {
+      if (cur.weekday != DateTime.sunday) count++;
+      cur = cur.add(const Duration(days: 1));
+    }
+    return count;
+  }
+
+  /// Returns true for any storage code that counts as "work done".
+  static bool _isDone(String? code) {
+    switch (code) {
+      case 'D': // current "done" code
+      case 'S': // legacy: started
+      case 'O': // legacy: ongoing
+      case 'C': // legacy: completed
+        return true;
+      default:
+        return false;
     }
   }
 
