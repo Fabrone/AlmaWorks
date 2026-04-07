@@ -235,7 +235,7 @@ class _BaseLayoutState extends State<BaseLayout> {
             children: [
               // ── Switch Project ────────────────────────────────────────────
               ListTile(
-                leading: const Icon(Icons.swap_horiz),
+                leading: const Icon(Icons.swap_horiz, color: Colors.blueGrey),
                 title: Text(
                   isClient ? 'My Projects' : 'Switch Project',
                   style: GoogleFonts.poppins(),
@@ -262,7 +262,7 @@ class _BaseLayoutState extends State<BaseLayout> {
 
               // ── Overview ──────────────────────────────────────────────────
               ListTile(
-                leading: const Icon(Icons.dashboard),
+                leading: const Icon(Icons.dashboard, color: Colors.indigo),
                 title: Text('Overview', style: GoogleFonts.poppins()),
                 selected: widget.selectedMenuItem == 'Overview',
                 selectedTileColor: Colors.blueGrey[50],
@@ -313,6 +313,7 @@ class _BaseLayoutState extends State<BaseLayout> {
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.description,
+                iconColor: Colors.blue,
                 title: 'Documents',
                 selectedItem: 'Documents',
                 isMobile: isMobile,
@@ -327,6 +328,7 @@ class _BaseLayoutState extends State<BaseLayout> {
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.architecture,
+                iconColor: Colors.teal,
                 title: 'Drawings',
                 selectedItem: 'Drawings',
                 isMobile: isMobile,
@@ -341,6 +343,7 @@ class _BaseLayoutState extends State<BaseLayout> {
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.schedule,
+                iconColor: Colors.orange,
                 title: 'Schedule',
                 selectedItem: 'Schedule',
                 isMobile: isMobile,
@@ -355,6 +358,7 @@ class _BaseLayoutState extends State<BaseLayout> {
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.shield_sharp,
+                iconColor: Colors.green,
                 title: 'Quality & Safety',
                 selectedItem: 'Quality & Safety',
                 isMobile: isMobile,
@@ -371,6 +375,7 @@ class _BaseLayoutState extends State<BaseLayout> {
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.insert_chart,
+                iconColor: Colors.deepPurple,
                 title: 'Reports',
                 selectedItem: 'Reports',
                 isMobile: isMobile,
@@ -387,6 +392,7 @@ class _BaseLayoutState extends State<BaseLayout> {
                 _buildProtectedMenuItem(
                   context: context,
                   icon: Icons.track_changes_rounded,
+                  iconColor: Colors.cyan,
                   title: 'Task Progress',
                   selectedItem: 'Task Progress',
                   isMobile: isMobile,
@@ -402,6 +408,7 @@ class _BaseLayoutState extends State<BaseLayout> {
                 _buildProtectedMenuItem(
                   context: context,
                   icon: Icons.photo_library,
+                  iconColor: Colors.pink,
                   title: 'Photo Gallery',
                   selectedItem: 'Photo Gallery',
                   isMobile: isMobile,
@@ -417,6 +424,7 @@ class _BaseLayoutState extends State<BaseLayout> {
                 _buildProtectedMenuItem(
                   context: context,
                   icon: Icons.photo_album,
+                  iconColor: Colors.pink,
                   title: 'Photos',
                   selectedItem: 'Photos',
                   isMobile: isMobile,
@@ -432,6 +440,7 @@ class _BaseLayoutState extends State<BaseLayout> {
                 _buildProtectedMenuItem(
                   context: context,
                   icon: Icons.account_balance,
+                  iconColor: Color(0xFF2E7D32),
                   title: 'Financials',
                   selectedItem: 'Financials',
                   isMobile: isMobile,
@@ -450,6 +459,7 @@ class _BaseLayoutState extends State<BaseLayout> {
               _buildProtectedMenuItem(
                 context: context,
                 icon: Icons.mail_outline_rounded,
+                iconColor: Colors.blueAccent,
                 title: 'Communication',
                 selectedItem: 'Communication',
                 isMobile: isMobile,
@@ -469,6 +479,7 @@ class _BaseLayoutState extends State<BaseLayout> {
   Widget _buildProtectedMenuItem({
     required BuildContext context,
     required IconData icon,
+    required Color iconColor,
     required String title,
     required String selectedItem,
     required bool isMobile,
@@ -476,7 +487,7 @@ class _BaseLayoutState extends State<BaseLayout> {
     required Widget Function() onNavigate,
   }) {
     return ListTile(
-      leading: Icon(icon),
+      leading: Icon(icon, color: iconColor),
       title: Text(title, style: GoogleFonts.poppins()),
       selected: widget.selectedMenuItem == selectedItem,
       selectedTileColor: Colors.blueGrey[50],
