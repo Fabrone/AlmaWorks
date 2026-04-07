@@ -678,6 +678,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               logger: widget.logger,
               existingReport: report,
               isReadOnly: effectiveReadOnly,
+              isClientView: widget.isClient,
             ),
           ),
         );
@@ -691,6 +692,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               logger: widget.logger,
               existingReport: report,
               isReadOnly: effectiveReadOnly,
+              isClientView: widget.isClient,
             ),
           ),
         );

@@ -234,6 +234,9 @@ class MonthlyReportFormScreen extends StatefulWidget {
   final MonthlyReportData? existingReport;
   /// When true all fields are read-only; a floating Edit button unlocks them.
   final bool isReadOnly;
+  /// When true the Edit FAB is permanently hidden regardless of [isReadOnly].
+  /// Set this for client users who are allowed to view but never modify reports.
+  final bool isClientView;
 
   const MonthlyReportFormScreen({
     super.key,
@@ -241,6 +244,7 @@ class MonthlyReportFormScreen extends StatefulWidget {
     required this.logger,
     this.existingReport,
     this.isReadOnly = false,
+    this.isClientView = false,
   });
 
   @override
@@ -1874,7 +1878,7 @@ class _MonthlyReportFormScreenState extends State<MonthlyReportFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F4F8),
-      floatingActionButton: _isReadOnly
+      floatingActionButton: _isReadOnly && !widget.isClientView
           ? FloatingActionButton.extended(
               onPressed: () => setState(() => _isReadOnly = false),
               backgroundColor: _navy,
