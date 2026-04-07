@@ -28,10 +28,17 @@ class ReportsScreen extends StatefulWidget {
   final ProjectModel project;
   final Logger logger;
 
+  /// When [isClient] is true the screen enforces client-only RBAC:
+  /// – only the Weekly and Monthly saved-report tabs are visible
+  /// – the upload / create FAB is hidden
+  /// – Edit and Delete actions are removed from every report card
+  final bool isClient;
+
   const ReportsScreen({
     super.key,
     required this.project,
     required this.logger,
+    this.isClient = false,
   });
 
   @override
@@ -44,14 +51,23 @@ class _ReportsScreenState extends State<ReportsScreen>
   final DateFormat _dateFormat = DateFormat('yyyy-MM-dd HH:mm');
   bool _isLoading = false;
 
-  // Tab definitions: label, report type key
-  static const _tabs = [
+  // Full tab list – admin / main-admin see all five tabs.
+  static const _allTabs = [
     {'label': 'Daily', 'type': 'Daily'},
     {'label': 'Weekly', 'type': 'Weekly'},
     {'label': 'Monthly', 'type': 'Monthly'},
     {'label': 'Safety Meetings', 'type': 'Safety'},
     {'label': 'Quality', 'type': 'Quality'},
   ];
+
+  // Clients only see saved Weekly and Monthly reports.
+  static const _clientTabs = [
+    {'label': 'Weekly', 'type': 'Weekly'},
+    {'label': 'Monthly', 'type': 'Monthly'},
+  ];
+
+  List<Map<String, String>> get _tabs =>
+      widget.isClient ? _clientTabs : _allTabs;
 
   @override
   void initState() {
@@ -77,21 +93,24 @@ class _ReportsScreenState extends State<ReportsScreen>
       logger: widget.logger,
       selectedMenuItem: 'Reports',
       onMenuItemSelected: (_) {},
-      floatingActionButton: FloatingActionButton(
-        onPressed: _isLoading ? null : _handleUploadAction,
-        backgroundColor: const Color(0xFF0A2E5A),
-        foregroundColor: Colors.white,
-        child: _isLoading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                ),
-              )
-            : const Icon(Icons.upload_file),
-      ),
+      // Clients cannot create or upload reports — hide the FAB entirely.
+      floatingActionButton: widget.isClient
+          ? null
+          : FloatingActionButton(
+              onPressed: _isLoading ? null : _handleUploadAction,
+              backgroundColor: const Color(0xFF0A2E5A),
+              foregroundColor: Colors.white,
+              child: _isLoading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : const Icon(Icons.upload_file),
+            ),
       child: Column(
         children: [
           // ── Tab Bar: fills evenly on wide screens, scrollable on mobile ──
@@ -130,17 +149,16 @@ class _ReportsScreenState extends State<ReportsScreen>
             ),
           ),
 
-          // ── Tab Views ──
+          // ── Tab Views (built dynamically so client-only tabs work) ──
           Expanded(
             child: TabBarView(
               controller: _tabController,
-              children: [
-                _buildDocumentTab('Daily'),      // tab 0
-                _buildDocumentTab('Weekly'),     // tab 1
-                _buildDocumentTab('Monthly'),    // tab 2
-                _buildSafetyTab(),               // tab 3 – Safety Meetings
-                _buildDocumentTab('Quality'),    // tab 4
-              ],
+              children: _tabs.map((t) {
+                final type = t['type']!;
+                return type == 'Safety'
+                    ? _buildSafetyTab()
+                    : _buildDocumentTab(type);
+              }).toList(),
             ),
           ),
 
@@ -336,11 +354,13 @@ class _ReportsScreenState extends State<ReportsScreen>
                 color: Colors.grey[600], fontSize: 16),
           ),
           const SizedBox(height: 8),
-          Text(
-            'Tap the upload button to add one',
-            style: GoogleFonts.poppins(
-                color: Colors.grey[400], fontSize: 13),
-          ),
+          // Clients cannot create reports — show a neutral message instead.
+          if (!widget.isClient)
+            Text(
+              'Tap the upload button to add one',
+              style: GoogleFonts.poppins(
+                  color: Colors.grey[400], fontSize: 13),
+            ),
         ],
       ),
     );
@@ -437,7 +457,9 @@ class _ReportsScreenState extends State<ReportsScreen>
                   Colors.blue[600]!, 'View Form'),
             _popupItem(
                 'download', Icons.download, Colors.green[600]!, 'Download'),
-            _popupItem('delete', Icons.delete, Colors.red[600]!, 'Delete'),
+            // Clients cannot delete reports.
+            if (!widget.isClient)
+              _popupItem('delete', Icons.delete, Colors.red[600]!, 'Delete'),
           ],
         ),
       ),
@@ -569,10 +591,13 @@ class _ReportsScreenState extends State<ReportsScreen>
             itemBuilder: (context) => [
               _popupItem('open', Icons.visibility_rounded,
                   Colors.blue[700]!, 'Open'),
-              _popupItem('edit', Icons.edit_rounded,
-                  const Color(0xFF0A2E5A), 'Edit'),
-              _popupItem('delete', Icons.delete_rounded,
-                  Colors.red[600]!, 'Delete'),
+              // Clients are view-only — Edit and Delete are hidden.
+              if (!widget.isClient) ...[
+                _popupItem('edit', Icons.edit_rounded,
+                    const Color(0xFF0A2E5A), 'Edit'),
+                _popupItem('delete', Icons.delete_rounded,
+                    Colors.red[600]!, 'Delete'),
+              ],
             ],
           ),
         ),
@@ -625,8 +650,10 @@ class _ReportsScreenState extends State<ReportsScreen>
   void _openFormReport(
       String docId, Map<String, dynamic> data, String type,
       {required bool readOnly}) {
+    // Clients are always view-only — override the flag defensively.
+    final effectiveReadOnly = widget.isClient ? true : readOnly;
     widget.logger.i(
-        '📊 ReportsScreen: Opening form report $docId (readOnly=$readOnly, type=$type)');
+        '📊 ReportsScreen: Opening form report $docId (readOnly=$effectiveReadOnly, type=$type)');
     try {
       if (type == 'Daily') {
         final report = DailyReportData.fromMap({...data, 'id': docId});
@@ -637,7 +664,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               project: widget.project,
               logger: widget.logger,
               existingReport: report,
-              isReadOnly: readOnly,
+              isReadOnly: effectiveReadOnly,
             ),
           ),
         );
@@ -650,7 +677,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               project: widget.project,
               logger: widget.logger,
               existingReport: report,
-              isReadOnly: readOnly,
+              isReadOnly: effectiveReadOnly,
             ),
           ),
         );
@@ -663,7 +690,7 @@ class _ReportsScreenState extends State<ReportsScreen>
               project: widget.project,
               logger: widget.logger,
               existingReport: report,
-              isReadOnly: readOnly,
+              isReadOnly: effectiveReadOnly,
             ),
           ),
         );

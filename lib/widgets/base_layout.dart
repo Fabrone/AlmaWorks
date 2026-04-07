@@ -365,20 +365,22 @@ class _BaseLayoutState extends State<BaseLayout> {
                 ),
               ),
 
-              // ── Reports (Admin / MainAdmin only) ──────────────────────────
-              if (!isClient)
-                _buildProtectedMenuItem(
-                  context: context,
-                  icon: Icons.insert_chart,
-                  title: 'Reports',
-                  selectedItem: 'Reports',
-                  isMobile: isMobile,
+              // ── Reports ───────────────────────────────────────────────────
+              // Admins see all tabs + can create/upload.
+              // Clients see Weekly & Monthly saved reports in read-only mode.
+              _buildProtectedMenuItem(
+                context: context,
+                icon: Icons.insert_chart,
+                title: 'Reports',
+                selectedItem: 'Reports',
+                isMobile: isMobile,
+                isClient: isClient,
+                onNavigate: () => ReportsScreen(
+                  project: widget.project!,
+                  logger: widget.logger,
                   isClient: isClient,
-                  onNavigate: () => ReportsScreen(
-                    project: widget.project!,
-                    logger: widget.logger,
-                  ),
                 ),
+              ),
 
               // ── Task Progress Monitor (Admin / MainAdmin only) ─────────────
               if (!isClient)
