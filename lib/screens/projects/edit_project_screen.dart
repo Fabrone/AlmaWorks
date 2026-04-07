@@ -34,7 +34,9 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
   final List<TeamMember> _teamMembers = [];
   final TextEditingController _teamMemberController = TextEditingController();
   final TextEditingController _categoryController = TextEditingController();
+  final TextEditingController _customRoleController = TextEditingController();
   String? _selectedRole;
+  bool _isDefiningCustomRole = false;
   
   late final ProjectService _projectService;
   late final Logger _logger;
@@ -386,14 +388,47 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
                   value: 'technician',
                   child: Text('Technician'),
                 ),
+                DropdownMenuItem<String>(
+                  value: '__define_new__',
+                  child: Row(
+                    children: [
+                      Icon(Icons.add_circle_outline,
+                          size: 18, color: Colors.deepPurple),
+                      SizedBox(width: 8),
+                      Text(
+                        'Define New',
+                        style: TextStyle(
+                          color: Colors.deepPurple,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               onChanged: (value) {
                 setState(() {
                   _selectedRole = value;
+                  _isDefiningCustomRole = value == '__define_new__';
+                  if (!_isDefiningCustomRole) _customRoleController.clear();
                 });
                 _logger.d('📝 EditProjectScreen: Role selected: $_selectedRole');
               },
             ),
+            // Custom role text field — visible only when Define New is selected
+            if (_isDefiningCustomRole) ...[
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _customRoleController,
+                decoration: const InputDecoration(
+                  labelText: 'Define Role Name *',
+                  hintText: 'e.g., Site Foreman, Safety Officer',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.edit_note, color: Colors.deepPurple),
+                ),
+                textCapitalization: TextCapitalization.words,
+              ),
+            ],
             const SizedBox(height: 16),
             TextFormField(
               controller: _teamMemberController,
@@ -583,6 +618,20 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
       );
       return;
     }
+    // Resolve the actual role string
+    String resolvedRole;
+    if (_isDefiningCustomRole) {
+      final customRole = _customRoleController.text.trim();
+      if (customRole.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please enter a custom role name')),
+        );
+        return;
+      }
+      resolvedRole = customRole;
+    } else {
+      resolvedRole = _selectedRole!;
+    }
     if (_teamMemberController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please enter a team member name')),
@@ -601,9 +650,12 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
       return;
     }
     setState(() {
-      _teamMembers.add(TeamMember(name: name, role: _selectedRole!, category: category));
+      _teamMembers.add(TeamMember(name: name, role: resolvedRole, category: category));
       _teamMemberController.clear();
       _categoryController.clear();
+      _customRoleController.clear();
+      _selectedRole = null;
+      _isDefiningCustomRole = false;
     });
     _logger.i('👥 EditProjectScreen: Team member added. Total: ${_teamMembers.length}');
   }
@@ -697,6 +749,7 @@ class _EditProjectScreenState extends State<EditProjectScreen> {
     _projectManagerController.dispose();
     _teamMemberController.dispose();
     _categoryController.dispose();
+    _customRoleController.dispose();
     super.dispose();
   }
 }
