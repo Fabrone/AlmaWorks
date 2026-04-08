@@ -1011,18 +1011,18 @@ class _TaskProgressMonitorScreenState
     return (totalChecked / totalExpected).clamp(0.0, 1.0);
   }
 
-  /// 0.0–1.0 project-level progress (weighted by expected work days across all tasks).
+  /// 0.0–1.0 project-level progress (equal-weight average across phases).
+  /// Each phase contributes an equal 1/N share to the project total,
+  /// regardless of how many tasks or work days it contains.
+  /// e.g. 4 phases → each phase = 25 %; a phase at 50 % adds 12.5 % to the project.
   double get _projectProgress {
-    final allTasks = _rows.where((r) => r.type == TaskRowType.task).toList();
-    if (allTasks.isEmpty) return 0.0;
-    int totalExpected = 0;
-    int totalChecked  = 0;
-    for (final t in allTasks) {
-      totalExpected += _expectedDaysForTask(t);
-      totalChecked  += _checkedDaysForTask(t);
+    final phases = _rows.where((r) => r.type == TaskRowType.phase).toList();
+    if (phases.isEmpty) return 0.0;
+    double total = 0.0;
+    for (final phase in phases) {
+      total += _phaseProgress(phase);
     }
-    if (totalExpected == 0) return 0.0;
-    return (totalChecked / totalExpected).clamp(0.0, 1.0);
+    return (total / phases.length).clamp(0.0, 1.0);
   }
 
   // ─────────────────────────────────────────────────────────────────
